@@ -1,1 +1,3 @@
 需要把fbxsdk的include和lib目录复制到fbxsdk目录下
+
+CSharp目录保存了Unity C#使用的接口
