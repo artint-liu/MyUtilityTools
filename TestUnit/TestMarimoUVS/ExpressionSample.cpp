@@ -1,0 +1,954 @@
+#include <GrapX.h>
+#include <Smart/SmartStream.h>
+#include <clTokens.h>
+#include <clStringSet.h>
+#include <clStablePool.h>
+#include "UniVersalShader/ArithmeticExpression.h"
+#include "UniVersalShader/ExpressionParser.h"
+#include "ExpressionSample.h"
+#define REFACTOR_COMMA
+
+GXLPCSTR aOperStack_HasError[] = {NULL,};
+
+GXLPCSTR aOperStack_008[] = {
+  "[*] [b] [c]",
+  "[+] [a] [b*c]",
+  NULL, };
+
+GXLPCSTR aOperStack_009[] = {
+  "[+] [a] [b]",
+  "[*] [(a+b)] [c]",
+  NULL, };
+
+GXLPCSTR aOperStack_010[] = {
+  "[+] [a] [b]",
+  "[+] [a+b] [c]",
+  "[*] [d] [e]",
+  "[/] [d*e] [f]",
+  "[+] [a+b+c] [d*e/f]",
+  NULL, };
+
+GXLPCSTR aOperStack_436[] = {
+  "[++] [n] []",
+  "[++] [] [n++]",
+  NULL, };
+
+GXLPCSTR aOperStack_442[] = {
+  "[~] [] [n]",
+  "[++] [] [~n]",
+  "[!] [] [++~n]",
+  NULL, };
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aOperStack_Return0100[] = {
+  "[.] [a] [x]",
+  "[.] [a] [y]",
+  "[.] [f] [z]",
+  "[,] [a.y] [f.z]",
+  "[,] [a.x] [a.y,f.z]",
+  "[F] [mix] [a.x,a.y,f.z]",
+ NULL, };
+#else
+GXLPCSTR aOperStack_Return0100[] = {
+  "[.] [a] [x]",
+  "[.] [a] [y]",
+  "[,] [a.x] [a.y]",
+  "[.] [f] [z]",
+  "[,] [a.x,a.y] [f.z]",
+  "[F] [mix] [a.x,a.y,f.z]",
+ NULL, };
+#endif
+
+GXLPCSTR aOperStack_absx5x_10[] = {
+  "[-=] [x] [5]",
+  "[,] [x-=5] [x]",
+  "[F] [abs] [(x-=5,x)]",
+  NULL
+};
+
+GXLPCSTR aOperStack_016[] = {
+  "[,] [0] [Theta]",
+  "[F] [max] [0,Theta]",
+  "[,] [max(0,Theta)] [10.0]",
+  "[F] [pow] [max(0,Theta),10.0]",
+  "[,] [SR] [SM]",
+  "[,] [pow(max(0,Theta),10.0)] [SR,SM]",  
+  "[F] [Lin] [pow(max(0,Theta),10.0),SR,SM]",
+  "[=] [L] [Lin(pow(max(0,Theta),10.0),SR,SM)]",
+  NULL, };
+
+GXLPCSTR aOperStack_017[] = {
+  "[.] [Output] [color]",
+  "[.] [Output.color] [rgb]",
+  "[*] [L] [g_vLightDiffuse]",
+  "[*] [L*g_vLightDiffuse] [g_fSunIntensity]",
+  "[=] [Output.color.rgb] [L*g_vLightDiffuse*g_fSunIntensity]",
+  NULL, };
+
+GXLPCSTR aOperStack_018[] = {
+  "[.] [Output] [I]",
+  "[.] [Output.I] [rgb]",
+  "[.] [Output] [E]",
+  "[.] [Output.E] [rgb]",
+  "[-] [1.0f] [Output.E.rgb]",
+  "[F] [I] [Theta]",
+  "[*] [(1.0f-Output.E.rgb)] [I(Theta)]",
+  "[.] [g_vLightDiffuse] [xyz]",
+  "[*] [(1.0f-Output.E.rgb)*I(Theta)] [g_vLightDiffuse.xyz]",
+  "[*] [(1.0f-Output.E.rgb)*I(Theta)*g_vLightDiffuse.xyz] [g_fSunIntensity]",
+  "[=] [Output.I.rgb] [(1.0f-Output.E.rgb)*I(Theta)*g_vLightDiffuse.xyz*g_fSunIntensity]",
+  NULL};
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aOperStack_033[] = {
+  "[.] [river] [bed]",
+  "[.] [river.bed] [patternTex]",
+  "[.] [normal] [xy]",
+  "[.] [river] [depth]",
+  "[*] [normal.xy] [river.depth]",
+  "[/] [normal.xy*river.depth] [10.0]",
+  "[.] [p] [xy]",
+  "[.] [river] [bed]",
+  "[.] [river.bed] [length]",
+  "[/] [river.bed.length] [2.0]",
+  "[/] [p.xy] [(river.bed.length/2.0)]",
+  "[+] [normal.xy*river.depth/10.0] [p.xy/(river.bed.length/2.0)]",
+
+  "[,] [gradx] [grady]",
+  "[,] [normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0)] [gradx,grady]",
+  "[,] [river.bed.patternTex] [normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady]",
+
+  "[F] [texture2DGrad] [river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady]",
+  "[.] [texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady)] [xyz]",
+  "[*] [groundColor] [texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz]",
+  "[,] [n] [vVec]",
+  "[F] [dot] [n,vVec]",
+  "[.] [river] [depth]",
+  "[*] [dot(n,vVec)] [river.depth]",
+  "[*] [dot(n,vVec)*river.depth] [riverDepth]",
+  "[/] [groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz] [(dot(n,vVec)*river.depth*riverDepth)]",
+  "[+] [riverShallowColor] [groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz/(dot(n,vVec)*river.depth*riverDepth)]",
+  "[=] [riverColor] [riverShallowColor+groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz/(dot(n,vVec)*river.depth*riverDepth)]",
+  NULL, };
+#else
+GXLPCSTR aOperStack_033[] = {
+  "[.] [river] [bed]",
+  "[.] [river.bed] [patternTex]",
+  "[.] [normal] [xy]",
+  "[.] [river] [depth]",
+  "[*] [normal.xy] [river.depth]",
+  "[/] [normal.xy*river.depth] [10.0]",
+  "[.] [p] [xy]",
+  "[.] [river] [bed]",
+  "[.] [river.bed] [length]",
+  "[/] [river.bed.length] [2.0]",
+  "[/] [p.xy] [(river.bed.length/2.0)]",
+  "[+] [normal.xy*river.depth/10.0] [p.xy/(river.bed.length/2.0)]",
+  "[,] [river.bed.patternTex] [normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0)]",
+  "[,] [river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0)] [gradx]",
+  "[,] [river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx] [grady]",
+  "[F] [texture2DGrad] [river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady]",
+  "[.] [texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady)] [xyz]",
+  "[*] [groundColor] [texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz]",
+  "[,] [n] [vVec]",
+  "[F] [dot] [n,vVec]",
+  "[.] [river] [depth]",
+  "[*] [dot(n,vVec)] [river.depth]",
+  "[*] [dot(n,vVec)*river.depth] [riverDepth]",
+  "[/] [groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz] [(dot(n,vVec)*river.depth*riverDepth)]",
+  "[+] [riverShallowColor] [groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz/(dot(n,vVec)*river.depth*riverDepth)]",
+  "[=] [riverColor] [riverShallowColor+groundColor*texture2DGrad(river.bed.patternTex,normal.xy*river.depth/10.0+p.xy/(river.bed.length/2.0),gradx,grady).xyz/(dot(n,vVec)*river.depth*riverDepth)]",
+  NULL, };
+#endif
+
+GXLPCSTR aOperStack_348[] = {
+  // a?b:c?f:g
+  "[:] [f] [g]",
+  "[?] [c] [f:g]",
+  "[:] [b] [c?f:g]",
+  "[?] [a] [b:c?f:g]",
+  NULL, };
+
+GXLPCSTR aOperStack_349[] = {
+  //a?b?d:e:c
+  "[:] [d] [e]",
+  "[?] [b] [d:e]",
+  "[:] [b?d:e] [c]",
+  "[?] [a] [b?d:e:c]",
+  NULL, };
+
+GXLPCSTR aOperStack_350[] = {
+  //a?b?d:e:c?f:g
+  "[:] [d] [e]",
+  "[?] [b] [d:e]",
+  "[:] [f] [g]",
+  "[?] [c] [f:g]",
+  "[:] [b?d:e] [c?f:g]",
+  "[?] [a] [b?d:e:c?f:g]",
+  NULL, };
+
+GXLPCSTR aSyntaxList_399[] = {
+  "[=] [a] [b]",
+  NULL };
+
+GXLPCSTR aSyntaxList_400[] = {
+  "[+] [b] [c]",
+  "[=] [a] [b+c]",
+  NULL };
+
+GXLPCSTR aSyntaxList_401[] = {
+  "[=] [c] [d]",
+  "[=] [b] [c=d]",
+  "[=] [a] [b=c=d]",
+  NULL };
+
+GXLPCSTR aSyntaxList_403[] = {
+  "[+] [b] [c]",
+  "[=] [a] [b+c]",
+  NULL };
+
+GXLPCSTR aSyntaxList_404[] = {
+  "[=] [c] [d]",
+  "[=] [b] [c=d]",
+  "[=] [a] [b=c=d]",
+  NULL };
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aSyntaxList_405[] = {
+  "[,] [d] [e]",
+  "[,] [c] [d,e]",
+  "[,] [b] [c,d,e]",
+  "[,] [a] [b,c,d,e]",
+  NULL };
+#else
+GXLPCSTR aSyntaxList_405[] = {
+  "[,] [a] [b]",
+  "[,] [a,b] [c]",
+  "[,] [a,b,c] [d]",
+  "[,] [a,b,c,d] [e]",
+  NULL };
+#endif
+
+
+GXLPCSTR aSyntaxList_406[] = {
+  "[=] [b] [c]",
+  "[,] [a] [b=c]",
+  NULL };
+
+GXLPCSTR aSyntaxList_407[] = {
+  "[+] [a] [b]",
+  "[=] [(a)] [a+b]",
+  NULL };
+
+GXLPCSTR aSyntaxList_474[] = {
+  "[C] [int] [a]",
+  "[=] [((int)a)] [5]",
+  NULL };
+
+GXLPCSTR aSyntaxList_475[] = {
+  "[++] [] [a]",
+  "[C] [int] [++a]",
+  "[~] [] [(int)++a]",
+  "[=] [k] [~(int)++a]",
+  NULL };
+
+GXLPCSTR aSyntaxList_476[] = {
+  "[++] [] [a]",
+  "[C] [int] [(++a)]",
+  "[~] [] [(int)(++a)]",
+  "[=] [k] [~(int)(++a)]",
+  NULL };
+
+GXLPCSTR aSyntaxList_477[] = {
+  "[++] [] [(a)]",
+  "[C] [int] [++(a)]",
+  "[~] [] [(int)++(a)]",
+  "[=] [k] [~(int)++(a)]",
+  NULL };
+
+GXLPCSTR aSyntaxList_478[] = {
+  "[*] [int] []",
+  "[&] [(int*)] [a]",
+  "[=] [((int*)&a)] [5]",
+  NULL };
+
+GXLPCSTR aSyntaxList_479[] = {
+  "[C] [constint] [a]",
+  "[=] [((constint)a)] [5]",
+  NULL };
+
+
+GXLPCSTR aSyntaxList_408[] = {
+  "[+] [a] [b]",
+  "[=] [a] [a+b]",
+  NULL };
+
+GXLPCSTR aSyntaxList_intiFrameintxinty_14[] = {
+  "[C] [int] [iFrame]",
+  "[C] [int] [x]",
+  "[+] [(int)iFrame] [(int)x]",
+  "[C] [int] [y]",
+  "[+] [(int)iFrame+(int)x] [(int)y]",
+  NULL
+};
+
+GXLPCSTR aSyntaxList_intiFrameintUxintUy_18[] = {
+  "[C] [int] [iFrame]",
+  "[.] [U] [x]",
+  "[F] [int] [U.x]",
+  "[+] [(int)iFrame] [int(U.x)]",
+  "[.] [U] [y]",
+  "[F] [int] [U.y]",
+  "[+] [(int)iFrame+int(U.x)] [int(U.y)]",
+  NULL};
+
+GXLPCSTR aSyntaxList_intiFrame231_12[] = {
+  "[C] [int] [iFrame]",
+  "[+] [2] [3]",
+  "[+] [2+3] [1]",
+  "[%] [(int)iFrame] [(2+3+1)]",
+  NULL };
+
+GXLPCSTR aSyntaxList_intpassintiFrame231_15[] = {
+  "[C] [int] [iFrame]",
+  "[+] [2] [3]",
+  "[+] [2+3] [1]",
+  "[%] [(int)iFrame] [(2+3+1)]",
+  "[=] [pass] [(int)iFrame%(2+3+1)]",
+  NULL };
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aOperStack_360[] = {
+  "[>] [sumWeight] [0.0]",
+  "[F] [sqrt] [sumWeight]",
+  "[/] [sumWeightedSlopes] [sqrt(sumWeight)]",
+  "[.] [river] [wave]",
+  "[.] [river.wave] [patternTex]",
+  "[.] [p] [xy]",
+  "[.] [river] [wave]",
+  "[.] [river.wave] [length]",
+  "[/] [p.xy] [river.wave.length]",
+
+  "[,] [gradx] [grady]",
+  "[,] [p.xy/river.wave.length] [gradx,grady]",
+  "[,] [river.wave.patternTex] [p.xy/river.wave.length,gradx,grady]",
+
+  "[F] [texture2DGrad] [river.wave.patternTex,p.xy/river.wave.length,gradx,grady]",
+  "[.] [texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady)] [xy]",
+  "[:] [sumWeightedSlopes/sqrt(sumWeight)] [texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady).xy]",
+  "[?] [sumWeight>0.0] [sumWeightedSlopes/sqrt(sumWeight):texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady).xy]",
+  NULL, };
+#else
+GXLPCSTR aOperStack_360[] = {
+  "[>] [sumWeight] [0.0]",
+  "[F] [sqrt] [sumWeight]",
+  "[/] [sumWeightedSlopes] [sqrt(sumWeight)]",
+  "[.] [river] [wave]",
+  "[.] [river.wave] [patternTex]",
+  "[.] [p] [xy]",
+  "[.] [river] [wave]",
+  "[.] [river.wave] [length]",
+  "[/] [p.xy] [river.wave.length]",
+  "[,] [river.wave.patternTex] [p.xy/river.wave.length]",
+  "[,] [river.wave.patternTex,p.xy/river.wave.length] [gradx]",
+  "[,] [river.wave.patternTex,p.xy/river.wave.length,gradx] [grady]",
+  "[F] [texture2DGrad] [river.wave.patternTex,p.xy/river.wave.length,gradx,grady]",
+  "[.] [texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady)] [xy]",
+  "[:] [sumWeightedSlopes/sqrt(sumWeight)] [texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady).xy]",
+  "[?] [sumWeight>0.0] [sumWeightedSlopes/sqrt(sumWeight):texture2DGrad(river.wave.patternTex,p.xy/river.wave.length,gradx,grady).xy]",
+  NULL, };
+#endif
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aOperStack_361[] = {
+  "[<] [rmu] [0.0]",
+  "[>] [delta] [0.0]",
+  "[&&] [rmu<0.0] [delta>0.0]",
+
+  "[F] [float] [RES_MU]",
+  "[/] [0.5] [float(RES_MU)]",
+  "[-] [0.5] [0.5/float(RES_MU)]",
+  "[,] [0.0] [0.5-0.5/float(RES_MU)]",
+  "[,] [0.0] [0.0,0.5-0.5/float(RES_MU)]",
+  "[,] [1.0] [0.0,0.0,0.5-0.5/float(RES_MU)]",
+
+  "[F] [float4] [1.0,0.0,0.0,0.5-0.5/float(RES_MU)]",
+  "[-] [] [1.0]",
+  "[*] [H] [H]",
+
+  "[F] [float] [RES_MU]",
+  "[/] [0.5] [float(RES_MU)]",
+  "[+] [0.5] [0.5/float(RES_MU)]",
+  "[,] [H] [0.5+0.5/float(RES_MU)]",
+  "[,] [H*H] [H,0.5+0.5/float(RES_MU)]",
+  "[,] [-1.0] [H*H,H,0.5+0.5/float(RES_MU)]",
+
+  "[F] [float4] [-1.0,H*H,H,0.5+0.5/float(RES_MU)]",
+  "[:] [float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU))] [float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  "[?] [rmu<0.0&&delta>0.0] [float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU)):float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  "[=] [cst] [rmu<0.0&&delta>0.0?float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU)):float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  NULL, };
+#else
+GXLPCSTR aOperStack_361[] = {
+  "[<] [rmu] [0.0]",
+  "[>] [delta] [0.0]",
+  "[&&] [rmu<0.0] [delta>0.0]",
+  "[,] [1.0] [0.0]",
+  "[,] [1.0,0.0] [0.0]",
+  "[F] [float] [RES_MU]",
+  "[/] [0.5] [float(RES_MU)]",
+  "[-] [0.5] [0.5/float(RES_MU)]",
+  "[,] [1.0,0.0,0.0] [0.5-0.5/float(RES_MU)]",
+  "[F] [float4] [1.0,0.0,0.0,0.5-0.5/float(RES_MU)]",
+  "[-] [] [1.0]",
+  "[*] [H] [H]",
+  "[,] [-1.0] [H*H]",
+  "[,] [-1.0,H*H] [H]",
+  "[F] [float] [RES_MU]",
+  "[/] [0.5] [float(RES_MU)]",
+  "[+] [0.5] [0.5/float(RES_MU)]",
+  "[,] [-1.0,H*H,H] [0.5+0.5/float(RES_MU)]",
+  "[F] [float4] [-1.0,H*H,H,0.5+0.5/float(RES_MU)]",
+  "[:] [float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU))] [float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  "[?] [rmu<0.0&&delta>0.0] [float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU)):float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  "[=] [cst] [rmu<0.0&&delta>0.0?float4(1.0,0.0,0.0,0.5-0.5/float(RES_MU)):float4(-1.0,H*H,H,0.5+0.5/float(RES_MU))]",
+  NULL, };
+#endif
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aOperStack_362[] = {
+  "[.] [viewdir] [z]",
+  "[>] [viewdir.z] [0.0]",
+  "[,] [0.5] [0.5]",
+  "[F] [float2] [0.5,0.5]",
+  "[.] [viewdir] [xy]",
+  "[*] [viewdir.xy] [4.0]",
+  "[+] [float2(0.5,0.5)] [viewdir.xy*4.0]",
+  "[,] [glareSampler] [float2(0.5,0.5)+viewdir.xy*4.0]",
+  "[F] [tex2D] [glareSampler,float2(0.5,0.5)+viewdir.xy*4.0]",
+  "[.] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0)] [rgb]",
+  "[,] [0.0] [0.0]",
+  "[,] [0.0] [0.0,0.0]",
+  "[F] [float3] [0.0,0.0,0.0]",
+  "[:] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb] [float3(0.0,0.0,0.0)]",
+  "[?] [viewdir.z>0.0] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb:float3(0.0,0.0,0.0)]",
+  "[=] [data] [viewdir.z>0.0?tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb:float3(0.0,0.0,0.0)]",
+  NULL, };
+#else
+GXLPCSTR aOperStack_362[] = {
+  "[.] [viewdir] [z]",
+  "[>] [viewdir.z] [0.0]",
+  "[,] [0.5] [0.5]",
+  "[F] [float2] [0.5,0.5]",
+  "[.] [viewdir] [xy]",
+  "[*] [viewdir.xy] [4.0]",
+  "[+] [float2(0.5,0.5)] [viewdir.xy*4.0]",
+  "[,] [glareSampler] [float2(0.5,0.5)+viewdir.xy*4.0]",
+  "[F] [tex2D] [glareSampler,float2(0.5,0.5)+viewdir.xy*4.0]",
+  "[.] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0)] [rgb]",
+  "[,] [0.0] [0.0]",
+  "[,] [0.0,0.0] [0.0]",
+  "[F] [float3] [0.0,0.0,0.0]",
+  "[:] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb] [float3(0.0,0.0,0.0)]",
+  "[?] [viewdir.z>0.0] [tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb:float3(0.0,0.0,0.0)]",
+  "[=] [data] [viewdir.z>0.0?tex2D(glareSampler,float2(0.5,0.5)+viewdir.xy*4.0).rgb:float3(0.0,0.0,0.0)]",
+  NULL, };
+#endif
+
+GXLPCSTR aOperStack_if001[] = {
+  "[==] [a] [b]",
+  "[+] [c] [d]",
+  "[>] [c+d] [e]",
+  "[&&] [a==b] [c+d>e]",
+  "[=] [b] [c]",
+  "[if] [a==b&&c+d>e] [b=c]",
+  NULL, };
+
+GXLPCSTR aOperStack_if004[] = {
+  "[>] [a] [b]",
+  "[=] [c] [a]",
+  "[if] [a>b] [c=a]",
+  "[<] [a] [b]",
+  "[=] [c] [b]",
+  "[if] [a<b] [c=b]",
+  NULL, };
+
+GXLPCSTR aOperStack_if006[] = {
+  "[==] [a] [b]",
+  "[+] [c] [d]",
+  "[>] [c+d] [e]",
+  "[&&] [a==b] [c+d>e]",
+  "[=] [b] [c]",
+  "[=] [a] [b]",
+  "[else] [] [a=b]",
+  "[if] [a==b&&c+d>e] [b=c]",
+  NULL, };
+
+GXLPCSTR aOperStack_if007[] = {
+  "[==] [a] [b]",
+  "[<] [c] [d]",
+  "[&&] [a==b] [c<d]",
+  "[=] [b] [c]",
+  "[*] [4] [a]",
+  "[=] [a] [4*a]",
+  "[=] [a] [b]",
+  "[else] [] [a=b]",
+  "[if] [a==b&&c<d] [b=c;a=4*a]",
+  NULL, };
+
+GXLPCSTR aOperStack_if008[] = {
+  "[==] [a] [b]",
+  "[=] [r] [c]",
+  "[>] [a] [b]",
+  "[=] [r] [a]",
+  "[=] [r] [b]",
+  "[else] [] [r=b]",
+  "[elif] [a>b] [r=a]",
+  "[if] [a==b] [r=c]",
+  NULL, };
+
+GXLPCSTR aOperStack_if009[] = {
+  "[==] [a] [b]",
+  "[=] [b] [c]",
+  "[*] [4] [a]",
+  "[=] [a] [4*a]",
+  "[>] [a] [b]",
+  "[=] [a] [b]",
+  "[=] [a] [c]",
+  "[else] [] [a=c]",
+  "[elif] [a>b] [a=b]",
+  "[if] [a==b] [b=c;a=4*a]",
+  NULL, };
+
+//////////////////////////////////////////////////////////////////////////
+
+GXLPCSTR aOperStack_OC001[] = {
+  "[=] [i] [4]",
+  "[=] [n] [10]",
+  "[,] [i=4] [n=10]",
+  NULL, };
+
+GXLPCSTR aOperStack_OC002[] = {
+  "[-] [] [i]",
+  "[-] [n] [-i]",
+  NULL, };
+
+GXLPCSTR aOperStack_OC003[] = {
+  "[--] [n] []",
+  "[-] [n--] [i]",
+  NULL, };
+
+GXLPCSTR aOperStack_OC004[] = {
+  "[--] [] [i]",
+  "[-] [n] [--i]",
+  NULL, };
+
+
+GXLPCSTR aOperStack_OC005[] = {
+  "[--] [n] []",
+  "[--] [] [i]",
+  "[-] [n--] [--i]",
+  NULL, };
+
+GXLPCSTR aOperList_396[] = {
+  "[:] [texcoord] [TEXCOORD0]",
+  "[:] [pos] [POSITION0]",
+  "[,] [texcoord:TEXCOORD0] [pos:POSITION0]",
+  NULL, };
+
+GXLPCSTR aOperList_397[] = {
+  "[:] [texcoord] [TEXCOORD0]",
+  "[,] [0] [0]",
+  "[F] [float2] [0,0]",
+  "[=] [texcoord:TEXCOORD0] [float2(0,0)]",
+  "[:] [pos] [POSITION0]",
+  "[,] [320] [240]",
+  "[F] [float2] [320,240]",
+  "[=] [pos:POSITION0] [float2(320,240)]",
+  "[,] [texcoord:TEXCOORD0=float2(0,0)] [pos:POSITION0=float2(320,240)]",
+  NULL, };
+
+GXLPCSTR aOperStack_403[] = {
+  "[*] [2] [3]",
+  "[I] [freqs] [2*3]",
+  "[,] [12] [8]",
+  "[,] [12,8] [4]",
+  "[,] [12,8,4] [5]",
+  "[,] [12,8,4,5] [3]",
+  "[,] [12,8,4,5,3] [9]",
+  "[=] [freqs[2*3]] [{12,8,4,5,3,9}]",
+  NULL, };
+
+#define _I_ __FILE__,__LINE__
+
+SAMPLE_EXPRESSION samplesOpercode[] = {
+  {0, _I_, "i=4, n=10",  7, aOperStack_OC001, "OK"}, // 下面的例子就是这里的初始值
+  {0, _I_, "n k", 2, NULL, "OK"},   // 会认为是声明, 类型 变量名
+  {0, _I_, "n k m", 3, NULL, "OK"}, // 会认为是声明, 修饰 类型 变量名
+  {0, _I_, "n--i",       3, NULL, "FAILED"},// err
+  {0, _I_, "n- -i",      4, aOperStack_OC002, "OK"},
+  {0, _I_, "n---i",      4, aOperStack_OC003, "OK"},// n=9, i=4, 结果6
+  {0, _I_, "n-- -i",     4, aOperStack_OC003, "OK"},// n=9, i=4, 结果6
+  {0, _I_, "n- --i",     4, aOperStack_OC004, "OK"},// n=10, i=3, 结果7
+  {0, _I_, "n--- --i",   5, aOperStack_OC005, "OK"},// n=9, i=3, 结果7
+  {0, _I_, "n--- - --i", 6, NULL, "OK"},// n=9, i=3, 结果13
+  {0, _I_, "!~!~!~!~n",  9, NULL, "OK"},
+  {0, _I_, "- -i",       3, NULL, "OK"},
+  {0, _I_, "(- -i)",     5, NULL, "OK"},
+  {0, _I_, "- - -i",     4, NULL, "OK"},
+  //{0, _I_, ";", 1},
+  //{0, _I_, ";;", 2},
+  {NULL},};
+
+SAMPLE_EXPRESSION samplesNumeric[] = {
+  // 整数
+  {0, _I_, "10",  1},
+  {0, _I_, "2e3", 1},
+  //"-10",
+  //"-2e3",
+
+  // 十六进制
+  {0, _I_, "0x123456", 1},
+
+  // 八进制
+  {0, _I_, "02314",  1},
+  {0, _I_, "-02314", 2},
+
+  // float
+  {0, _I_, "1.5",           1},
+  {0, _I_, "1.5f",          1},
+  {0, _I_, "1.",            1},
+  {0, _I_, ".5",            1},
+  {0, _I_, ".5f",           1},
+  {0, _I_, "1e3",           1},
+  {0, _I_, "1e-3",          1},
+  {0, _I_, "1.5e3",         1},
+  {0, _I_, "1.5e-3",        1},
+  {0, _I_, "1e3f",          1},
+  {0, _I_, "1e-3f",         1},
+  {0, _I_, "1.5e3f",        1},
+  {0, _I_, "1.5e-3f",       1},
+  {0, _I_, "1.e3f",         1},
+  {0, _I_, "1.e-3f",        1},
+  {0, _I_, ".5e3f",         1},
+  {0, _I_, ".5e-3f",        1},
+
+  // 负数float
+  {0, _I_, "-1.5",          2},
+  {0, _I_, "-1.5f",         2},
+  {0, _I_, "-1.",           2},
+  {0, _I_, "-.5",           2},
+  {0, _I_, "-.5f",          2},
+  {0, _I_, "-1e3",          2},
+  {0, _I_, "-1e-3",         2},
+  {0, _I_, "-1.5e3",        2},
+  {0, _I_, "-1.5e-3",       2},
+  {0, _I_, "-1e3f",         2},
+  {0, _I_, "-1e-3f",        2},
+  {0, _I_, "-1.5e3f",       2},
+  {0, _I_, "-1.5e-3f",      2},
+  {0, _I_, "-1.e3f",        2},
+  {0, _I_, "-1.e-3f",       2},
+  {0, _I_, "-.5e3f",        2},
+  {0, _I_, "-.5e-3f",       2},
+  {0, _I_, NULL, 0},};
+
+SAMPLE_EXPRESSION samplesSimpleExpression[] = {
+  // 基本表达式
+  {51000, _I_, "output.color", 3},
+  {51000, _I_, "output.color.x", 5},
+
+  // 数学表达式
+  {52000, _I_, "a+b*c", 5, aOperStack_008},
+  {52000, _I_, "(a+b)*c", 7, aOperStack_009},
+  {52000, _I_, "a+b+c+d*e/f", 11, aOperStack_010},
+  {52000, _I_, "k*((a*b)+c+d*e)", 15},
+  {52000, _I_, "++n++", 3, aOperStack_436}, // 可以解析,但是语法是错的, 前置++需要左值
+  {52000, _I_, "!++~n", 4, aOperStack_442},
+
+  // 三元操作
+  {53000, _I_, "a?b:c", 5},
+  {53000, _I_, "a>b?b:c", 7},
+  {53000, _I_, "a?b:c?f:g", 9, aOperStack_348},
+  {53000, _I_, "a?b?d:e:c", 9, aOperStack_349},
+  {53000, _I_, "a?b?d:e:c?f:g", 13, aOperStack_350},
+  {53000, _I_, "abs(_b=b) < abs(a)+1e-2 ? abs(abs(_b)-abs(a))<1e-2 ? dh1<dh2 ? _b:a: _b : a", 40},
+  {53000, _I_, "(d < res) ? res2 = res, res = d : (d < res2 && d != res) ? res2 = d : res2 = res2", },
+
+  // 赋值
+  {54000, _I_, "a=b", 3, aSyntaxList_399},
+  {54000, _I_, "a=b+c", 5, aSyntaxList_400},
+  {54000, _I_, "a=b=c=d", 7, aSyntaxList_401},
+  {54000, _I_, "float a", 2},
+  {54000, _I_, "float a=b+c", 6, aSyntaxList_403},
+  {54000, _I_, "float3 a=b=c=d", 8, aSyntaxList_404},
+  {54000, _I_, "float a,b,c,d,e", 10, aSyntaxList_405},
+  {54000, _I_, "float a, b = c", 6, /*aSyntaxList_406*/},
+  {54000, _I_, "(a)=a+b", 7, aSyntaxList_407},
+  {54000, _I_, "((int)a)=5", 8, aSyntaxList_474}, // FIXME: type cast 优先级不正确
+  {54000, _I_, "k=~n&i"},
+  {54000, _I_, "k=~(int)++a", 8, aSyntaxList_475},
+  {54000, _I_, "k=~(int)(++a)", 10, aSyntaxList_476},
+  {54000, _I_, "k=~(int)++(a)", 10, aSyntaxList_477},
+  {54000, _I_, "((int*)&a)=5", 10, aSyntaxList_478},
+  {54001, _I_, "((const int)a)=5", 9, aSyntaxList_479},
+  {54002, _I_, "((const int)(a + b))", 11, },
+  {54003, _I_, "(float)(a.x == b.x)", 12, },
+  {54004, _I_, "float4((float)(a.x == b.x), (float)(a.y == b.y), (float)(a.z == b.z), (float)(a.w == b.w))",},
+  //{54000, _I_, "((const int)&a)=5", 0},
+  {54000, _I_, "(a=a+b)", 7, aSyntaxList_408},
+  {54000, _I_, "(int)iFrame + (int)x + (int)y", 14, aSyntaxList_intiFrameintxinty_14},
+  {54000, _I_, "(int)iFrame + int(U.x) + int(U.y)", 18, aSyntaxList_intiFrameintUxintUy_18},
+  {54000, _I_, "(int)iFrame % (2 + 3 + 1)", 12, aSyntaxList_intiFrame231_12},
+  {54000, _I_, "int pass = (int)iFrame % (2 + 3 + 1)", 15, aSyntaxList_intpassintiFrame231_15},
+
+  //{54000, _I_, "a=a+b;b=a-c*d;c=a*d;", 20}, // 不再支持
+  //{54000, _I_, "(a=a+b);(b=a-c*d);c=a*d;", 24},
+
+  // 定义
+  {55000, _I_, "float2 texcoord : TEXCOORD0, pos : POSITION0", 8, aOperList_396},
+  {55000, _I_, "float2 texcoord : TEXCOORD0 = float2(0,0), pos : POSITION0 = float2(320, 240)", 0, aOperList_397},
+  {55000, _I_, "float freqs, time, frame, fps", 8, NULL},
+  {55000, _I_, "float freqs[8], time[4]", 10},
+  {55000, _I_, "float freqs[8] : FREQUENT, time[4]:TIME", 14},
+  {55000, _I_, "float freqs[16]", 5},
+  {55000, _I_, "float freqs[16][8]", 8},
+  {55000, _I_, "float freqs[] = {12, 3, 5}", 12},
+  {55000, _I_, "float freqs[2*3] = {12, 8, 4, 5, 3, 9}", 21, /*aOperStack_403*/},
+  {55000, _I_, "float3 arr[] = {}", },
+  {55000, _I_, "float3 arr[] = {2}", },
+  {55000, _I_, "{{1,2,1}, {0,0,0}, {1,1,1}}", },
+  {55000, _I_, "{float3(1,2,1), float3(0,0,0), float3(1,1,1)}", },
+  //{55000, _I_, "{}", },
+  //{0, _I_, "float freqs[2*3] = {12, 8, 4, 5, 3, 9}", 21},
+  {55000, _I_, NULL,  0},};
+
+//SAMPLE_EXPRESSION samplesIfExpression[] = {
+//  {0, _I_, "if(a == b && c + d > e)", 12, aOperStack_HasError}, // error
+//  {0, _I_, "if(a == b && c + d > e) b=c;", 16, aOperStack_if001},
+//  {0, _I_, "if(a == b && c + d > e) b=c; a=4*a;", 22},
+//  {0, _I_, "if(a == b && c + d > e) { b=c; a=4*a; }", 24},
+//
+//  {0, _I_, "if(a > b) c = a; if(a < b) c = b;", 20, aOperStack_if004},
+//
+//  {0, _I_, "if(a > b) else a = b;", 11, aOperStack_HasError}, // error
+//  {0, _I_, "if(a == b && c + d > e) b=c; else a = b;", 21, aOperStack_if006},
+//  {0, _I_, "if(a == b && c + d > e) b=c; a=4*a; else a = b;", 27, aOperStack_HasError}, // error
+//  {0, _I_, "if(a == b && c < d) { b=c; a=4*a; } else a = b;", 27, aOperStack_if007},
+//
+//  {0, _I_, "if(a == b) else if(a > b) a = b;", 17, aOperStack_HasError}, // error
+//  {0, _I_, "if(a == b) r=c; else if(a > b) r = a; else r = b;", 26, aOperStack_if008},
+//  {0, _I_, "if(a == b) b=c; a=4*a; else if(a > b) a = b else a = b;", 31, aOperStack_HasError}, // error
+//  {0, _I_, "if(a == b) { b=c; a=4*a; } else if(a > b) a = b; else a = c;", 34, aOperStack_if009},
+//  {0, _I_, "while(a - b * c)", 8, aOperStack_HasError},
+//  //{0, "switch(a - b * c)", 8},
+//  {0, _I_, NULL,  0},
+//  {0, _I_, "",    0},
+//  {0, _I_, "",    0},
+//  {0, _I_, "",    0},
+//  {0, _I_, "",    0},
+//};
+
+//////////////////////////////////////////////////////////////////////////
+
+
+GXLPCSTR aOperStack_FOR000[] = {
+  "[for_2] [] []",
+  "[for_1] [] []",
+  NULL};
+
+GXLPCSTR aOperStack_FOR001[] = {
+  "[=] [inti] [0]",
+  "[<] [i] [10]",
+  "[++] [i] []",
+  "[*] [b] [c]",
+  "[+] [a] [b*c]",
+  "[=] [n] [a+b*c]",
+  "[for_2] [i<10] [i++]",
+  "[for_1] [inti=0] [n=a+b*c]",
+  NULL};
+
+GXLPCSTR aOperStack_FOR002[] = {
+  "[=] [inti] [0]",
+  "[<] [i] [10]",
+  "[++] [i] []",
+  "[*] [b] [c]",
+  "[+] [a] [b*c]",
+  "[=] [n] [a+b*c]",
+  "[for_2] [i<10] [i++]",
+  "[for_1] [inti=0] [n=a+b*c]",
+  NULL};
+
+//GXLPCSTR* aOperStack_FOR003 = aOperStack_FOR002;
+
+GXLPCSTR aOperStack_FOR004[] = {
+  "[=] [inti] [0]",
+  "[=] [intn] [10]",
+  "[,] [inti=0] [intn=10]",
+  "[<] [i] [10]",
+  "[>=] [n] [0]",
+  "[,] [i<10] [n>=0]",
+  "[++] [i] []",
+  "[--] [] [n]",
+  "[,] [i++] [--n]",
+  "[*] [b] [c]",
+  "[+] [a] [b*c]",
+  "[+] [a+b*c] [n]",
+  "[=] [r] [a+b*c+n]",
+  "[<] [n] [5]",
+  "[F] [out] [n]",
+  "[if] [n<5] [out(n)]",
+  "[for_2] [i<10,n>=0] [i++,--n]",
+  "[for_1] [inti=0,intn=10] [r=a+b*c+n;if(n<5){out(n);}]",
+  NULL};
+
+
+//SAMPLE_EXPRESSION samplesForExpression[] = {
+//  //{0, ";;;;;",    0},
+//  {0, _I_, "for(;;);", 0, aOperStack_FOR000},
+//  {0, _I_, "for(int i = 0; i < 10; i++) n = a+b*c;", 0, aOperStack_FOR001},
+//  {0, _I_, "for(int i = 0; i < 10; i++) n = a+b*c;", 0, aOperStack_FOR002},
+//  {0, _I_, "for(int i = 0; i < 10; i++) {n = a+b*c;}", 0, aOperStack_FOR002},
+//  {0, _I_, "for(int i = 0, int n = 10; i < 10, n >= 0; i++, --n) {r = a+b*c + n; if(n < 5) { out(n);} }", 0, aOperStack_FOR004},
+//  {0, _I_, NULL,  0},
+//};
+
+GXLPCSTR aSyntaxList_566[] = {
+  //"float uMuS = 0.5 / float(RES_MU_S) + (atan(max(muS, -0.1975) * tan(1.26 * 1.1)) / 1.1 + (1.0 - 0.26)) * 0.5 * (1.0 - 1.0 / float(RES_MU_S))"
+  "[F] [float] [RES_MU_S]",
+  "[/] [0.5] [float(RES_MU_S)]",
+  "[-] [] [0.1975]",
+  "[,] [muS] [-0.1975]",
+  "[F] [max] [muS,-0.1975]",
+  "[*] [1.26] [1.1]",
+  "[F] [tan] [1.26*1.1]",
+  "[*] [max(muS,-0.1975)] [tan(1.26*1.1)]",
+  "[F] [atan] [max(muS,-0.1975)*tan(1.26*1.1)]",
+  "[/] [atan(max(muS,-0.1975)*tan(1.26*1.1))] [1.1]",
+  "[-] [1.0] [0.26]",
+  "[+] [atan(max(muS,-0.1975)*tan(1.26*1.1))/1.1] [(1.0-0.26)]",
+  "[*] [(atan(max(muS,-0.1975)*tan(1.26*1.1))/1.1+(1.0-0.26))] [0.5]",
+  "[F] [float] [RES_MU_S]",
+  "[/] [1.0] [float(RES_MU_S)]",
+  "[-] [1.0] [1.0/float(RES_MU_S)]",
+  "[*] [(atan(max(muS,-0.1975)*tan(1.26*1.1))/1.1+(1.0-0.26))*0.5] [(1.0-1.0/float(RES_MU_S))]",
+  "[+] [0.5/float(RES_MU_S)] [(atan(max(muS,-0.1975)*tan(1.26*1.1))/1.1+(1.0-0.26))*0.5*(1.0-1.0/float(RES_MU_S))]",
+  "[=] [uMuS] [0.5/float(RES_MU_S)+(atan(max(muS,-0.1975)*tan(1.26*1.1))/1.1+(1.0-0.26))*0.5*(1.0-1.0/float(RES_MU_S))]",
+  NULL};
+
+#ifdef REFACTOR_COMMA
+GXLPCSTR aSyntaxList_542[] = {
+  // "return tex3D(table, float3((uNu + uMuS) / float(RES_NU), uMu, uR)) * (1.0 - lerp) +  tex3D(table, float3((uNu + uMuS + 1.0) / float(RES_NU), uMu, uR)) * lerp"
+  "[+] [uNu] [uMuS]",
+  "[F] [float] [RES_NU]",
+  "[/] [(uNu+uMuS)] [float(RES_NU)]",
+
+  "[,] [uMu] [uR]",
+  "[,] [(uNu+uMuS)/float(RES_NU)] [uMu,uR]",
+
+  "[F] [float3] [(uNu+uMuS)/float(RES_NU),uMu,uR]",
+  "[,] [table] [float3((uNu+uMuS)/float(RES_NU),uMu,uR)]",
+  "[F] [tex3D] [table,float3((uNu+uMuS)/float(RES_NU),uMu,uR)]",
+  "[-] [1.0] [lerp]",
+  "[*] [tex3D(table,float3((uNu+uMuS)/float(RES_NU),uMu,uR))] [(1.0-lerp)]",
+  "[+] [uNu] [uMuS]",
+  "[+] [uNu+uMuS] [1.0]",
+  "[F] [float] [RES_NU]",
+  "[/] [(uNu+uMuS+1.0)] [float(RES_NU)]",
+
+  "[,] [uMu] [uR]",
+  "[,] [(uNu+uMuS+1.0)/float(RES_NU)] [uMu,uR]",
+
+  "[F] [float3] [(uNu+uMuS+1.0)/float(RES_NU),uMu,uR]",
+  "[,] [table] [float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR)]",
+  "[F] [tex3D] [table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR)]",
+  "[*] [tex3D(table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR))] [lerp]",
+  "[+] [tex3D(table,float3((uNu+uMuS)/float(RES_NU),uMu,uR))*(1.0-lerp)] [tex3D(table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR))*lerp]",
+  NULL };
+#else
+GXLPCSTR aSyntaxList_542[] = {
+  // "return tex3D(table, float3((uNu + uMuS) / float(RES_NU), uMu, uR)) * (1.0 - lerp) +  tex3D(table, float3((uNu + uMuS + 1.0) / float(RES_NU), uMu, uR)) * lerp"
+  "[+] [uNu] [uMuS]",
+  "[F] [float] [RES_NU]",
+  "[/] [(uNu+uMuS)] [float(RES_NU)]",
+  "[,] [(uNu+uMuS)/float(RES_NU)] [uMu]",
+  "[,] [(uNu+uMuS)/float(RES_NU),uMu] [uR]",
+  "[F] [float3] [(uNu+uMuS)/float(RES_NU),uMu,uR]",
+  "[,] [table] [float3((uNu+uMuS)/float(RES_NU),uMu,uR)]",
+  "[F] [tex3D] [table,float3((uNu+uMuS)/float(RES_NU),uMu,uR)]",
+  "[-] [1.0] [lerp]",
+  "[*] [tex3D(table,float3((uNu+uMuS)/float(RES_NU),uMu,uR))] [(1.0-lerp)]",
+  "[+] [uNu] [uMuS]",
+  "[+] [uNu+uMuS] [1.0]",
+  "[F] [float] [RES_NU]",
+  "[/] [(uNu+uMuS+1.0)] [float(RES_NU)]",
+  "[,] [(uNu+uMuS+1.0)/float(RES_NU)] [uMu]",
+  "[,] [(uNu+uMuS+1.0)/float(RES_NU),uMu] [uR]",
+  "[F] [float3] [(uNu+uMuS+1.0)/float(RES_NU),uMu,uR]",
+  "[,] [table] [float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR)]",
+  "[F] [tex3D] [table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR)]",
+  "[*] [tex3D(table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR))] [lerp]",
+  "[+] [tex3D(table,float3((uNu+uMuS)/float(RES_NU),uMu,uR))*(1.0-lerp)] [tex3D(table,float3((uNu+uMuS+1.0)/float(RES_NU),uMu,uR))*lerp]",
+  NULL};
+#endif
+
+SAMPLE_EXPRESSION samplesExpression[] = {
+  {0, _I_, "abs(x)", 4},
+  {0, _I_, "abs((x-=5, x))", 10, aOperStack_absx5x_10},
+  {0, _I_, "max(y, (x*=y, x-=5, x))", 16,},
+  {0, _I_, "max((x*=y, x-=5, x), y)", 16,},
+  {0, _I_, "lerp((x*=y, x-=5, x), (y+=2,y), (s/=2, s))",30},
+  {0, _I_, "SPRITE(0xFFFE,0xEAA9,0xE569,0xE6B9,0xE6B9,0xEBF9,0xEAA9,0x9555)", 18},
+  {0, _I_, "(Output.LdotN*shadowFactor)+Output.Ambient+Output.Specular*shadowFactor", 17},
+  {0, _I_, "Input.Normal = (Input.Normal - 0.5) * 2.0", 13},
+  {0, _I_, "Input.Position.xyz += SwingGrass(Input.Position.xyz, Input.Texcoord.y - 0.1875)", 22},
+  {0, _I_, "float  spec = max(0, dot(normalize(Input.vViewDir), normalize(vRLight)))", 22},
+  {0, _I_, "const float fAdjustFactor = 255.0 / 256.0 * 2.0", 9},
+  {0, _I_, "float SR = ( 1.05f - pow( V.y, 0.3f ) ) * 1000", 17},
+  {0, _I_, "float3 L = Lin( pow(max(0, Theta), 10.0), SR, SM )", 21, aOperStack_016},
+  {0, _I_, "Output.color.rgb = L * g_vLightDiffuse * g_fSunIntensity", 11, aOperStack_017},
+  {0, _I_, "Output.I.rgb = (1.0f - Output.E.rgb) * I( Theta ) * g_vLightDiffuse.xyz * g_fSunIntensity", 26, aOperStack_018},
+  {0, _I_, "float4 c = Output.Diffuse * ((Output.LdotN * shadowFactor) + Output.Ambient + Output.Specular * shadowFactor)", 26},
+  {0, _I_, "float4 c = Output.Diffuse * (Output.LdotN + Output.Ambient)", 16},
+  {0, _I_, "float4 Diffuse = tex2D(MainSampler, Input.TexUV) * Input.Color", 15},
+  {0, _I_, "Output.uvSM.x = (Output.uvSM.x + Output.uvSM.w) * 0.5", 21},
+  {0, _I_, "float blend = clamp((d - deformation.blending.x) / deformation.blending.y, 0.0, 1.0)", 25},
+  {0, _I_, "vec2 slopesVal = texture2DGrad(river.wave.patternTex, rCoord / river.wave.length, gradx, grady).xy", 25},
+  {0, _I_, "vec3 fn = vec3(textureTile(fragmentNormalSampler, uv).xy * 2.0 - 1.0, 0.0)", 20},
+  {0, _I_, "slopes = texture2DGrad(river.wave.patternTex, p.xy / river.wave.length, gradx, grady).xy", 26},
+  {0, _I_, "riverColor = riverShallowColor + groundColor * texture2DGrad(river.bed.patternTex, normal.xy * river.depth / 10.0 + p.xy / (river.bed.length / 2.0), gradx, grady).xyz / (dot(n, vVec) * river.depth * riverDepth)", 59, aOperStack_033},
+  {0, _I_, "vec2 v = abs(st * river.gridSize / river.screenSize - floor(st * river.gridSize / river.screenSize) - 0.5)", 30},
+  {0, _I_, "data.r += mod(dot(floor(deformation.offset.xy / deformation.offset.z + 0.5), vec2(1.0)), 2.0)", 33},
+  {0, _I_, "float3 inscatter = skyRadiance(WCP + origin, d, WSD, extinction, 0.0)", 17},
+  {0, _I_, "float4 c = Output.Diffuse * ((Output.LdotN * shadowFactor) + Output.Ambient)", 20},
+  {0, _I_, "float blend = clamp((d - deformation.blending.x) / deformation.blending.y, 0.0, 1.0)", 25},
+  {0, _I_, "groundColor = treeBrdf(q, d, lcc, v, fn, WSD, vec3(0.0, 0.0, 1.0), reflectance, sunL, skyE)", 31},
+  {0, _I_, "data.r += mod(dot(floor(deformation.offset.xy / deformation.offset.z + 0.5), vec2(1.0)), 2.0)", 33},
+  {0, _I_, "float uMu = cst.w + (rmu * cst.x + sqrt(delta + cst.y)) / (rho + cst.z) * (0.5 - 1.0 / float(RES_MU))", 42},
+  {0, _I_, "float uMuS = 0.5 / float(RES_MU_S) + (atan(max(muS, -0.1975) * tan(1.26 * 1.1)) / 1.1 + (1.0 - 0.26)) * 0.5 * (1.0 - 1.0 / float(RES_MU_S))", 50, aSyntaxList_566},
+  {0, _I_, "return tex3D(table, float3((uNu + uMuS      ) / float(RES_NU), uMu, uR)) * (1.0 - lerp) +  tex3D(table, float3((uNu + uMuS + 1.0) / float(RES_NU), uMu, uR)) * lerp", 56, aSyntaxList_542},
+  {0, _I_, "float2 y = a01s / (2.3193*abs(a01) + sqrt(1.52*a01sq + 4.0)) * float2(1.0, exp(-d/H*(d/(2.0*r)+mu)))", 47},
+  {0, _I_, "m_fHue = m_fSaturation = m_fValue = 0.0",    7},
+
+  {0, _I_, "float4 cst = rmu < 0.0 && delta > 0.0 ? float4(1.0, 0.0, 0.0, 0.5 - 0.5 / float(RES_MU)) : float4(-1.0, H * H, H, 0.5 + 0.5 / float(RES_MU))", 49, aOperStack_361},
+  {0, _I_, "float3 data = viewdir.z > 0.0 ? tex2D(glareSampler, float2(0.5,0.5) + viewdir.xy * 4.0).rgb : float3(0.0,0.0,0.0)", 37, aOperStack_362},
+
+  {0, _I_, "return mix(a.x, a.y, f.z)", 0, aOperStack_Return0100},
+  {0, _I_, "return sumWeight > 0.0 ? sumWeightedSlopes / sqrt(sumWeight) : texture2DGrad(river.wave.patternTex, p.xy / river.wave.length, gradx, grady).xy", 36, aOperStack_360},
+  {0, _I_, "return 1.5 * 1.0 / (4.0 * M_PI) * (1.0 - mieG*mieG) * pow(1.0 + (mieG*mieG) - 2.0*mieG*mu, -3.0/2.0) * (1.0 + mu * mu) / (2.0 + mieG*mieG)", 56},
+  {0, _I_, "return float4(  c.xyz * Input.E.xyz  + Input.I.xyz, Output.Diffuse.w)", 25},
+  {0, _I_, "return (vBetaMieTheta * pow((1.0f - g), 2.0)) / (pow(abs(1 + g * g - 2 * g * Theta), 1.5))", 37},
+  {0, _I_, "return vBetaRayTheta * (2.0f + 0.5f * Theta * Theta)", 12},
+  {0, _I_, "return (BetaR(Theta) + BetaM(Theta)) / (vBetaRay + vBetaMie)", 18},
+  {0, _I_, "return exp( -(vBetaRay * SR + vBetaMie * SM))", 14},
+  {0, _I_, "return ((BetaR(Theta) + BetaM(Theta)) * (1.0f - exp(-(vBetaRay * SR + vBetaMie * SM)))) / (vBetaRay + vBetaMie)", 38},
+  {0, _I_, NULL,  0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, "",    0},
+  {0, _I_, NULL,  0},
+};

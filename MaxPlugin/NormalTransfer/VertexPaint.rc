@@ -1,0 +1,307 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// 中文(简体) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE LANG_CHINESE, SUBLANG_NEUTRAL
+#pragma code_page(936)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_EDIT_NORMALS DIALOGEX 0, 0, 108, 264
+STYLE DS_SETFONT | WS_CHILD
+FONT 8, "MS Sans Serif", 0, 0, 0x0
+BEGIN
+    GROUPBOX        "Select By",IDC_EN_SELECT_BY_BOX,4,2,99,37
+    CONTROL         "Normal",IDC_EN_SELBY_NORMAL,"Button",BS_AUTORADIOBUTTON,11,13,38,10
+    CONTROL         "Edge",IDC_EN_SELBY_EDGE,"Button",BS_AUTORADIOBUTTON,55,13,33,10
+    CONTROL         "Vertex",IDC_EN_SELBY_VERTEX,"Button",BS_AUTORADIOBUTTON,11,25,36,10
+    CONTROL         "Face",IDC_EN_SELBY_FACE,"Button",BS_AUTORADIOBUTTON,55,25,32,10
+    CONTROL         "Ignore Backfacing",IDC_EN_IGNORE_BACKFACING,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,42,93,10
+    CONTROL         "Show Handles",IDC_EN_SHOW_HANDLES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,54,93,10
+    LTEXT           "Display Length:",-1,4,72,50,8
+    CONTROL         "",IDC_EN_LENGTH,"CustEdit",WS_TABSTOP,55,71,39,10
+    CONTROL         "",IDC_EN_LENGTH_SPIN,"SpinnerControl",0x0,96,71,7,10
+    CONTROL         "Unify",IDC_EN_UNIFY,"CustButton",WS_TABSTOP,4,87,48,11
+    CONTROL         "Break",IDC_EN_BREAK,"CustButton",WS_TABSTOP,55,87,48,11
+    CONTROL         "Unify/Break to Average",IDC_EN_TO_AVERAGE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,7,101,93,10
+    GROUPBOX        "Average",IDC_EN_AVERAGE_BOX,4,113,99,52
+    CONTROL         "Selected",IDC_EN_AVERAGE,"CustButton",WS_TABSTOP,8,123,44,11
+    CONTROL         "",IDC_EN_AVERAGE_THRESHOLD,"CustEdit",WS_TABSTOP,55,124,36,10
+    CONTROL         "",IDC_EN_AVERAGE_THRESHOLD_SPIN,"SpinnerControl",0x0,93,124,7,10
+    CONTROL         "Use Threshold",IDC_EN_USE_THRESHOLD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,11,137,59,10
+    CONTROL         "Target",IDC_EN_TARGET_AVERAGE,"CustButton",WS_TABSTOP,8,150,44,11
+    CONTROL         "",IDC_EN_TAR_AVERAGE_BOX_SIZE,"CustEdit",WS_TABSTOP,55,151,18,10
+    CONTROL         "",IDC_EN_TAR_AVERAGE_BOX_SIZE_SPIN,"SpinnerControl",0x0,75,151,7,10
+    RTEXT           "pixels",IDC_EN_TAR_AVERAGE_PIXELS_TEXT,84,152,17,8
+    CONTROL         "Copy Value",IDC_EN_COPY,"CustButton",WS_TABSTOP,4,170,48,11
+    CONTROL         "Paste Value",IDC_EN_PASTE,"CustButton",WS_TABSTOP,55,170,48,11
+    CONTROL         "Specify",IDC_EN_SPECIFY,"CustButton",WS_TABSTOP,4,186,48,11
+    CONTROL         "Reset",IDC_EN_RESET,"CustButton",WS_TABSTOP,55,186,48,11
+    CONTROL         "Make Explicit",IDC_EN_MAKE_EXPLICIT,"CustButton",WS_TABSTOP,4,200,99,11
+    LTEXT           "123456 Normals Selected",IDC_EN_NUMBER_SEL,5,215,98,8
+    CONTROL         "选择参考模型",IDC_PICKOBJ,"CustButton",WS_TABSTOP,3,227,72,14
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_EDIT_NORMALS, DIALOG
+    BEGIN
+        BOTTOMMARGIN, 228
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_EDIT_NORMALS AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+#endif    // 中文(简体) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// 中文(简体，中国) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+#pragma code_page(936)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDS_LIBDESCRIPTION      "Legacy Vertex Paint Modifier (Autodesk)"
+    IDS_CATEGORY            "MAX STANDARD"
+    IDS_CLASS_NAME          "NormalTransfer"
+    IDS_PARAMS              "Parameters"
+    IDS_PAINTPROMPT         "Paint Vertex Colors on the Selected Object"
+    IDS_RESTORE             "Normal Transfer"
+    IDS_PAINT               "Paint Vertex Colors"
+    IDS_PICK                "Pick Vertex Color"
+    IDS_CLASS_NAME_ORIGINAL "NormalTransfer"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_EDIT_EDGES          "Edit Edges"
+    IDS_EDIT_FACES          "Edit Polygons"
+    IDS_REMOVE_VERTICES     "Remove Vertices"
+    IDS_REMOVE_EDGES        "Remove Edges"
+    IDS_REMOVE              "Remove"
+    IDS_PICK_LIFT_EDGE      "Pick Hinge"
+    IDS_EDIT_NORMALS_MOD    "Edit Normals(紫龙)"
+    IDS_EN_DISPLAY_LENGTH   "Display Length"
+    IDS_EN_NUM_NORMALS_SELECTED "%d Normals Selected"
+    IDS_EN_WHICH_NORMAL_SELECTED "Normal %d Selected"
+    IDS_EN_NORMAL           "Normal"
+    IDS_EN_IGNORE_BACKFACING "Ignore Backfacing"
+    IDS_EN_BREAK            "Break Normals"
+    IDS_EN_UNIFY            "Unify Normals"
+    IDS_EN_RESET            "Reset Normals"
+END
+
+STRINGTABLE
+BEGIN
+    IDS_EN_EDIT_NORMALS_MODIFIER "Edit Normals Modifier"
+    IDS_EN_EDIT_NORMALS_MODDATA "Edit Normals ModData"
+    IDS_EN_EDIT_NORMALS     "Edit Normals"
+    IDS_EN_SPECIFY          "Specify Normals"
+    IDS_OBJECT_LEVEL        "Object Level"
+    IDS_VERTEX_LEVEL        "Vertex Level"
+    IDS_EDGE_LEVEL          "Edge Level"
+    IDS_FACE_LEVEL          "Face Level"
+    IDS_BORDER_LEVEL        "Border Level"
+    IDS_ELEMENT_LEVEL       "Element Level"
+    IDS_EN_NORMAL_LEVEL     "Normal Level"
+    IDS_EN_MAKE_EXPLICIT    "Make Explicit"
+    IDS_WELD_PIXELS         "Weld Pixel Threshold"
+    IDS_EN_COPY             "Copy Normal"
+    IDS_EN_PASTE            "Paste Normal"
+    IDS_EN_SEL_LEVEL        "Selection Level"
+END
+
+#endif    // 中文(简体，中国) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+/////////////////////////////////////////////////////////////////////////////
+// 英语(美国) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_PANEL DIALOGEX 0, 0, 108, 302
+STYLE DS_SETFONT | WS_CHILD | WS_VISIBLE
+FONT 8, "MS Sans Serif", 0, 0, 0x0
+BEGIN
+    GROUPBOX        "Vertex Color Paint",IDC_STATIC,2,2,103,67
+    CONTROL         "Paint",IDC_PAINT,"CustButton",WS_TABSTOP,13,13,30,14
+    CONTROL         "",IDC_COLOR,"ColorSwatch",WS_TABSTOP,72,13,23,14
+    GROUPBOX        "Color Palette",IDC_STATIC,2,114,103,90
+    CONTROL         "",IDC_PALETTE_1,"ColorSwatch",WS_TABSTOP,14,128,17,14
+    CONTROL         "",IDC_PALETTE_2,"ColorSwatch",WS_TABSTOP,35,128,17,14
+    CONTROL         "",IDC_PALETTE_3,"ColorSwatch",WS_TABSTOP,56,128,17,14
+    CONTROL         "",IDC_PALETTE_4,"ColorSwatch",WS_TABSTOP,77,128,17,14
+    CONTROL         "",IDC_PALETTE_5,"ColorSwatch",WS_TABSTOP,14,147,17,14
+    CONTROL         "",IDC_PALETTE_6,"ColorSwatch",WS_TABSTOP,35,147,17,14
+    CONTROL         "",IDC_PALETTE_7,"ColorSwatch",WS_TABSTOP,56,147,17,14
+    CONTROL         "",IDC_PALETTE_8,"ColorSwatch",WS_TABSTOP,77,147,17,14
+    CONTROL         "",IDC_PALETTE_9,"ColorSwatch",WS_TABSTOP,14,165,17,14
+    CONTROL         "",IDC_PALETTE_10,"ColorSwatch",WS_TABSTOP,35,165,17,14
+    CONTROL         "",IDC_PALETTE_11,"ColorSwatch",WS_TABSTOP,56,165,17,14
+    CONTROL         "",IDC_PALETTE_12,"ColorSwatch",WS_TABSTOP,77,165,17,14
+    CONTROL         "",IDC_PALETTE_13,"ColorSwatch",WS_TABSTOP,14,184,17,14
+    CONTROL         "",IDC_PALETTE_14,"ColorSwatch",WS_TABSTOP,35,184,17,14
+    CONTROL         "",IDC_PALETTE_15,"ColorSwatch",WS_TABSTOP,56,184,17,14
+    CONTROL         "",IDC_PALETTE_16,"ColorSwatch",WS_TABSTOP,77,184,17,14
+    CONTROL         "",IDC_TINT,"CustEdit",WS_TABSTOP,54,35,24,10
+    CONTROL         "",IDC_TINT_SPIN,"SpinnerControl",0x0,80,35,7,10
+    LTEXT           "Opacity % :",IDC_STATIC,16,35,35,10
+    PUSHBUTTON      "VertCol",IDC_VC_ON,37,52,29,11
+    PUSHBUTTON      "Shaded",IDC_SHADED,70,52,29,11
+    LTEXT           "Toggle :",IDC_STATIC,8,52,27,8
+    CONTROL         "Pick",IDC_PICK,"CustButton",WS_TABSTOP,47,13,17,14
+    CONTROL         "Alpha:",IDC_AFFECT_ALPHA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,9,98,34,10
+    CONTROL         "",IDC_ALPHA,"CustEdit",WS_TABSTOP,47,98,24,10
+    CONTROL         "",IDC_ALPHA_SPIN,"SpinnerControl",0x0,73,98,7,10
+    CONTROL         "Colors",IDC_AFFECT_COLOR,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,9,83,35,10
+    CONTROL         "Illumination",IDC_AFFECT_ILLUM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,47,83,51,10
+    GROUPBOX        "Affect Channels",IDC_STATIC,2,71,103,42
+    CONTROL         "Pick normal ref",IDC_PICKOBJ,"CustButton",WS_TABSTOP,6,210,72,14
+    LISTBOX         IDC_OBJLIST,6,228,96,66,LBS_SORT | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_PANEL, DIALOG
+    BEGIN
+        LEFTMARGIN, 2
+        RIGHTMARGIN, 105
+        BOTTOMMARGIN, 297
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#include ""afxres.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "\r\n"
+    "#include ""veroverrides.h""\r\n"
+    "#include ""maxversion.r""\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Cursor
+//
+
+IDC_PAINTCURSOR         CURSOR                  "paintcur.cur"
+
+IDC_DROPPER_CURSOR      CURSOR                  "dropcurs.cur"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Bitmap
+//
+
+IDB_BUTTONS             BITMAP                  "Buttons.bmp"
+
+IDB_BUTTON_MASK         BITMAP                  "buttonmask.bmp"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_PANEL AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+#endif    // 英语(美国) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+#include "veroverrides.h"
+#include "maxversion.r"
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED
+

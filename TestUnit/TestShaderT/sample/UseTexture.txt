@@ -1,0 +1,41 @@
+shader
+{
+	pass
+	{
+		vertex="vs_main";
+		pixel="ps_main";
+
+		code
+		{
+			float4x4 matWVProj;
+			struct VS_INPUT
+			{
+			 float4 pos : POSITION;
+			 float4 uv : TEXCOORD0;
+			};
+
+			struct VS_OUTPUT
+			{
+			 float4 pos : SV_POSITION;
+			 float4 uv : TEXCOORD0;
+			};
+
+
+			sampler2D MainTexture;
+			sampler2D SecondTexture;
+
+			void vs_main(VS_INPUT i, out VS_OUTPUT o)
+			{
+			  o.pos = mul(matWVProj, i.pos);
+			  o.uv = i.uv;
+			}
+
+			float4 ps_main(VS_OUTPUT i) : SV_Target
+			{
+			  float4 c = tex2D(MainTexture, i.uv);
+			  float4 c2 = tex2D(SecondTexture, i.uv);
+			  return lerp(c, c2, i.uv.x);
+			}
+		}
+	}
+}

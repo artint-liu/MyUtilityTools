@@ -1,0 +1,55 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="sources">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="MarimoUVS">
+      <UniqueIdentifier>{43b136f4-c1ef-4427-b715-f662eaafbf42}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="TestParseArithmeticExpression.cpp">
+      <Filter>sources</Filter>
+    </ClCompile>
+    <ClCompile Include="TestParseFromFile.cpp">
+      <Filter>sources</Filter>
+    </ClCompile>
+    <ClCompile Include="ExpressionSample.cpp">
+      <Filter>sources</Filter>
+    </ClCompile>
+    <ClCompile Include="TestMarimoUVS.cpp">
+      <Filter>sources</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\ArithmeticExpr_static.cpp">
+      <Filter>MarimoUVS</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\ArithmeticExpression.cpp">
+      <Filter>MarimoUVS</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\ExpressionParser.cpp">
+      <Filter>MarimoUVS</Filter>
+    </ClCompile>
+    <ClCompile Include="TestInitList.cpp">
+      <Filter>sources</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ExpressionSample.h">
+      <Filter>sources</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\ExpressionParser.h">
+      <Filter>MarimoUVS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\UVShaderError.h">
+      <Filter>MarimoUVS</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\Marimo_trunk\GrapX\UniVersalShader\ArithmeticExpression.h">
+      <Filter>MarimoUVS</Filter>
+    </ClInclude>
+    <ClInclude Include="TestInitList.h">
+      <Filter>sources</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
