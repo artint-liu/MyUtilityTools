@@ -101,136 +101,79 @@ namespace MyUtility
     }
 
 
-    [DllImport("FbxExporter", EntryPoint = "NewMesh")]
-    public static extern void NewMesh(string name);
+   [DllImport("FbxExporter")]
+	public static extern void NewMesh(string name);
 
-    [DllImport("FbxExporter", EntryPoint = "Reset")]
-    public static extern void Reset();
+	[DllImport("FbxExporter")]
+	public static extern void Reset();
 
-    [DllImport("FbxExporter", EntryPoint = "SetRotation")]
-    public static extern void SetRotation(EOrder order, float x, float y, float z);
+	[DllImport("FbxExporter")]
+	public static extern void SetRotation(EOrder order, float x, float y, float z);
 
-    [DllImport("FbxExporter", EntryPoint = "AddVertices")]
-    public static extern long AddVertices(Vector3[] vert, int length);
+	[DllImport("FbxExporter")]
+	public static extern long AddVertices(Vector3[] vert, int length);
 
-    [DllImport("FbxExporter", EntryPoint = "AddColors")]
-    public static extern long AddColors(Color[] colors, int length);
+	[DllImport("FbxExporter")]
+	public static extern long AddColors(Color[] colors, int length);
 
-    [DllImport("FbxExporter", EntryPoint = "AddNormals")]
-    public static extern long AddNormals(Vector3[] normals, int length);
+	[DllImport("FbxExporter")]
+	public static extern long AddNormals(Vector3[] normals, int length);
 
-    [DllImport("FbxExporter", EntryPoint = "AddUV")]
-    public static extern long AddUV(int index, Vector2[] uvs, int length);
+	[DllImport("FbxExporter")]
+	public static extern long AddUV(int index, Vector2[] uvs, int length);
 
-    [DllImport("FbxExporter", EntryPoint = "AddTriangles")]
-    public static extern long AddTriangles(int nBaseIndex, int[] tri, int length);
+	[DllImport("FbxExporter")]
+	public static extern long AddTriangles(int nBaseIndex, int[] tri, int length);
 
-    [DllImport("FbxExporter", EntryPoint = "SaveMesh")]
-    public static extern long SaveMesh(string strPath, string name, float fScaler, EPreDefinedAxisSystem AxisSystem);
+	[DllImport("FbxExporter")]
+	public static extern long SaveMesh(string strPath, string name, float fScaler, EPreDefinedAxisSystem AxisSystem);
 
-    public static void SaveToFile(List<Transform> meshs, string strPath, string name)
-    {
-      int nBaseIndex = 0;
-      foreach (Transform t in meshs)
-      {
-        MeshFilter mf = t.GetComponent(typeof(MeshFilter)) as MeshFilter;
-        Mesh mesh = null;
-        Transform tranMesh = t;
-        if (mf != null)
-        {
-          mesh = mf.sharedMesh;
-        }
-        else
-        {
-          SkinnedMeshRenderer smr = t.GetComponent(typeof(SkinnedMeshRenderer)) as SkinnedMeshRenderer;
-          if (smr != null)
-          {
-            mesh = new Mesh();
-            smr.BakeMesh(mesh);
-            if (smr.rootBone == null)
-            {
-              tranMesh = smr.transform;
-            }
-            //mesh = smr.sharedMesh;
-          }
-        }
+	public static void SaveToFile(MeshFilter[] meshFilters, string strPath, string name)
+	{
+		int nBaseIndex = 0;
+		foreach (var mf in meshFilters)
+		{
+			if (mf == null || mf.sharedMesh == null)
+			{
+				continue;
+			}
 
-        if (mesh != null)
-        {
-          Vector3[] vertices = new Vector3[mesh.vertices.Length];
-          Vector3[] normals = new Vector3[mesh.vertices.Length];
-          GetMeshVertices(ref vertices, ref normals, mesh, tranMesh);
-          NewMesh(t.gameObject.name);
-          SetRotation(MyUtility.FBXExporter.EOrder.eOrderXYZ, 00, 0, 0);
+			//Transform tranMesh = t;
+			Mesh mesh = mf.sharedMesh;
 
-          AddVertices(vertices, vertices.Length);
-          if (mesh.colors.Length > 0)
-          {
-            AddColors(mesh.colors, mesh.colors.Length);
-          }
-          if (normals.Length > 0)
-          {
-            AddNormals(normals, normals.Length);
-          }
-          AddUV(0, mesh.uv, mesh.uv.Length);
-          AddTriangles(nBaseIndex, mesh.triangles, mesh.triangles.Length);
-          nBaseIndex += mesh.vertices.Length;
-        }
-      }
-      SaveMesh(strPath, name, 100.0f, EPreDefinedAxisSystem.eOpenGL);
-    }
+			if (mesh != null)
+			{
+				//Vector3[] vertices = new Vector3[mesh.vertices.Length];
+				//Vector3[] normals = new Vector3[mesh.vertices.Length];
+				//GetMeshVertices(ref vertices, ref normals, mesh, tranMesh);
+				NewMesh(mf.gameObject.name);
+				SetRotation(EOrder.eOrderXYZ, 0, 0, 0);
 
-    public static void SaveToFile(GameObject go, string strPath, string name)
-    {
-      List<Transform> meshs = new List<Transform>();
-      EnumChildren(meshs, go.transform);
-      SaveToFile(meshs, strPath, name);
-    }
+				AddVertices(mesh.vertices, mesh.vertices.Length);
+				if (mesh.colors.Length > 0)
+				{
+					AddColors(mesh.colors, mesh.colors.Length);
+				}
+				if (mesh.normals.Length > 0)
+				{
+					AddNormals(mesh.normals, mesh.normals.Length);
+				}
+				AddUV(0, mesh.uv, mesh.uv.Length);
+				if(mesh.uv2 != null || mesh.uv2.Length > 0)
+				{
+					AddUV(1, mesh.uv2, mesh.uv2.Length);
+				}
+				AddTriangles(/*nBaseIndex*/0, mesh.triangles, mesh.triangles.Length);
+				nBaseIndex += mesh.vertices.Length;
+			}
+		}
+		SaveMesh(strPath, name, 100.0f, EPreDefinedAxisSystem.eOpenGL);
+	}
 
-    public static void SaveToFile(GameObject[] gos, string strPath, string name)
-    {
-      List<Transform> meshs = new List<Transform>();
-      foreach (GameObject go in gos)
-      {
-        Debug.Log("Save to fbx:" + go.name);
-        EnumChildren(meshs, go.transform);
-      }
-      SaveToFile(meshs, strPath, name);
-    }
-
-    static void EnumChildren(List<Transform> meshs, Transform t)
-    {
-      MeshFilter mf = t.GetComponent(typeof(MeshFilter)) as MeshFilter;
-      SkinnedMeshRenderer smr = t.GetComponent(typeof(SkinnedMeshRenderer)) as SkinnedMeshRenderer;
-      if ((mf != null && mf.sharedMesh != null) || (smr != null && smr.sharedMesh != null))
-      {
-        meshs.Add(t);
-      }
-
-      int nCount = t.childCount;
-      for (int i = 0; i < nCount; i++)
-      {
-        Transform child = t.GetChild(i);
-        EnumChildren(meshs, child);
-      }
-    }
-
-    static void GetMeshVertices(ref Vector3[] vertices, ref Vector3[] normals, Mesh mesh, Transform t)
-    {
-      Vector3[] mesh_vertices = mesh.vertices;
-      Vector3[] mesh_normals = mesh.normals;
-
-      //Vector3[] vertices = new Vector3[mesh.vertices.Length];
-      for (int i = 0; i < vertices.Length; i++)
-      {
-        vertices[i] = t.TransformPoint(mesh_vertices[i]);
-        if (mesh_normals.Length > 0)
-        {
-          normals[i] = t.TransformVector(mesh_normals[i]).normalized;
-        }
-      }
-      //return vertices;
-    }
-
+	public static void SaveToFile(GameObject go, string strPath, string name)
+	{
+		var mfs = go.GetComponentsInChildren<MeshFilter>();
+		SaveToFile(mfs, strPath, name);
+	}
   }
 } // namespace
