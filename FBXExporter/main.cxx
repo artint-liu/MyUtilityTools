@@ -39,7 +39,7 @@
 #define UV_LAYERS 8
 //#define SAMPLE_FILENAME "ExportScene01.fbx"
 
-using namespace std;
+//using namespace std;
 
 bool g_bBinaryFBX = true;
 
@@ -64,20 +64,20 @@ struct Color
 
 struct MESH
 {
-  string          name;
-  vector<Vector3> vertices;
-  vector<Vector3> normals;
-  vector<Color>   colors;
-  vector<Vector2> uv[UV_LAYERS];
+  std::string          name;
+  std::vector<Vector3> vertices;
+  std::vector<Vector3> normals;
+  std::vector<Color>   colors;
+  std::vector<Vector2> uv[UV_LAYERS];
   int             nMaxUVChannels = 0;
-  vector<int>     triangles;
+  std::vector<int>     triangles;
   EFbxRotationOrder eRotationOrder = FbxEuler::eOrderXYZ;
   Vector3         rotation = {0, 0, 0};
 
   FbxNode* CreateMesh(FbxScene* pScene);
 };
 
-static list<MESH> s_SceneMeshs;
+static std::list<MESH> s_SceneMeshs;
 
 //static std::vector<Vector3> s_MeshVertices;
 //static std::vector<Vector3> s_MeshNormals;
@@ -390,14 +390,14 @@ FbxNode* MESH::CreateMesh(FbxScene* pScene)
     }
   }
 
-  list<FbxGeometryElementUV*> UVElement_List;
+  std::list<FbxGeometryElementUV*> UVElement_List;
   for(int n = 0; n <= nMaxUVChannels; n++) // 注意这里可能与输入的uv层顺序不一致
   {
     if(uv[n].empty()) {
       continue;
     }
 
-    stringstream str;
+    std::stringstream str;
     str << "UVChannel_" << n;
     FbxGeometryElementUV* pUVDiffuseElement = pMesh->CreateElementUV(str.str().c_str());
     pUVDiffuseElement->SetMappingMode(FbxLayerElement::eByPolygonVertex);
