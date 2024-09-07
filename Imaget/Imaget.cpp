@@ -1,7 +1,8 @@
 ﻿#include <windows.h>
+#include <windowsx.h>
 #include <gdiplus.h>
 #include <tchar.h>
-
+#include <clstd.h>
 #include "Imaget.h"
 
 #define MAX_LOADSTRING 100
@@ -173,22 +174,20 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 Gdiplus::Bitmap* CreateBitmap(HBITMAP hBitmap)
 {
-    SIZE size = {0};
-    GetBitmapDimensionEx(hBitmap, &size);
     DIBSECTION bitmap = { 0 };
     int count = GetObject(hBitmap, sizeof(DIBSECTION), &bitmap);
     DWORD err = GetLastError();
-    LPBYTE pBmpBits = (LPBYTE)malloc(size.cx * size.cy * 4);//原位图是32位的。
-    GetBitmapBits(hBitmap, size.cx * size.cy * 4, pBmpBits);
+    LPBYTE pBmpBits = (LPBYTE)malloc(bitmap.dsBm.bmWidth * bitmap.dsBm.bmWidthBytes);//原位图是32位的。
+    GetBitmapBits(hBitmap, bitmap.dsBm.bmWidth * bitmap.dsBm.bmWidthBytes, pBmpBits);
 
-    Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(size.cx, size.cy);
+    Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
     //填充GDI+ Bitmap数据
     Gdiplus::BitmapData bitmapData;
-    Gdiplus::Rect rect(0, 0, size.cx, size.cy);
+    Gdiplus::Rect rect(0, 0, bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
     pBitmap->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bitmapData);
-    int nLineSize = size.cx * 4;
+    int nLineSize = bitmap.dsBm.bmWidthBytes;
     BYTE* pDestBits = (BYTE*)bitmapData.Scan0;
-    for (int y = 0; y < size.cy; y++)
+    for (int y = 0; y < bitmap.dsBm.bmHeight; y++)
     {
         memcpy(pDestBits + y * nLineSize, pBmpBits + y * nLineSize, nLineSize);//按行复制
     }
@@ -262,37 +261,19 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
                 }
             }
         }
-
-        //{
-
-        //    HBITMAP hbm = (HBITMAP)GetClipboardData(uFormat);
-        //    SAFE_DELETE(g_pBitmap);
-        //    g_pBitmap = CreateBitmap(hbm);
-        //    if (g_pBitmap)
-        //    {
-        //        InvalidateRect(hWnd, NULL, TRUE);
-        //    }
-        //    //Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(hbm);
-        //    //Gdiplus::Image* pImage = new Gdiplus::Image()
-        //}
-        //WCHAR clipboard_info[1024];
-        //swprintf(clipboard_info, L"Clipboard\r\n Data Format = %x\r\n Data Address = 0x%x\r\n Data Size = %d", clipboard_format, global_memory, data_size);
-        //if (clipboard_format == CF_UNICODETEXT) {
-        //    LPCWSTR clipboard_data = (LPCWSTR)GlobalLock(global_memory);
-        //    if (clipboard_data != NULL) {
-        //        wcscat(clipboard_info, L"\r\nData: \r\n");
-        //        WCHAR buffer[1024];
-        //        DWORD data_size = GlobalSize(global_memory);
-        //        for (size_t i = 0; i < data_size; i++)
-        //            buffer[i] = clipboard_data[i];
-        //        buffer[data_size] = L'\0';
-        //        wcscat(clipboard_info, buffer);
-        //    }
-        //}
-        //SetWindowTextW(s_hwnd_edit_clipboard_info, clipboard_info);
-        //InvalidateRect(hWnd, NULL, TRUE);
+        else
+        {
+          WCHAR buffer[1024];
+          GetClipboardFormatNameW(uFormat, buffer, sizeof(buffer));
+          OutputDebugStringW(buffer);
+          HBITMAP hBitmap = (HBITMAP)GetClipboardData(CF_BITMAP);
+          if (hBitmap)
+          {
+            Gdiplus::Bitmap* pBitmap = CreateBitmap(hBitmap);
+            CreateImageViewerWindow(hInst, pBitmap);
+          }
+        }
         CloseClipboard();
-
     }
 }
 
@@ -310,97 +291,100 @@ void OnPaintMain(HWND hWnd, HDC hdc)
     g.DrawImage(g_pMainImage, 0, 0, rcClient.right, rcClient.bottom);
 }
 
+HMENU g_hMenu;
+
+void CreateMainMenu(HWND hWnd)
+{
+  g_hMenu = CreatePopupMenu();
+  MENUITEMINFOW info = { sizeof(MENUITEMINFOW) };
+  info.fMask = MIIM_STRING | MIIM_ID;
+  //info.fType;         // used if MIIM_TYPE (4.0) or MIIM_FTYPE (>4.0)
+  //info.fState;        // used if MIIM_STATE
+  info.wID = 1001;           // used if MIIM_ID
+  //info.hSubMenu;      // used if MIIM_SUBMENU
+  //info.hbmpChecked;   // used if MIIM_CHECKMARKS
+  //info.hbmpUnchecked; // used if MIIM_CHECKMARKS
+  //info. dwItemData;   // used if MIIM_DATA
+  info.dwTypeData = (LPWSTR)L"退出";    // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+  //info.cch;           // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+
+    InsertMenuItemW(g_hMenu, 0, false, &info);
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    switch (message)
+  switch (message)
+  {
+  case WM_CREATE:
+    hwndNextViewer = SetClipboardViewer(hWnd);
+    if (g_pMainImage)
     {
-    case WM_CREATE:
-        hwndNextViewer = SetClipboardViewer(hWnd);
-        if (g_pMainImage)
-        {
-            UpdateIcon(hWnd);
-        }
-        break;
+      UpdateIcon(hWnd);
+    }
+    CreateMainMenu(hWnd);
+    break;
 
-    case WM_COMMAND:
-        {
-            int wmId = LOWORD(wParam);
-            // 分析菜单选择:
-            //switch (wmId)
-            //{
-            //case IDM_ABOUT:
-            //    DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-            //    break;
-            //case IDM_EXIT:
-            //    DestroyWindow(hWnd);
-            //    break;
-            //default:
-            //    return DefWindowProc(hWnd, message, wParam, lParam);
-            //}
-        }
-        break;
-    case WM_PAINT:
-        {
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            OnPaintMain(hWnd, hdc);
-            EndPaint(hWnd, &ps);
-        }
-        break;
-
-    case WM_CHANGECBCHAIN:
-        if ((HWND)wParam == hwndNextViewer) // If the next window is closing, repair the chain. 
-        {
-            hwndNextViewer = (HWND)lParam;
-        }
-        else if (hwndNextViewer != NULL) // Otherwise, pass the message to the next link. 
-        {
-            SendMessage(hwndNextViewer, message, wParam, lParam);
-        }
-        break;
-
-    case WM_NCHITTEST:
+  case WM_COMMAND:
+  {
+    int wmId = LOWORD(wParam);
+    switch (wmId)
     {
-        LRESULT result = DefWindowProcW(hWnd, message, wParam, lParam);
-        if (result == HTCLIENT)
-        {
-            return HTCAPTION;
-        }
-        return result;
+    case 1001:
+      DestroyWindow(hWnd);
+      break;
+    }
+  }
+  break;
+  case WM_NCRBUTTONUP:
+  {
+    int xPos = GET_X_LPARAM(lParam);
+    int yPos = GET_Y_LPARAM(lParam);
+    TrackPopupMenu(g_hMenu, 0, xPos, yPos, 0, hWnd, NULL);
+  }
+  break;
+  case WM_PAINT:
+  {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hWnd, &ps);
+    OnPaintMain(hWnd, hdc);
+    EndPaint(hWnd, &ps);
+  }
+  break;
+
+  case WM_CHANGECBCHAIN:
+    if ((HWND)wParam == hwndNextViewer) // If the next window is closing, repair the chain. 
+    {
+      hwndNextViewer = (HWND)lParam;
+    }
+    else if (hwndNextViewer != NULL) // Otherwise, pass the message to the next link. 
+    {
+      SendMessage(hwndNextViewer, message, wParam, lParam);
     }
     break;
 
-    case WM_DRAWCLIPBOARD:
-        OnProcessDrawClipboard(hWnd);
-        SendMessage(hwndNextViewer, message, wParam, lParam);
-        break;
-
-    case WM_DESTROY:
-        ChangeClipboardChain(hWnd, hwndNextViewer);
-        PostQuitMessage(0);
-        break;
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
+  case WM_NCHITTEST:
+  {
+    LRESULT result = DefWindowProcW(hWnd, message, wParam, lParam);
+    if (result == HTCLIENT)
+    {
+      return HTCAPTION;
     }
-    return 0;
+    return result;
+  }
+  break;
+
+  case WM_DRAWCLIPBOARD:
+    OnProcessDrawClipboard(hWnd);
+    SendMessage(hwndNextViewer, message, wParam, lParam);
+    break;
+
+  case WM_DESTROY:
+    ChangeClipboardChain(hWnd, hwndNextViewer);
+    PostQuitMessage(0);
+    DestroyMenu(g_hMenu);
+    break;
+  default:
+    return DefWindowProc(hWnd, message, wParam, lParam);
+  }
+  return 0;
 }
-//
-//// “关于”框的消息处理程序。
-//INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-//{
-//    UNREFERENCED_PARAMETER(lParam);
-//    switch (message)
-//    {
-//    case WM_INITDIALOG:
-//        return (INT_PTR)TRUE;
-//
-//    case WM_COMMAND:
-//        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
-//        {
-//            EndDialog(hDlg, LOWORD(wParam));
-//            return (INT_PTR)TRUE;
-//        }
-//        break;
-//    }
-//    return (INT_PTR)FALSE;
-//}
