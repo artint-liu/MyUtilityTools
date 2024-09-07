@@ -6,6 +6,7 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
 void OnPaint(HWND hWnd, HDC hdc);
 Gdiplus::Bitmap* GetMyBitmap(HWND hWnd);
 void ResetSize(HWND hWnd);
+DWORD GetScale(HWND hWnd);
 
 LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
 
@@ -18,7 +19,7 @@ ATOM RegisterImageViewerClass(HINSTANCE hInstance)
     wcex.style = CS_HREDRAW | CS_VREDRAW;
     wcex.lpfnWndProc = ImageViewerWndProc;
     wcex.cbClsExtra = 0;
-    wcex.cbWndExtra = sizeof(void*);
+    wcex.cbWndExtra = sizeof(void*) + sizeof(DWORD);
     wcex.hInstance = hInstance;
     wcex.hIcon = NULL;
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -30,10 +31,29 @@ ATOM RegisterImageViewerClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
+void CalcThumbSize(Gdiplus::Bitmap* pBitmap, SIZE* pSize)
+{
+    int width = pBitmap->GetWidth();
+    int height = pBitmap->GetHeight();
+    const int limitSize = 200;
+    if (width >= height)
+    {
+        pSize->cx = limitSize;
+        pSize->cy = height * pSize->cx / width;
+    }
+    else
+    {
+        pSize->cy = limitSize;
+        pSize->cx = width * pSize->cy / height;
+    }
+}
+
 HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Bitmap* pBitmap)
 {
-    HWND hWnd = CreateWindowExW(NULL, szImageViewerClassName, _T("ImageViewer"), WS_SIZEBOX,
-        100, 100, 200, 200, nullptr, nullptr, hInstance, nullptr);
+    SIZE size;
+    CalcThumbSize(pBitmap, &size);
+    HWND hWnd = CreateWindowExW(WS_EX_TOOLWINDOW, szImageViewerClassName, _T("ImageViewer"), WS_POPUPWINDOW|WS_THICKFRAME,
+        100, 100, size.cx, size.cy, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd)
     {
@@ -56,11 +76,13 @@ void ResetSize(HWND hWnd)
 
     GetClientRect(hWnd, &rcClient);
     GetWindowRect(hWnd, &rcWindow);
+    DWORD scale = GetScale(hWnd);
+
     SIZE thick;
     thick.cx = rcWindow.right - rcWindow.left - rcClient.right;
     thick.cy = rcWindow.bottom - rcWindow.top - rcClient.bottom;
     Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-    SetWindowPos(hWnd, NULL, 100, 100, thick.cx + pBitmap->GetWidth(), thick.cy + pBitmap->GetHeight(), SWP_SHOWWINDOW);
+    SetWindowPos(hWnd, NULL, 0, 0, thick.cx + pBitmap->GetWidth() * scale, thick.cy + pBitmap->GetHeight() * scale, SWP_SHOWWINDOW|SWP_NOMOVE);
 }
 
 Gdiplus::Bitmap* GetMyBitmap(HWND hWnd)
@@ -69,11 +91,20 @@ Gdiplus::Bitmap* GetMyBitmap(HWND hWnd)
     return pBitmap;
 }
 
+DWORD GetScale(HWND hWnd)
+{
+    return GetWindowLongW(hWnd, sizeof(void*));
+}
+
+void SetScale(HWND hWnd, DWORD scale)
+{
+    SetWindowLongW(hWnd, sizeof(void*), scale);
+}
 
 void OnPaint(HWND hWnd, HDC hdc)
 {
     Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-
+    DWORD scale = GetScale(hWnd);
     if (pBitmap == nullptr)
     {
         return;
@@ -82,7 +113,14 @@ void OnPaint(HWND hWnd, HDC hdc)
     Gdiplus::Graphics g(hdc);
     RECT rect;
     GetClientRect(hWnd, &rect);
-    g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, rect.right, rect.bottom));
+    if (scale == 0)
+    {
+        g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, rect.right, rect.bottom));
+    }
+    else
+    {
+        g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, rect.right * scale, rect.bottom * scale), 0, 0, rect.right, rect.bottom, Gdiplus::UnitPixel);
+    }
 }
 
 
@@ -116,9 +154,37 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     break;
 
     case WM_CHAR:
-        if (wParam == '1')
+        if (wParam == '0')
         {
+            SIZE size;
+            Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+            SetScale(hWnd, 0);
+            CalcThumbSize(pBitmap, &size);
+            SetWindowPos(hWnd, 0, 0, 0, size.cx, size.cy, SWP_NOMOVE);
+        }
+        else if (wParam == '1')
+        {
+            SetScale(hWnd, 1);
             ResetSize(hWnd);
+        }
+        else if (wParam == '2')
+        {
+            SetScale(hWnd, 2);
+            ResetSize(hWnd);
+        }
+        else if (wParam == '3')
+        {
+            SetScale(hWnd, 3);
+            ResetSize(hWnd);
+        }
+        else if (wParam == '4')
+        {
+            SetScale(hWnd, 4);
+            ResetSize(hWnd);
+        }
+        else if (wParam == 'x' || wParam == 'X')
+        {
+            PostMessage(hWnd, WM_CLOSE, 0, 0);
         }
         break;
 
