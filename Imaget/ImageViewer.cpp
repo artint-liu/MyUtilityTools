@@ -31,10 +31,10 @@ ATOM RegisterImageViewerClass(HINSTANCE hInstance)
     return RegisterClassExW(&wcex);
 }
 
-void CalcThumbSize(Gdiplus::Bitmap* pBitmap, SIZE* pSize)
+void CalcThumbSize(Gdiplus::Image* pImage, SIZE* pSize)
 {
-    int width = pBitmap->GetWidth();
-    int height = pBitmap->GetHeight();
+    int width = pImage->GetWidth();
+    int height = pImage->GetHeight();
     const int limitSize = 200;
     if (width >= height)
     {
@@ -48,11 +48,11 @@ void CalcThumbSize(Gdiplus::Bitmap* pBitmap, SIZE* pSize)
     }
 }
 
-HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Bitmap* pBitmap)
+HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Image* pImage)
 {
     SIZE size;
-    CalcThumbSize(pBitmap, &size);
-    HWND hWnd = CreateWindowExW(WS_EX_TOOLWINDOW, szImageViewerClassName, _T("ImageViewer"), WS_POPUPWINDOW|WS_THICKFRAME,
+    CalcThumbSize(pImage, &size);
+    HWND hWnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, szImageViewerClassName, _T("ImageViewer"), WS_POPUPWINDOW|WS_THICKFRAME,
         100, 100, size.cx, size.cy, nullptr, nullptr, hInstance, nullptr);
 
     if (!hWnd)
@@ -60,8 +60,11 @@ HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Bitmap* pBitmap)
         return FALSE;
     }
 
-    SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pBitmap);
+    //SetTimer(hWnd, 1001, 2000, NULL);
+
+    SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pImage);
     ShowWindow(hWnd, SW_NORMAL);
+    //SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE);
     UpdateWindow(hWnd);
 
     //ResetSize(hWnd);
@@ -187,7 +190,14 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             PostMessage(hWnd, WM_CLOSE, 0, 0);
         }
         break;
-
+    //case WM_TIMER:
+    //    if (wParam == 1001)
+    //    {
+    //        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 100, 100, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE);
+    //        SetWindowPos(hWnd, HWND_TOP, 0, 0, 100, 100, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE);
+    //        KillTimer(hWnd, 1001);
+    //    }
+    //    break;
     case WM_NCHITTEST:
     {
         LRESULT result = DefWindowProcW(hWnd, message, wParam, lParam);

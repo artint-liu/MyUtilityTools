@@ -23,7 +23,7 @@ BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 ATOM RegisterImageViewerClass(HINSTANCE hInstance);
-HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Bitmap * pBitmap);
+HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Image* pImage);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -146,7 +146,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 {
    hInst = hInstance; // 将实例句柄存储在全局变量中
 
-   HWND hWnd = CreateWindowExW(WS_EX_LAYERED, szWindowClass, szTitle, WS_POPUP,
+   HWND hWnd = CreateWindowExW(WS_EX_LAYERED|WS_EX_TOOLWINDOW, szWindowClass, szTitle, WS_POPUPWINDOW,
       CW_USEDEFAULT, CW_USEDEFAULT, 100, 100, nullptr, nullptr, hInstance, nullptr);
 
    if (!hWnd)
@@ -244,8 +244,25 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
                     //SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
                 }
             }
-
         }
+        else if (uFormat == CF_HDROP)
+        {
+            HDROP hDrop = (HDROP)GetClipboardData(uFormat);
+            UINT count = DragQueryFileW(hDrop, (UINT)-1, NULL, 0);
+            WCHAR filePath[MAX_PATH];
+            for (UINT i = 0; i < count; i++)
+            {
+                if (DragQueryFileW(hDrop, i, filePath, MAX_PATH))
+                {
+                    Gdiplus::Image* pBitmap = new Gdiplus::Image(filePath);
+                    if (pBitmap)
+                    {
+                        CreateImageViewerWindow(hInst, pBitmap);
+                    }
+                }
+            }
+        }
+
         //{
 
         //    HBITMAP hbm = (HBITMAP)GetClipboardData(uFormat);
