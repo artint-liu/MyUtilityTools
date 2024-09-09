@@ -2,11 +2,18 @@
 #include <gdiplus.h>
 #include <tchar.h>
 
+#include <clstd.h>
+#include <clString.h>
+#include <clPathFile.h>
+
+#include "Imaget.h"
+
 LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hWnd, HDC hdc);
 Gdiplus::Bitmap* GetMyBitmap(HWND hWnd);
 void ResetSize(HWND hWnd);
 DWORD GetScale(HWND hWnd);
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
 
@@ -48,12 +55,12 @@ void CalcThumbSize(Gdiplus::Image* pImage, SIZE* pSize)
     }
 }
 
-HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Image* pImage)
+HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, Gdiplus::Image* pImage)
 {
     SIZE size;
     CalcThumbSize(pImage, &size);
     HWND hWnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, szImageViewerClassName, _T("ImageViewer"), WS_POPUPWINDOW|WS_THICKFRAME,
-        100, 100, size.cx, size.cy, nullptr, nullptr, hInstance, nullptr);
+        100, 100, size.cx, size.cy, hParent, nullptr, hInstance, nullptr);
 
     if (!hWnd)
     {
@@ -126,6 +133,11 @@ void OnPaint(HWND hWnd, HDC hdc)
     }
 }
 
+void RemoveBitmap(HWND hWnd, Gdiplus::Bitmap* pBitmap)
+{
+    delete pBitmap;
+    SetWindowLongPtrW(hWnd, 0, NULL);
+}
 
 
 LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -214,10 +226,26 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
         if (pBitmap)
         {
-            delete pBitmap;
-            SetWindowLongPtrW(hWnd, 0, NULL);
+            RemoveBitmap(hWnd, pBitmap);
         }
         DestroyWindow(hWnd);
+    }
+        break;
+
+    case WM_DESTROY:
+    {
+        Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+        if (pBitmap)
+        {
+            CLSID pngClsid;
+            GetEncoderClsid(L"image/png", &pngClsid);
+            clStringW strFilename;
+            strFilename.Format(_CLTEXT("%lx.png"), hWnd);
+            clStringW strPath = clpathfile::CombinePath(g_strDirectory, strFilename);
+            pBitmap->Save(strPath, &pngClsid, NULL);
+
+            RemoveBitmap(hWnd, pBitmap);
+        }
     }
         break;
 

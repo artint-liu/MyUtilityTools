@@ -2,11 +2,14 @@
 #include <windowsx.h>
 #include <gdiplus.h>
 #include <tchar.h>
+
 #include <clstd.h>
+#include <clString.h>
+#include <clPathFile.h>
 #include "Imaget.h"
 
 #define MAX_LOADSTRING 100
-#define SAFE_DELETE(p) if(p) { delete p; p = NULL; }
+//#define SAFE_DELETE(p) if(p) { delete p; p = NULL; }
 
 #pragma comment(lib, "gdiplus.lib")
 
@@ -16,7 +19,9 @@ WCHAR szTitle[MAX_LOADSTRING];                  // 标题栏文本
 WCHAR szWindowClass[MAX_LOADSTRING];            // 主窗口类名
 HWND hwndNextViewer;
 //Gdiplus::Bitmap* g_pBitmap = nullptr;
+
 Gdiplus::Image* g_pMainImage;
+clStringW g_strDirectory;
 
 // 此代码模块中包含的函数的前向声明:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -24,7 +29,8 @@ BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 ATOM RegisterImageViewerClass(HINSTANCE hInstance);
-HWND CreateImageViewerWindow(HINSTANCE hInstance, Gdiplus::Image* pImage);
+HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, Gdiplus::Image* pImage);
+void CreateCacheDirectory();
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -39,8 +45,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
-
     g_pMainImage = new Gdiplus::Image(_T("get256.png"));
+    CreateCacheDirectory();
+
 
     // 初始化全局字符串
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -73,7 +80,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
-
+void CreateCacheDirectory()
+{
+    WCHAR szPath[MAX_PATH];
+    GetModuleFileName(hInst, szPath, MAX_PATH);
+    clStringW strPath = szPath;
+    clpathfile::RemoveFileSpec(strPath);
+    g_strDirectory = clpathfile::CombinePath(strPath, _CLTEXT("Saved"));
+    clpathfile::CreateDirectoryAlways(g_strDirectory);
+}
 
 //
 //  函数: MyRegisterClass()
@@ -239,7 +254,7 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
                     //SAFE_DELETE(g_pBitmap);
                     Gdiplus::Bitmap* pBitmap = CreateBitmap((BITMAPINFO*)clipboard_data);
                     GlobalUnlock(global_memory);
-                    CreateImageViewerWindow(hInst, pBitmap);
+                    CreateImageViewerWindow(hInst, hWnd, pBitmap);
                     //SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
                 }
             }
@@ -256,7 +271,7 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
                     Gdiplus::Image* pBitmap = new Gdiplus::Image(filePath);
                     if (pBitmap)
                     {
-                        CreateImageViewerWindow(hInst, pBitmap);
+                        CreateImageViewerWindow(hInst, hWnd, pBitmap);
                     }
                 }
             }
@@ -270,7 +285,7 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
           if (hBitmap)
           {
             Gdiplus::Bitmap* pBitmap = CreateBitmap(hBitmap);
-            CreateImageViewerWindow(hInst, pBitmap);
+            CreateImageViewerWindow(hInst, hWnd, pBitmap);
           }
         }
         CloseClipboard();
@@ -311,6 +326,44 @@ void CreateMainMenu(HWND hWnd)
     InsertMenuItemW(g_hMenu, 0, false, &info);
 }
 
+void LoadSavedImages(HWND hWnd)
+{
+    cllist<clStringW> fileList;
+    clpathfile::GenerateFiles(fileList, g_strDirectory, [](const clStringW& strFileDir, const clstd::FINDFILEDATAW& data) -> b32
+        {
+            return (clpathfile::CompareExtension(data.cFileName, L"png"));
+        });
+
+    for (clStringW strFilename : fileList)
+    {
+        Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(strFilename);
+        if (pBitmap == NULL || pBitmap->GetWidth() == 0 || pBitmap->GetHeight() == 0)
+        {
+            continue;
+        }
+
+        Gdiplus::Bitmap* pMemoryBitmap = new Gdiplus::Bitmap(pBitmap->GetWidth(), pBitmap->GetHeight(), pBitmap->GetPixelFormat());
+        {
+            Gdiplus::Graphics g(pMemoryBitmap);
+            g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, pBitmap->GetWidth(), pBitmap->GetHeight()));
+        }
+
+        SAFE_DELETE(pBitmap); // 解除文件占用
+        CreateImageViewerWindow(hInst, hWnd, pMemoryBitmap);
+    }
+
+    // 再统一加载后再延迟删除
+    for (clStringW strFilename : fileList)
+    {
+        if (!DeleteFile(strFilename))
+        {
+            CLOG_ERRORW(L"DeleteFile error:%d", GetLastError());
+        }
+    }
+
+    CLOGW(L"file:%d", fileList.size());
+}
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
   switch (message)
@@ -322,6 +375,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
       UpdateIcon(hWnd);
     }
     CreateMainMenu(hWnd);
+    LoadSavedImages(hWnd);
     break;
 
   case WM_COMMAND:
@@ -382,9 +436,42 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     ChangeClipboardChain(hWnd, hwndNextViewer);
     PostQuitMessage(0);
     DestroyMenu(g_hMenu);
+    g_strDirectory.Clear();
     break;
   default:
     return DefWindowProc(hWnd, message, wParam, lParam);
   }
   return 0;
+}
+
+
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
+{
+    UINT  num = 0;          // number of image encoders
+    UINT  size = 0;         // size of the image encoder array in bytes
+
+    Gdiplus::ImageCodecInfo * pImageCodecInfo = NULL;
+
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (size == 0)
+        return -1;  // Failure
+
+    pImageCodecInfo = (Gdiplus::ImageCodecInfo*)(malloc(size));
+    if (pImageCodecInfo == NULL)
+        return -1;  // Failure
+
+    GetImageEncoders(num, size, pImageCodecInfo);
+
+    for (UINT j = 0; j < num; ++j)
+    {
+        if (wcscmp(pImageCodecInfo[j].MimeType, format) == 0)
+        {
+            *pClsid = pImageCodecInfo[j].Clsid;
+            free(pImageCodecInfo);
+            return j;  // Success
+        }
+    }
+
+    free(pImageCodecInfo);
+    return -1;  // Failure
 }
