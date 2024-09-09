@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <windowsx.h>
 #include <gdiplus.h>
 #include <tchar.h>
 
@@ -16,6 +17,7 @@ DWORD GetScale(HWND hWnd);
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
+HMENU g_hImageMenu = NULL;
 
 ATOM RegisterImageViewerClass(HINSTANCE hInstance)
 {
@@ -139,26 +141,70 @@ void RemoveBitmap(HWND hWnd, Gdiplus::Bitmap* pBitmap)
     SetWindowLongPtrW(hWnd, 0, NULL);
 }
 
+void CreateImageMenu(HWND hWnd)
+{
+    g_hImageMenu = CreatePopupMenu();
+    MENUITEMINFOW info = { sizeof(MENUITEMINFOW) };
+    info.fMask = MIIM_STRING | MIIM_ID;
+    //info.fType;         // used if MIIM_TYPE (4.0) or MIIM_FTYPE (>4.0)
+    //info.fState;        // used if MIIM_STATE
+    info.wID = MENU_CLOSEIMAGE;           // used if MIIM_ID
+    //info.hSubMenu;      // used if MIIM_SUBMENU
+    //info.hbmpChecked;   // used if MIIM_CHECKMARKS
+    //info.hbmpUnchecked; // used if MIIM_CHECKMARKS
+    //info. dwItemData;   // used if MIIM_DATA
+    info.dwTypeData = (LPWSTR)L"¹Ø±Õ";    // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+    //info.cch;           // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+
+    InsertMenuItemW(g_hImageMenu, 0, false, &info);
+}
+
+void SwitchScale(HWND hWnd, int nTargeScale)
+{
+    int scale = GetScale(hWnd);
+    if (scale == nTargeScale)
+    {
+        SIZE size;
+        Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+        SetScale(hWnd, 0);
+        CalcThumbSize(pBitmap, &size);
+        SetWindowPos(hWnd, 0, 0, 0, size.cx, size.cy, SWP_NOMOVE);
+    }
+    else
+    {
+        SetScale(hWnd, nTargeScale);
+        ResetSize(hWnd);
+    }
+}
+
 
 LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
-    //case WM_CREATE:
-    //{
+    case WM_CREATE:
+    {
+        CreateImageMenu(hWnd);
     //    //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
     //    //if (pBitmap == NULL)
     //    //{
     //    //    CloseWindow(hWnd);
     //    //}
-    //}
-    //    break;
+    }
+        break;
 
-    //case WM_COMMAND:
-    //{
-    //    int wmId = LOWORD(wParam);
-    //}
-    //break;
+    case WM_COMMAND:
+    {
+        int wmId = LOWORD(wParam);
+        switch (wmId)
+        {
+        case MENU_CLOSEIMAGE:
+            PostMessage(hWnd, WM_CLOSE, 0, 0);
+            break;
+        }
+    }
+    break;
+
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
@@ -179,29 +225,32 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         }
         else if (wParam == '1')
         {
-            SetScale(hWnd, 1);
-            ResetSize(hWnd);
+            SwitchScale(hWnd, 1);
         }
         else if (wParam == '2')
         {
-            SetScale(hWnd, 2);
-            ResetSize(hWnd);
+            SwitchScale(hWnd, 2);
         }
         else if (wParam == '3')
         {
-            SetScale(hWnd, 3);
-            ResetSize(hWnd);
+            SwitchScale(hWnd, 3);
         }
         else if (wParam == '4')
         {
-            SetScale(hWnd, 4);
-            ResetSize(hWnd);
+            SwitchScale(hWnd, 4);
         }
-        else if (wParam == 'x' || wParam == 'X')
+        else if (wParam == 27)
         {
             PostMessage(hWnd, WM_CLOSE, 0, 0);
         }
         break;
+    case WM_NCRBUTTONUP:
+    {
+        int xPos = GET_X_LPARAM(lParam);
+        int yPos = GET_Y_LPARAM(lParam);
+        TrackPopupMenu(g_hImageMenu, 0, xPos, yPos, 0, hWnd, NULL);
+    }
+
     //case WM_TIMER:
     //    if (wParam == 1001)
     //    {

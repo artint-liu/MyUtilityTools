@@ -315,7 +315,7 @@ void CreateMainMenu(HWND hWnd)
   info.fMask = MIIM_STRING | MIIM_ID;
   //info.fType;         // used if MIIM_TYPE (4.0) or MIIM_FTYPE (>4.0)
   //info.fState;        // used if MIIM_STATE
-  info.wID = 1001;           // used if MIIM_ID
+  info.wID = MENU_CLOSEAPP;           // used if MIIM_ID
   //info.hSubMenu;      // used if MIIM_SUBMENU
   //info.hbmpChecked;   // used if MIIM_CHECKMARKS
   //info.hbmpUnchecked; // used if MIIM_CHECKMARKS
@@ -383,7 +383,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     int wmId = LOWORD(wParam);
     switch (wmId)
     {
-    case 1001:
+    case MENU_CLOSEAPP:
       DestroyWindow(hWnd);
       break;
     }
