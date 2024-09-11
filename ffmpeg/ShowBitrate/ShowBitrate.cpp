@@ -68,7 +68,10 @@ class FFMpeg
   AVFormatContext *ifmt_ctx = NULL;
   AVCodecContext *decoder_ctx = NULL, *encoder_ctx = NULL;
   int video_stream = -1;
+  int audio_stream = -1;
   AVStream *ost;
+  AVCodecID vcodecid;
+  AVCodecID acodecid;
 
 public:
   virtual ~FFMpeg()
@@ -82,7 +85,8 @@ public:
   {
     int ret;
     const AVCodec *decoder = NULL;
-    AVStream *video = NULL;
+    AVStream* video = NULL;
+    AVStream *audio = NULL;
 
     if((ret = avformat_open_input(&ifmt_ctx, filename, NULL, NULL)) < 0) {
       fprintf(stderr, "Cannot open input file '%s', Error code: %d\n",
@@ -96,18 +100,25 @@ public:
       return ret;
     }
 
-    ret = av_find_best_stream(ifmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
-    video_stream = ret;
+    video_stream = av_find_best_stream(ifmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, &decoder, 0);
+    audio_stream = av_find_best_stream(ifmt_ctx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
 
     if(!(decoder_ctx = avcodec_alloc_context3(decoder)))
       return AVERROR(ENOMEM);
 
     video = ifmt_ctx->streams[video_stream];
+    audio = ifmt_ctx->streams[audio_stream];
     if((ret = avcodec_parameters_to_context(decoder_ctx, video->codecpar)) < 0) {
       fprintf(stderr, "avcodec_parameters_to_context error. Error code: %d\n",
         (ret));
       return ret;
     }
+
+    vcodecid = decoder_ctx->codec_id;
+    acodecid = audio->codecpar->codec_id;
+
+    video = ifmt_ctx->streams[video_stream];
+
 
     //decoder_ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
     //if (!decoder_ctx->hw_device_ctx) {
@@ -130,6 +141,16 @@ public:
   const AVCodecContext* GetDecoder() const
   {
     return decoder_ctx;
+  }
+
+  AVCodecID GetVideoDecoderID() const
+  {
+      return vcodecid;
+  }
+
+  AVCodecID GetAudioDecoderID() const
+  {
+      return acodecid;
   }
 };
 
@@ -165,7 +186,9 @@ static int open_input_file(const char *filename)
         }
       }
     }
-    int bit_rate = int(ff.GetFormatContext()->bit_rate / 2 / 1024);
+
+    const AVFormatContext* formatContext = ff.GetFormatContext();
+    int bit_rate = ff.GetVideoDecoderID() == AV_CODEC_ID_HEVC ? int(formatContext->bit_rate / 1024) : int(formatContext->bit_rate / 2 / 1024);
     fprintf(fp, "ffmpeg -i \"%s\" -vcodec %%ENCODER%% -b:v %dk -acodec %s \"%s\"\r\n", filename, bit_rate, bIsWMV ? "aac" : "copy", strHEVC.CStr());
     if (ret < 0) {
         fprintf(stderr, "Cannot find a video stream in the input file. "
