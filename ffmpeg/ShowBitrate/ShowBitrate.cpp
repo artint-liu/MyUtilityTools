@@ -81,7 +81,7 @@ public:
   int Open(const char *filename)
   {
     int ret;
-    AVCodec *decoder = NULL;
+    const AVCodec *decoder = NULL;
     AVStream *video = NULL;
 
     if((ret = avformat_open_input(&ifmt_ctx, filename, NULL, NULL)) < 0) {
@@ -144,6 +144,10 @@ static int open_input_file(const char *filename)
       return ret;
     }
 
+    clStringA strInputFilename = filename;
+    strInputFilename.MakeUpper();
+    b32 bIsWMV = clpathfile::CompareExtension(strInputFilename, "WMV");
+
     //fprintf(fp, "call tohevc \"%s\" %dk\r\n", filename, int(ifmt_ctx->bit_rate / 2 / 1024));
     clStringA strHEVC = filename;
     clpathfile::RenameExtension(strHEVC, ".hevc.mp4");
@@ -162,7 +166,7 @@ static int open_input_file(const char *filename)
       }
     }
     int bit_rate = int(ff.GetFormatContext()->bit_rate / 2 / 1024);
-    fprintf(fp, "ffmpeg -i \"%s\" -vcodec %%ENCODER%% -b:v %dk -acodec copy \"%s\"\r\n", filename, bit_rate, strHEVC.CStr());
+    fprintf(fp, "ffmpeg -i \"%s\" -vcodec %%ENCODER%% -b:v %dk -acodec %s \"%s\"\r\n", filename, bit_rate, bIsWMV ? "aac" : "copy", strHEVC.CStr());
     if (ret < 0) {
         fprintf(stderr, "Cannot find a video stream in the input file. "
                 "Error code: %d\n", (ret));
@@ -180,6 +184,7 @@ int main(int argc, char **argv)
 
     fprintf(fp, "rem 码率降低一半\r\n");
     fprintf(fp, "set ENCODER=hevc_nvenc\r\n");
+    fprintf(fp, "rem hevc_qsv is \"Intel Quick Sync Video acceleration\"\r\n");
     fprintf(fp, "rem set ENCODER=hevc_qsv\r\n");
 
     cllist<clStringA> files;
@@ -193,7 +198,7 @@ int main(int argc, char **argv)
 
         clStringA strFile = data.cFileName;
         strFile.MakeUpper();
-        if(clpathfile::CompareExtension(strFile, "MP4|MKV|AVI|MOV|RM|RMVB") && strFile.Find(".HEVC.") == clStringA::npos)
+        if(clpathfile::CompareExtension(strFile, "MP4|MKV|AVI|MOV|RM|RMVB|WMV") && strFile.Find(".HEVC.") == clStringA::npos)
         {
           return TRUE;
         }
