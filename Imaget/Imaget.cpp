@@ -192,15 +192,16 @@ Gdiplus::Bitmap* CreateBitmap(HBITMAP hBitmap)
     DIBSECTION bitmap = { 0 };
     int count = GetObject(hBitmap, sizeof(DIBSECTION), &bitmap);
     DWORD err = GetLastError();
-    LPBYTE pBmpBits = (LPBYTE)malloc(bitmap.dsBm.bmWidth * bitmap.dsBm.bmWidthBytes);//原位图是32位的。
-    GetBitmapBits(hBitmap, bitmap.dsBm.bmWidth * bitmap.dsBm.bmWidthBytes, pBmpBits);
+    int nLineSize = bitmap.dsBm.bmWidthBytes;
+
+    LPBYTE pBmpBits = (LPBYTE)malloc(bitmap.dsBm.bmHeight * nLineSize); // 原位图是32位的。
+    GetBitmapBits(hBitmap, bitmap.dsBm.bmHeight * nLineSize, pBmpBits);
 
     Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
     //填充GDI+ Bitmap数据
     Gdiplus::BitmapData bitmapData;
     Gdiplus::Rect rect(0, 0, bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
     pBitmap->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bitmapData);
-    int nLineSize = bitmap.dsBm.bmWidthBytes;
     BYTE* pDestBits = (BYTE*)bitmapData.Scan0;
     for (int y = 0; y < bitmap.dsBm.bmHeight; y++)
     {
@@ -276,7 +277,7 @@ void WINAPI OnProcessDrawClipboard(HWND hWnd)
                 }
             }
         }
-        else
+        else if(uFormat > 0)
         {
           WCHAR buffer[1024];
           GetClipboardFormatNameW(uFormat, buffer, sizeof(buffer));

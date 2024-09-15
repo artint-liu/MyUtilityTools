@@ -9,15 +9,24 @@
 
 #include "Imaget.h"
 
+struct WNDDATA;
 LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 void OnPaint(HWND hWnd, HDC hdc);
-Gdiplus::Bitmap* GetMyBitmap(HWND hWnd);
+//Gdiplus::Bitmap* GetMyBitmap(HWND hWnd);
 void ResetSize(HWND hWnd);
-DWORD GetScale(HWND hWnd);
+WNDDATA* GetWindowData(HWND hWnd);
+//DWORD GetScale(HWND hWnd);
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 
 LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
 HMENU g_hImageMenu = NULL;
+
+struct WNDDATA
+{
+  Gdiplus::Bitmap* pBitmap;
+  DWORD scale;
+  INT lifeTime;
+};
 
 ATOM RegisterImageViewerClass(HINSTANCE hInstance)
 {
@@ -28,7 +37,7 @@ ATOM RegisterImageViewerClass(HINSTANCE hInstance)
     wcex.style = CS_HREDRAW | CS_VREDRAW;
     wcex.lpfnWndProc = ImageViewerWndProc;
     wcex.cbClsExtra = 0;
-    wcex.cbWndExtra = sizeof(void*) + sizeof(DWORD);
+    wcex.cbWndExtra = sizeof(WNDDATA);
     wcex.hInstance = hInstance;
     wcex.hIcon = NULL;
     wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -45,6 +54,11 @@ void CalcThumbSize(Gdiplus::Image* pImage, SIZE* pSize)
     int width = pImage->GetWidth();
     int height = pImage->GetHeight();
     const int limitSize = 200;
+    if (width == 0 || height == 0)
+    {
+        return;
+    }
+
     if (width >= height)
     {
         pSize->cx = limitSize;
@@ -70,8 +84,13 @@ HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, Gdiplus::Image* 
     }
 
     //SetTimer(hWnd, 1001, 2000, NULL);
+    WNDDATA* pData = new WNDDATA;
+    memset(pData, 0, sizeof(WNDDATA));
 
-    SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pImage);
+    pData->pBitmap = static_cast<Gdiplus::Bitmap*>(pImage);
+    pData->scale = 0;
+
+    SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pData);
     ShowWindow(hWnd, SW_NORMAL);
     //SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOSIZE | SWP_NOMOVE);
     UpdateWindow(hWnd);
@@ -85,39 +104,47 @@ void ResetSize(HWND hWnd)
 {
     RECT rcWindow;
     RECT rcClient;
+    WNDDATA* pData = GetWindowData(hWnd);
 
     GetClientRect(hWnd, &rcClient);
     GetWindowRect(hWnd, &rcWindow);
-    DWORD scale = GetScale(hWnd);
+    DWORD scale = pData->scale;
 
     SIZE thick;
     thick.cx = rcWindow.right - rcWindow.left - rcClient.right;
     thick.cy = rcWindow.bottom - rcWindow.top - rcClient.bottom;
-    Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+    Gdiplus::Bitmap* pBitmap = pData->pBitmap;
     SetWindowPos(hWnd, NULL, 0, 0, thick.cx + pBitmap->GetWidth() * scale, thick.cy + pBitmap->GetHeight() * scale, SWP_SHOWWINDOW|SWP_NOMOVE);
 }
 
-Gdiplus::Bitmap* GetMyBitmap(HWND hWnd)
+WNDDATA* GetWindowData(HWND hWnd)
 {
-    Gdiplus::Bitmap* pBitmap = (Gdiplus::Bitmap*)GetWindowLongPtrW(hWnd, 0);
-    return pBitmap;
+  return (WNDDATA*)GetWindowLongPtrW(hWnd, 0);
 }
 
-DWORD GetScale(HWND hWnd)
-{
-    return GetWindowLongW(hWnd, sizeof(void*));
-}
-
-void SetScale(HWND hWnd, DWORD scale)
-{
-    SetWindowLongW(hWnd, sizeof(void*), scale);
-}
+//Gdiplus::Bitmap* GetMyBitmap(HWND hWnd)
+//{
+//    WNDDATA* pData = GetWindowData(hWnd);
+//    Gdiplus::Bitmap* pBitmap = (Gdiplus::Bitmap*)GetWindowLongPtrW(hWnd, 0);
+//    return pBitmap;
+//}
+//
+//DWORD GetScale(HWND hWnd)
+//{
+//    return GetWindowLongW(hWnd, sizeof(void*));
+//}
+//
+//void SetScale(HWND hWnd, DWORD scale)
+//{
+//    SetWindowLongW(hWnd, sizeof(void*), scale);
+//}
 
 void OnPaint(HWND hWnd, HDC hdc)
 {
-    Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-    DWORD scale = GetScale(hWnd);
-    if (pBitmap == nullptr)
+  WNDDATA* pData = GetWindowData(hWnd);
+    //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+    //DWORD scale = GetScale(hWnd);
+    if (pData->pBitmap == nullptr)
     {
         return;
     }
@@ -125,21 +152,34 @@ void OnPaint(HWND hWnd, HDC hdc)
     Gdiplus::Graphics g(hdc);
     RECT rect;
     GetClientRect(hWnd, &rect);
-    if (scale == 0)
+    if (pData->scale == 0)
     {
-        g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, rect.right, rect.bottom));
+        g.DrawImage(pData->pBitmap, Gdiplus::Rect(0, 0, rect.right, rect.bottom));
     }
     else
     {
-        g.DrawImage(pBitmap, Gdiplus::Rect(0, 0, rect.right * scale, rect.bottom * scale), 0, 0, rect.right, rect.bottom, Gdiplus::UnitPixel);
+        g.DrawImage(pData->pBitmap, Gdiplus::Rect(0, 0, rect.right * pData->scale, rect.bottom * pData->scale), 0, 0, rect.right, rect.bottom, Gdiplus::UnitPixel);
+    }
+
+    if (pData->lifeTime > 0)
+    {
+        Gdiplus::Font myFont(L"Î¢ÈíÑÅºÚ", 16);
+        Gdiplus::PointF origin(1.0f, 1.0f);
+        Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
+        Gdiplus::SolidBrush whiteBrush(Gdiplus::Color(0xffffffff));
+        clStringW str;
+        str.Format(L"%dÃëºó¹Ø±Õ", pData->lifeTime);
+        g.DrawString(str, str.GetLength(), &myFont, origin, &blackBrush);
+        origin.X--; origin.Y--;
+        g.DrawString(str, str.GetLength(), &myFont, origin, &whiteBrush);
     }
 }
 
-void RemoveBitmap(HWND hWnd, Gdiplus::Bitmap* pBitmap)
-{
-    delete pBitmap;
-    SetWindowLongPtrW(hWnd, 0, NULL);
-}
+//void RemoveBitmap(HWND hWnd, Gdiplus::Bitmap* pBitmap)
+//{
+//    delete pBitmap;
+//    SetWindowLongPtrW(hWnd, 0, NULL);
+//}
 
 void CreateImageMenu(HWND hWnd)
 {
@@ -161,18 +201,26 @@ void CreateImageMenu(HWND hWnd)
 
 void SwitchScale(HWND hWnd, int nTargeScale)
 {
-    int scale = GetScale(hWnd);
-    if (scale == nTargeScale)
+    WNDDATA* pData = GetWindowData(hWnd);
+    if (pData == NULL)
+    {
+      return;
+    }
+
+    //int scale = GetScale(hWnd);
+    if (pData->scale == nTargeScale)
     {
         SIZE size;
-        Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-        SetScale(hWnd, 0);
-        CalcThumbSize(pBitmap, &size);
+        //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+        //SetScale(hWnd, 0);
+        pData->scale = 0;
+        CalcThumbSize(pData->pBitmap, &size);
         SetWindowPos(hWnd, 0, 0, 0, size.cx, size.cy, SWP_NOMOVE);
     }
     else
     {
-        SetScale(hWnd, nTargeScale);
+        //SetScale(hWnd, nTargeScale);
+        pData->scale = nTargeScale;
         ResetSize(hWnd);
     }
 }
@@ -214,13 +262,36 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     }
     break;
 
+    case WM_TIMER:
+    {
+        int id = wParam;
+        if (id == 1001)
+        {
+            WNDDATA* pData = GetWindowData(hWnd);
+            pData->lifeTime--;
+            if (pData->lifeTime <= 0)
+            {
+                KillTimer(hWnd, id);
+                CloseWindow(hWnd);
+            }
+            else
+            {
+                InvalidateRect(hWnd, NULL, TRUE);
+            }
+        }
+    }
+
     case WM_CHAR:
         if (wParam == '0')
         {
+            WNDDATA* pData = GetWindowData(hWnd);
             SIZE size;
-            Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-            SetScale(hWnd, 0);
-            CalcThumbSize(pBitmap, &size);
+
+
+            //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+            //SetScale(hWnd, 0);
+            pData->scale = 0;
+            CalcThumbSize(pData->pBitmap, &size);
             SetWindowPos(hWnd, 0, 0, 0, size.cx, size.cy, SWP_NOMOVE);
         }
         else if (wParam == '1')
@@ -241,7 +312,19 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         }
         else if (wParam == 27)
         {
-            PostMessage(hWnd, WM_CLOSE, 0, 0);
+            //PostMessage(hWnd, WM_CLOSE, 0, 0);
+            WNDDATA* pData = GetWindowData(hWnd);
+            if (pData->lifeTime == 0)
+            {
+                SetTimer(hWnd, 1001, 1000, NULL);
+                pData->lifeTime = 10;
+            }
+            else
+            {
+                pData->lifeTime = 0;
+                KillTimer(hWnd, 1001);
+            }
+            InvalidateRect(hWnd, NULL, TRUE);
         }
         break;
     case WM_NCRBUTTONUP:
@@ -272,29 +355,40 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
 
     case WM_CLOSE:
     {
-        Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-        if (pBitmap)
-        {
-            RemoveBitmap(hWnd, pBitmap);
-        }
+        WNDDATA* pData = GetWindowData(hWnd);
+        KillTimer(hWnd, 1001);
+        SAFE_DELETE(pData->pBitmap);
+        //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+        //if (pBitmap)
+        //{
+        //    RemoveBitmap(hWnd, pBitmap);
+        //}
         DestroyWindow(hWnd);
     }
         break;
 
     case WM_DESTROY:
     {
-        Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
+      WNDDATA* pData = GetWindowData(hWnd);
+      if (pData)
+      {
+        Gdiplus::Bitmap* pBitmap = pData->pBitmap;
         if (pBitmap)
         {
-            CLSID pngClsid;
-            GetEncoderClsid(L"image/png", &pngClsid);
-            clStringW strFilename;
-            strFilename.Format(_CLTEXT("%lx.png"), hWnd);
-            clStringW strPath = clpathfile::CombinePath(g_strDirectory, strFilename);
-            pBitmap->Save(strPath, &pngClsid, NULL);
-
-            RemoveBitmap(hWnd, pBitmap);
+          CLSID pngClsid;
+          GetEncoderClsid(L"image/png", &pngClsid);
+          clStringW strFilename;
+          strFilename.Format(_CLTEXT("%lx.png"), hWnd);
+          clStringW strPath = clpathfile::CombinePath(g_strDirectory, strFilename);
+          pBitmap->Save(strPath, &pngClsid, NULL);
+          
+          SAFE_DELETE(pData->pBitmap);
+          //RemoveBitmap(hWnd, pBitmap);
         }
+      }
+
+      SAFE_DELETE(pData);
+      SetWindowLongPtr(hWnd, 0, NULL);
     }
         break;
 
