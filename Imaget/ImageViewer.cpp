@@ -233,11 +233,6 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     case WM_CREATE:
     {
         CreateImageMenu(hWnd);
-    //    //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-    //    //if (pBitmap == NULL)
-    //    //{
-    //    //    CloseWindow(hWnd);
-    //    //}
     }
         break;
 
@@ -272,7 +267,8 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             if (pData->lifeTime <= 0)
             {
                 KillTimer(hWnd, id);
-                CloseWindow(hWnd);
+                //CloseWindow(hWnd);
+                SendMessage(hWnd, WM_CLOSE, 0, 0);
             }
             else
             {
@@ -334,14 +330,6 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         TrackPopupMenu(g_hImageMenu, 0, xPos, yPos, 0, hWnd, NULL);
     }
 
-    //case WM_TIMER:
-    //    if (wParam == 1001)
-    //    {
-    //        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 100, 100, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE);
-    //        SetWindowPos(hWnd, HWND_TOP, 0, 0, 100, 100, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE);
-    //        KillTimer(hWnd, 1001);
-    //    }
-    //    break;
     case WM_NCHITTEST:
     {
         LRESULT result = DefWindowProcW(hWnd, message, wParam, lParam);
@@ -358,11 +346,6 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         WNDDATA* pData = GetWindowData(hWnd);
         KillTimer(hWnd, 1001);
         SAFE_DELETE(pData->pBitmap);
-        //Gdiplus::Bitmap* pBitmap = GetMyBitmap(hWnd);
-        //if (pBitmap)
-        //{
-        //    RemoveBitmap(hWnd, pBitmap);
-        //}
         DestroyWindow(hWnd);
     }
         break;
