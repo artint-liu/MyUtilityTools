@@ -189,7 +189,8 @@ static int open_input_file(const char *filename)
 
     const AVFormatContext* formatContext = ff.GetFormatContext();
     int bit_rate = ff.GetVideoDecoderID() == AV_CODEC_ID_HEVC ? int(formatContext->bit_rate / 1024) : int(formatContext->bit_rate / 2 / 1024);
-    fprintf(fp, "ffmpeg -i \"%s\" -vcodec %%ENCODER%% -b:v %dk -acodec %s \"%s\"\r\n", filename, bit_rate, bIsWMV ? "aac" : "copy", strHEVC.CStr());
+    // 需要增加hvc1才能再QuickTime正常打开：-vtag hvc1
+    fprintf(fp, "ffmpeg -i \"%s\" -vcodec %%ENCODER%% -b:v %dk -vtag hvc1 -acodec %s \"%s\"\r\n", filename, bit_rate, bIsWMV ? "aac" : "copy", strHEVC.CStr());
     if (ret < 0) {
         fprintf(stderr, "Cannot find a video stream in the input file. "
                 "Error code: %d\n", (ret));
