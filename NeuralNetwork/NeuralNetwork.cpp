@@ -9,7 +9,7 @@
 #include <filesystem>
 #include <execution>  // 包含并行执行策略
 
-#if 1
+#if 0
 #define ACTIVATION sigmoid
 #define ACTIVATION_DERIVATIVE sigmoidDerivative
 #else
@@ -53,6 +53,19 @@ real reluDerivative(real x) {
 }
 
 
+// Softmax激活函数
+void softmax(std::vector<real>& x) {
+    real maxVal = *std::max_element(x.begin(), x.end());
+    real sum = 0.0;
+    for (auto& val : x) {
+        val = std::exp(val - maxVal);
+        sum += val;
+    }
+    for (auto& val : x) {
+        val /= sum;
+    }
+}
+
 // 定义神经网络层
 struct Layer {
     std::vector<std::vector<real>> weights;  // 权重矩阵
@@ -65,56 +78,59 @@ struct Layer {
 int testNetwork(std::vector<Layer> network, std::vector<std::pair<std::vector<real>, int>> testData);
 
 // 初始化神经网络
+// 改进的权重初始化（He初始化）
 std::vector<Layer> initializeNetwork(size_t inputSize, const std::vector<int>& hiddenSizes, int outputSize) {
     std::vector<Layer> network;
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(static_cast<real>(-0.5), static_cast <real>(0.5));
 
     // 输入层到第一个隐藏层
     Layer firstHidden;
+    size_t fan_in = inputSize;
+    std::normal_distribution<real> dis(0.0, static_cast<real>(std::sqrt(2.0 / fan_in)));
     firstHidden.weights.resize(hiddenSizes[0], std::vector<real>(inputSize));
-    firstHidden.biases.resize(hiddenSizes[0]);
+    firstHidden.biases.resize(hiddenSizes[0], static_cast <real>(0.1));
     firstHidden.outputs.resize(hiddenSizes[0]);
     firstHidden.inputs.resize(inputSize);
     firstHidden.errors.resize(hiddenSizes[0]);
-    for (int i = 0; i < hiddenSizes[0]; ++i) {
-        for (size_t j = 0; j < inputSize; ++j) {
-            firstHidden.weights[i][j] = static_cast<real>(dis(gen));
+    for (auto& row : firstHidden.weights) {
+        for (auto& val : row) {
+            val = dis(gen);
         }
-        firstHidden.biases[i] = static_cast<real>(dis(gen));
     }
     network.push_back(firstHidden);
 
     // 隐藏层之间
     for (size_t i = 1; i < hiddenSizes.size(); ++i) {
         Layer hidden;
+        fan_in = hiddenSizes[i - 1];
+        std::normal_distribution<real> dis(0.0, static_cast<real>(std::sqrt(2.0 / fan_in)));
         hidden.weights.resize(hiddenSizes[i], std::vector<real>(hiddenSizes[i - 1]));
-        hidden.biases.resize(hiddenSizes[i]);
+        hidden.biases.resize(hiddenSizes[i], static_cast<real>(0.1));
         hidden.outputs.resize(hiddenSizes[i]);
         hidden.inputs.resize(hiddenSizes[i - 1]);
         hidden.errors.resize(hiddenSizes[i]);
-        for (int j = 0; j < hiddenSizes[i]; ++j) {
-            for (int k = 0; k < hiddenSizes[i - 1]; ++k) {
-                hidden.weights[j][k] = static_cast<real>(dis(gen));
+        for (auto& row : hidden.weights) {
+            for (auto& val : row) {
+                val = dis(gen);
             }
-            hidden.biases[j] = static_cast<real>(dis(gen));
         }
         network.push_back(hidden);
     }
 
-    // 最后一个隐藏层到输出层
+    // 输出层（使用softmax）
     Layer output;
+    fan_in = hiddenSizes.back();
+    std::normal_distribution<real> dis_out(0.0, static_cast<real>(std::sqrt(2.0 / fan_in)));
     output.weights.resize(outputSize, std::vector<real>(hiddenSizes.back()));
-    output.biases.resize(outputSize);
+    output.biases.resize(outputSize, static_cast<real>(0.1));
     output.outputs.resize(outputSize);
     output.inputs.resize(hiddenSizes.back());
     output.errors.resize(outputSize);
-    for (int i = 0; i < outputSize; ++i) {
-        for (int j = 0; j < hiddenSizes.back(); ++j) {
-            output.weights[i][j] = static_cast<real>(dis(gen));
+    for (auto& row : output.weights) {
+        for (auto& val : row) {
+            val = dis_out(gen);
         }
-        output.biases[i] = static_cast<real>(dis(gen));
     }
     network.push_back(output);
 
@@ -122,47 +138,73 @@ std::vector<Layer> initializeNetwork(size_t inputSize, const std::vector<int>& h
 }
 
 // 前向传播
-
 void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& input) {
     // 输入层到第一个隐藏层
     network[0].inputs = input;
-    for (size_t i = 0; i < network[0].outputs.size(); ++i)
-    {
+    for (size_t i = 0; i < network[0].outputs.size(); ++i) {
         real sum = network[0].biases[i];
-        for (size_t j = 0; j < input.size(); ++j)
-        {
+        for (size_t j = 0; j < input.size(); ++j) {
             sum += network[0].weights[i][j] * input[j];
         }
         network[0].outputs[i] = ACTIVATION(sum);
     }
 
-
-
     // 隐藏层之间
-    for (size_t i = 1; i < network.size(); ++i)
-    {
+    for (size_t i = 1; i < network.size() - 1; ++i) {
         network[i].inputs = network[i - 1].outputs;
-        for (size_t j = 0; j < network[i].outputs.size(); ++j)
-        {
+        for (size_t j = 0; j < network[i].outputs.size(); ++j) {
             real sum = network[i].biases[j];
-            for (size_t k = 0; k < network[i - 1].outputs.size(); ++k)
-            {
+            for (size_t k = 0; k < network[i - 1].outputs.size(); ++k) {
                 sum += network[i].weights[j][k] * network[i - 1].outputs[k];
             }
             network[i].outputs[j] = ACTIVATION(sum);
         }
     }
+
+    // 输出层使用softmax
+    Layer& outputLayer = network.back();
+    outputLayer.inputs = network[network.size() - 2].outputs;
+    for (size_t j = 0; j < outputLayer.outputs.size(); ++j) {
+        real sum = outputLayer.biases[j];
+        for (size_t k = 0; k < network[network.size() - 2].outputs.size(); ++k) {
+            sum += outputLayer.weights[j][k] * network[network.size() - 2].outputs[k];
+        }
+        outputLayer.outputs[j] = sum; // 先存储线性输出
+    }
+    softmax(outputLayer.outputs); // 应用softmax
 }
 
 // 反向传播
 void backPropagation(std::vector<Layer>& network, const std::vector<real>& target, real learningRate) {
-    // 输出层误差
-    for (size_t i = 0; i < network.back().outputs.size(); ++i) {
-        //network.back().errors[i] = (target[i] - network.back().outputs[i]) * ACTIVATION_DERIVATIVE(network.back().outputs[i]);
-        network.back().errors[i] = (target[i] - network.back().outputs[i]); // 去掉了sigmoid导数项
+    // 初始化动量存储（改为延迟初始化）
+    static std::vector<std::vector<std::vector<real>>> prevWeightUpdates;
+    static std::vector<std::vector<real>> prevBiasUpdates;
+    const real momentum = static_cast<real>(0.9);
+
+    // 第一次运行时初始化动量存储
+    if (prevWeightUpdates.empty()) {
+        prevWeightUpdates.resize(network.size());
+        for (size_t i = 0; i < network.size(); ++i) {
+            prevWeightUpdates[i].resize(network[i].weights.size());
+            for (size_t j = 0; j < network[i].weights.size(); ++j) {
+                prevWeightUpdates[i][j].resize(network[i].weights[j].size(), 0.0f);
+            }
+        }
+    }
+    if (prevBiasUpdates.empty()) {
+        prevBiasUpdates.resize(network.size());
+        for (size_t i = 0; i < network.size(); ++i) {
+            prevBiasUpdates[i].resize(network[i].biases.size(), 0.0f);
+        }
     }
 
-    // 隐藏层误差
+    // 输出层误差计算（保持不变）
+    Layer& outputLayer = network.back();
+    for (size_t i = 0; i < outputLayer.outputs.size(); ++i) {
+        outputLayer.errors[i] = (outputLayer.outputs[i] - target[i]);
+    }
+
+    // 隐藏层误差传播（保持不变）
     for (int i = static_cast<int>(network.size()) - 2; i >= 0; --i) {
         for (size_t j = 0; j < network[i].outputs.size(); ++j) {
             real error = 0.0;
@@ -173,53 +215,63 @@ void backPropagation(std::vector<Layer>& network, const std::vector<real>& targe
         }
     }
 
-    // 更新权重和偏置
+    // 更新权重和偏置（带动量）
     for (size_t i = 0; i < network.size(); ++i) {
         for (size_t j = 0; j < network[i].weights.size(); ++j) {
             for (size_t k = 0; k < network[i].weights[j].size(); ++k) {
-                network[i].weights[j][k] += learningRate * network[i].errors[j] * network[i].inputs[k];
+                real delta = learningRate * network[i].errors[j] * network[i].inputs[k];
+                network[i].weights[j][k] -= delta + momentum * prevWeightUpdates[i][j][k];
+                prevWeightUpdates[i][j][k] = delta;  // 存储当前更新量供下次使用
             }
-            network[i].biases[j] += learningRate * network[i].errors[j];
+            // 更新偏置
+            real biasDelta = learningRate * network[i].errors[j];
+            network[i].biases[j] -= biasDelta + momentum * prevBiasUpdates[i][j];
+            prevBiasUpdates[i][j] = biasDelta;  // 存储当前更新量
         }
     }
 }
 
+
 // 训练神经网络
-void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& trainingData, std::vector<std::pair<std::vector<real>, int>> testData, int epochs, real learningRate)
-{
-    int lastCorrectCount = 0;
+void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& trainingData,
+    std::vector<std::pair<std::vector<real>, int>> testData, int epochs, real learningRate,
+    int batchSize = 128) {
+    real bestAccuracy = 0.0;
     for (int epoch = 0; epoch < epochs; ++epoch) {
-        std::cout << "第" << (epoch + 1) << "轮学习" << std::endl;
-
+        std::cout << "Epoch " << (epoch + 1) << "/" << epochs << std::endl;
         size_t i = 0;
-        for (const auto& data : trainingData) {
-            const std::vector<real>& input = data.first;
-            int label = data.second;
+        // 打乱训练数据
+        auto shuffledData = trainingData;
+        std::shuffle(shuffledData.begin(), shuffledData.end(), std::mt19937{ std::random_device{}() });
 
-            // 构建目标向量
-            std::vector<real> target(10, 0.0);
-            target[label] = 1.0;
+        // 批量训练
+        for (size_t start = 0; start < shuffledData.size(); start += batchSize) {
+            auto end = std::min(start + batchSize, shuffledData.size());
+            std::vector<std::vector<real>> batchInputs;
+            std::vector<std::vector<real>> batchTargets;
 
-            // 前向传播
-            forwardPropagation(network, input);
+            // 累积梯度
+            for (size_t i = start; i < end; ++i) {
+                const auto& data = shuffledData[i];
+                std::vector<real> target(10, 0.0);
+                target[data.second] = 1.0;
 
-            // 反向传播
-            backPropagation(network, target, learningRate);
-
-            std::cout << "进度:" << i++ << "/" << trainingData.size() << "\r";
+                forwardPropagation(network, data.first);
+                backPropagation(network, target, learningRate / (end - start));
+                std::cout << "进度:" << i++ << "/" << trainingData.size() << "\r";
+            }
         }
 
-        int correctCount = testNetwork(network, testData);
-        if (lastCorrectCount == correctCount)
-        {
-            break;
+        // 动态调整学习率
+        real currentAccuracy = static_cast<real>(testNetwork(network, testData));
+        if (currentAccuracy > bestAccuracy) {
+            bestAccuracy = currentAccuracy;
+            learningRate *= static_cast<real>(1.05);
         }
-        else if (lastCorrectCount > correctCount)
-        {
-            learningRate *= static_cast<real>(0.1);
-            std::cout << "准确率下降，调低学习进度" << std::endl;
+        else {
+            learningRate *= static_cast<real>(0.5);
         }
-        lastCorrectCount = correctCount;
+        learningRate = std::max(learningRate, 1e-5f);
     }
 }
 
@@ -243,37 +295,6 @@ int predict(const std::vector<Layer>& network, const std::vector<real>& input) {
 
     return predictedLabel;
 }
-
-// 加载数据集
-//std::vector<std::pair<std::vector<real>, int>> loadData(const std::string& filename) {
-//    std::vector<std::pair<std::vector<real>, int>> data;
-//
-//    //std::filesystem::exists()
-//    
-//    std::ifstream file(filename);
-//    if (!file.is_open()) {
-//        std::cerr << "Failed to open file: " << filename << std::endl;
-//        return data;
-//    }
-//
-//    std::string line;
-//    while (std::getline(file, line)) {
-//        std::istringstream iss(line);
-//        int label;
-//        iss >> label;
-//
-//        std::vector<real> features;
-//        real value;
-//        while (iss >> value) {
-//            features.push_back(value / static_cast <real>(255.0));  // 归一化
-//        }
-//
-//        data.emplace_back(features, label);
-//    }
-//
-//    file.close();
-//    return data;
-//}
 
 std::vector<std::pair<std::vector<real>, int>> loadData(const std::string& filename)
 {
