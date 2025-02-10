@@ -2,6 +2,7 @@ import subprocess
 import json
 import os
 import argparse
+import platform
 
 def get_video_info(input_file):
     # 使用 ffprobe 获取视频信息
@@ -46,9 +47,15 @@ def convert_video(input_file, output_file):
     #     output_codec = 'libx264'
     # else:
     #     output_codec = 'libx265'  # 如果输入是 HEVC，保持 HEVC 格式
-    
+
+    os_name = platform.system()
+    if os_name == 'Darwin':
+        output_codec = 'libx265'
+        # output_codec = 'hevc_videotoolbox'
+    elif os_name == 'Windows':
+        output_codec = 'hevc_qsv'
+
     # output_codec = 'hevc_videotoolbox'
-    output_codec = 'libx265'
     
     print("输入文件:" + input_file)
     print("输入文件比特率:%d\n"%(bit_rate))
@@ -62,8 +69,9 @@ def convert_video(input_file, output_file):
         '-vcodec', output_codec,
         # '-crf', '23',
         '-b:v', f'{target_bitrate}',
-        '-vtag', 'hvc1',
+        '-tag:v', 'hvc1',
         '-maxrate', f'{target_bitrate}',
+        '-c:a', 'copy',
         '-y',  # 覆盖输出文件
         output_file
     ]
