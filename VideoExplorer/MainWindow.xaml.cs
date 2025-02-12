@@ -11,6 +11,10 @@ using System.Windows.Shapes;
 using System.IO;
 using Path = System.IO.Path;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Windows.Controls.Primitives;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace VideoExplorer
 {
@@ -19,7 +23,13 @@ namespace VideoExplorer
     /// </summary>
     public partial class MainWindow : Window
     {
+
         ObservableCollection<ItemModel> listViewItems { get; set; }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+        string thumbDirectory;
+        readonly string videoFiles = "videoFiles.json";
+        bool bVideoFilesChanged = false;
 
         public class ItemModel
         {
@@ -27,23 +37,74 @@ namespace VideoExplorer
             public string Category { get; set; }
             public string Details { get; set; }
             public string ImagePath { get; set; }
+
+            public string fullPath;
+            public string sha1;
         }
+
         public MainWindow()
         {
             InitializeComponent();
-            string appRoot = AppDomain.CurrentDomain.BaseDirectory;
+
+            thumbDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Thumb");
+            // 检查并创建“Thumb”目录
+            if (!Directory.Exists(thumbDirectory))
+            {
+                Directory.CreateDirectory(thumbDirectory);
+                Console.WriteLine("Thumb 目录已创建。");
+            }
 
             listViewItems = new ObservableCollection<ItemModel>();
-            //// 创建一些示例数据
-            //var items = new List<ItemModel>
-            //{
-            //    new ItemModel { Title = "Item 1", Category = "Category A", Details = "Details for Item 1", ImagePath = "assets\\youtube.png" },
-            //    new ItemModel { Title = "Item 2", Category = "Category B", Details = "Details for Item 2", ImagePath = "assets/youtube.png" },
-            //    new ItemModel { Title = "Item 3", Category = "Category C", Details = "Details for Item 3", ImagePath = "assets/youtube.png" }
-            //};
+            //StatusMessage = "hello world";
+            statusBar_TextBlock.Text = "hello world";
+            //statusBar_ProgressBar.Value
 
             // 绑定数据到 ListBox
             listView.ItemsSource = listViewItems;
+        }
+
+        private static bool IsVideoFile(string filePath)
+        {
+            string extension = Path.GetExtension(filePath).ToLower();
+            return (extension == ".avi" || extension == ".mp4");
+        }
+
+        private void Window_Loaded(object sender, RoutedEventArgs e)
+        {
+            //var itemArray = listViewItems.ToArray();
+            try
+            {
+                if (File.Exists(videoFiles))
+                {
+                    string jsonText = File.ReadAllText(videoFiles);
+                    var itemsArray = JsonSerializer.Deserialize<ItemModel[]>(jsonText);
+                    if (itemsArray != null)
+                    {
+                        foreach (var item in itemsArray)
+                        {
+                            listViewItems.Add(item);
+                        }
+                    }
+                }
+            }
+            catch(Exception ex)
+            {
+
+            }
+        }
+
+        private void Window_Closing(object sender, CancelEventArgs e)
+        {
+            if (bVideoFilesChanged)
+            {
+                var itemsArray = listViewItems.ToArray();
+                var option = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                };
+                string jsonText = JsonSerializer.Serialize(itemsArray, option);
+                File.WriteAllText(videoFiles, jsonText);
+            }
         }
 
         private void listView_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -56,6 +117,7 @@ namespace VideoExplorer
             // 检查拖拽的数据是否包含文件或目录
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
+                List<string> fileList = new List<string>();
                 // 获取拖拽的文件或目录路径
                 string[] pathNames = (string[])e.Data.GetData(DataFormats.FileDrop);
 
@@ -67,24 +129,53 @@ namespace VideoExplorer
                         var files = Directory.GetFiles(pathName, "*", SearchOption.AllDirectories);
                         foreach (var file in files)
                         {
-                            AddVideoFile(file);
+                            if(IsVideoFile(file))
+                                fileList.Add(file);
                         }
                     }
                     else
                     {
-                        AddVideoFile(pathName);
+                        if(IsVideoFile(pathName))
+                            fileList.Add(pathName);
                     }
                 }
+
+                AddVideoFileAsync(fileList);
             }
         }
 
-        void AddVideoFile(string filepath)
+        private async void AddVideoFileAsync(List<string> fileList)
         {
-            string extension = Path.GetExtension(filepath).ToLower();
-            if(extension == ".avi" || extension == ".mp4")
+            int index = 0;
+            foreach (var fullpath in fileList)
             {
-                listViewItems.Add(new ItemModel { Title = Path.GetFileName(filepath)});
+                statusBar_TextBlock.Text = $"{Path.GetFileName(fullpath)}({++index}/{fileList.Count})";
+                await AddVideoFileAsync(fullpath);
             }
+            statusBar_TextBlock.Text = "就绪";
+            statusBar_ProgressBar.Value = 0;
+        }
+
+        private async Task AddVideoFileAsync(string fullpath)
+        {
+            var progress = new Progress<float>(p => { statusBar_ProgressBar.Value = p * statusBar_ProgressBar.Maximum; });
+            string thumbnailPath = await Task.Run(() =>
+            {
+                string sha1Hash = Utils.GenerateSHA1Async(fullpath, progress).Result;
+                string thumbnailPath = Path.Combine(thumbDirectory, $"{sha1Hash}.jpg");
+                return thumbnailPath;
+            });
+
+            // 使用 FFmpeg 生成缩略图
+            thumbnailPath = VideoUtils.GenerateThumbnail(fullpath, thumbnailPath, 10, 512);
+
+            listViewItems.Add(new ItemModel()
+            {
+                Title = Path.GetFileNameWithoutExtension(fullpath),
+                ImagePath = thumbnailPath,
+                fullPath = fullpath
+            });
+            bVideoFilesChanged = true;
         }
     }
 }
