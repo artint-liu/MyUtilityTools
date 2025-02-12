@@ -1,0 +1,40 @@
+﻿<Window x:Class="VideoExplorer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:VideoExplorer"
+        mc:Ignorable="d"
+        Title="MainWindow" Height="820" Width="1171">
+  <Window.Resources>
+    <!-- 定义数据项的模板 -->
+    <DataTemplate x:Key="LargeImageTemplate">
+      <Border BorderBrush="Gray" BorderThickness="1" Padding="10" Height="334" Margin="5" Width="537">
+        <StackPanel Margin="-1,0,-1,0">
+
+          <Image Width="514" Height="254">
+            <Image.Source>
+              <Binding Path="ImagePath" TargetNullValue="assets/youtube.png"/>
+            </Image.Source>
+          </Image>
+          
+          <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold" />
+          <TextBlock Text="{Binding Category}" FontSize="12" Foreground="Gray" />
+          <TextBlock Text="{Binding Details}" FontSize="12" Foreground="DarkGray" />
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
+  <Grid>
+    <ListView x:Name="listView" ItemTemplate="{StaticResource LargeImageTemplate}" d:ItemsSource="{d:SampleData ItemCount=5}" SelectionChanged="listView_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Drop="listView_Drop" AllowDrop="True">
+      <!-- 设置 ListView 的布局模式 -->
+      <ListView.ItemsPanel>
+        <ItemsPanelTemplate>
+          <WrapPanel Orientation="Horizontal" />
+        </ItemsPanelTemplate>
+      </ListView.ItemsPanel>
+    </ListView>
+
+  </Grid>
+</Window>
