@@ -46,6 +46,38 @@ namespace VideoExplorer
                 }
             }
 
+            private string _actor;
+            private string _category;
+            private string _details;
+
+            public string Actor
+            {
+                get => _actor;
+                set
+                {
+                    _actor = value;
+                    OnPropertyChanged();
+                }
+            }
+            public string Category
+            {
+                get => _category;
+                set
+                {
+                    _category = value;
+                    OnPropertyChanged();
+                }
+            }
+            public string Details
+            {
+                get => _details;
+                set
+                {  
+                    _details = value;
+                    OnPropertyChanged();
+                }
+            }
+
             public event PropertyChangedEventHandler PropertyChanged;
             protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
             {
@@ -69,12 +101,32 @@ namespace VideoExplorer
             var vm = (MyViewModel)DataContext;
             vm.ImagePath = itemModel.ImagePath;
             textBox_Title.Text = itemModel.Title;
+            textBox_Actor.Text = itemModel.Actor;
+            textBox_Category.Text = itemModel.Category;
+            textBox_Detail.Text = itemModel.Details;
 
             vm.ImagePaths = Utils.GenerateSequentialFiles(itemModel.ImagePath);
 
             this.itemModel = itemModel;
-            //ImagePath = itemModel.ImagePath;
-            //image_Cover.Source = new ImageSource(itemModel.fullPath);
+
+            if (this.Owner is MainWindow mainWindow)
+            {
+                var categoryWordsList = mainWindow.CategoryWordsList;
+                foreach (var word in categoryWordsList)
+                {
+                    Button newButton = new Button
+                    {
+                        Content = word,
+                        Margin = new Thickness(5),
+                    };
+                    newButton.Click += (s, e) =>
+                    {
+                        textBox_Category.Text += $",{(s as Button).Content}";
+                    };
+                    ButtonPanel.Children.Add(newButton);
+                }
+            }
+           
         }
 
         private void listBox_Cover_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -88,6 +140,9 @@ namespace VideoExplorer
             var vm = (MyViewModel)DataContext;
             itemModel.ImagePath = vm.ImagePath;
             itemModel.Title = textBox_Title.Text;
+            itemModel.Actor = textBox_Actor.Text;
+            itemModel.Category = Utils.NormalizeCategory(textBox_Category.Text);
+            itemModel.Details = textBox_Detail.Text;
         }
     }
 }

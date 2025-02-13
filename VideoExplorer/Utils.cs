@@ -1,5 +1,7 @@
-﻿using System.IO;
+﻿using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace VideoExplorer
@@ -93,6 +95,49 @@ namespace VideoExplorer
             }
 
             return result;
+        }
+
+        public static void OpenFileWithDefaultProgram(string filePath)
+        {
+            try
+            {
+                // 使用默认程序打开文件
+                Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
+                Console.WriteLine("文件已使用默认程序打开。");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"无法打开文件: {ex.Message}");
+            }
+        }
+
+        public static void OpenFileInExplorer(string filePath)
+        {
+            try
+            {
+                // 获取文件所在文件夹路径
+                string folderPath = Path.GetDirectoryName(filePath);
+
+                // 使用资源管理器打开文件夹
+                Process.Start("explorer.exe", folderPath);
+                Console.WriteLine("文件所在文件夹已打开。");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"无法打开文件夹: {ex.Message}");
+            }
+        }
+
+        public static string NormalizeCategory(string categoryText)
+        {
+            string[] categorys = categoryText.Split(new char[] { ',', '，', ' ', '\t', '/', '\\' });
+            StringBuilder stringBuilder = new StringBuilder();
+            foreach (string category in categorys)
+            {
+                if(category != string.Empty)
+                    stringBuilder.Append(category).Append(',');
+            }
+            return stringBuilder.ToString().TrimEnd(',');
         }
     }
 }

@@ -6,50 +6,52 @@
         xmlns:local="clr-namespace:VideoExplorer"
         mc:Ignorable="d"
         Title="MainWindow" Height="820" Width="1171" Closing="Window_Closing" Loaded="Window_Loaded">
-    <Window.Resources>
-        <!-- 定义数据项的模板 -->
-        <DataTemplate x:Key="LargeImageTemplate">
-            <Border BorderBrush="Gray" BorderThickness="1" Padding="10" Height="334" Margin="5" Width="537">
-                <StackPanel Margin="-1,0,-1,0">
+  <Window.Resources>
+    <!-- 定义数据项的模板 -->
+    <DataTemplate x:Key="LargeImageTemplate">
+      <Border BorderBrush="Gray" BorderThickness="1" Padding="5" Height="334" Width="488">
+        <StackPanel Margin="-1,0,-1,0">
 
-                    <Image Width="514" Height="254">
-                        <Image.Source>
-                            <Binding Path="ImagePath" FallbackValue="assets/youtube.png" TargetNullValue="assets/youtube.png"/>
-                        </Image.Source>
-                    </Image>
+          <Image Width="452" Height="255">
+            <Image.Source>
+              <Binding Path="ImagePath" FallbackValue="assets/youtube.png" TargetNullValue="assets/youtube.png"/>
+            </Image.Source>
+          </Image>
 
-                    <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold" />
-                    <TextBlock Text="{Binding Category}" FontSize="12" Foreground="Gray" />
-                    <TextBlock Text="{Binding Details}" FontSize="12" Foreground="DarkGray" />
-                </StackPanel>
-            </Border>
-        </DataTemplate>
-    </Window.Resources>
+          <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="Bold" />
+          <TextBlock Text="{Binding Actor}" FontSize="12" Foreground="Black" />
+          <TextBlock Text="{Binding Category}" FontSize="12" Foreground="Gray" />
+          <TextBlock Text="{Binding Details}" FontSize="12" Foreground="DarkGray" />
+        </StackPanel>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
 
 
-    <DockPanel>
-        <StatusBar DockPanel.Dock="Bottom">
-            <StatusBarItem>
-                <TextBlock Name="statusBar_TextBlock" Text="就绪" Visibility="Visible"/>
-            </StatusBarItem>
-            <StatusBarItem>
-                <ProgressBar x:Name="statusBar_ProgressBar" Width="100" Height="16" Value="0" Visibility="Visible" />
-            </StatusBarItem>
-        </StatusBar>
-        <Grid>
-            <ListView x:Name="listView" ItemTemplate="{StaticResource LargeImageTemplate}" SelectionChanged="listView_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Drop="listView_Drop" AllowDrop="True" MouseDoubleClick="listView_MouseDoubleClick" MouseRightButtonDown="listView_MouseRightButtonDown">
-                <!-- 设置 ListView 的布局模式 -->
-                <ListView.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal" />
-                    </ItemsPanelTemplate>
-                </ListView.ItemsPanel>
-                <ListView.ContextMenu>
-                    <ContextMenu Name="listViewMenu">
-                        <MenuItem Header="视频信息设置..." Click="MenuItem_Click"/>
-                    </ContextMenu>
-                </ListView.ContextMenu>
-            </ListView>
-        </Grid>
-    </DockPanel>
+  <DockPanel>
+    <StatusBar DockPanel.Dock="Bottom">
+      <StatusBarItem>
+        <TextBlock Name="statusBar_TextBlock" Text="就绪" Visibility="Visible"/>
+      </StatusBarItem>
+      <StatusBarItem>
+        <ProgressBar x:Name="statusBar_ProgressBar" Width="100" Height="16" Value="0" Visibility="Visible" />
+      </StatusBarItem>
+    </StatusBar>
+    <Grid>
+      <ListView x:Name="listView" ItemTemplate="{StaticResource LargeImageTemplate}" SelectionChanged="listView_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Drop="listView_Drop" AllowDrop="True" MouseDoubleClick="listView_MouseDoubleClick" MouseRightButtonDown="listView_MouseRightButtonDown" d:ItemsSource="{d:SampleData ItemCount=5}">
+        <!-- 设置 ListView 的布局模式 -->
+        <ListView.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ListView.ItemsPanel>
+        <ListView.ContextMenu>
+          <ContextMenu Name="listViewMenu">
+            <MenuItem Header="视频信息设置..." Click="MenuItem_Click"/>
+            <MenuItem Header="打开文件所在文件夹..." Click="MenuItem_OpenFolder"/>
+          </ContextMenu>
+        </ListView.ContextMenu>
+      </ListView>
+    </Grid>
+  </DockPanel>
 </Window>

@@ -25,8 +25,9 @@ namespace VideoExplorer
     /// </summary>
     public partial class MainWindow : Window
     {
-
-        ObservableCollection<ItemModel> listViewItems { get; set; }
+        private ObservableCollection<ItemModel> listViewItems { get; set; }
+        private HashSet<string> _categoryWordsList = new();
+        public HashSet<string> CategoryWordsList { get => _categoryWordsList; }
 
         public event PropertyChangedEventHandler PropertyChanged;
         string thumbDirectory;
@@ -36,6 +37,7 @@ namespace VideoExplorer
         public class ItemModel : INotifyPropertyChanged
         {
             public string _title;
+            public string _actor;
             public string _category;
             public string _details;
             public string _imagePath;
@@ -54,6 +56,16 @@ namespace VideoExplorer
                 set
                 {
                     _category = value;
+                    OnPropertyChanged();
+                }
+            }
+
+            public string Actor
+            {
+                get { return _actor; }
+                set
+                {
+                    _actor = value;
                     OnPropertyChanged();
                 }
             }
@@ -77,8 +89,8 @@ namespace VideoExplorer
                 }
             }
 
-            public string fullPath;
-            public string sha1;
+            public string fullPath { get; set; }
+            public string sha1 { get; set; }
 
             public event PropertyChangedEventHandler PropertyChanged;
             protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
@@ -108,10 +120,21 @@ namespace VideoExplorer
             listView.ItemsSource = listViewItems;
         }
 
+        private int FindFilename(string fullpath)
+        {
+            int count = listViewItems.Count;
+            for (int i = 0; i < count; i++)
+            {
+                if (listViewItems[i].fullPath == fullpath)
+                { return i; }
+            }
+            return -1;
+        }
+
         private static bool IsVideoFile(string filePath)
         {
             string extension = Path.GetExtension(filePath).ToLower();
-            return (extension == ".avi" || extension == ".mp4" || extension == ".mkv");
+            return (extension == ".avi" || extension == ".mp4" || extension == ".mkv" || extension == ".wmv");
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -128,13 +151,19 @@ namespace VideoExplorer
                         foreach (var item in itemsArray)
                         {
                             listViewItems.Add(item);
+                            string[] categoryList = item.Category?.Split(',');
+                            if (categoryList != null && categoryList.Length > 0)
+                            {
+                                foreach (string category in categoryList)
+                                    if(category != string.Empty)
+                                        _categoryWordsList.Add(category);
+                            }
                         }
                     }
                 }
             }
             catch(Exception ex)
             {
-
             }
         }
 
@@ -156,7 +185,6 @@ namespace VideoExplorer
 
         private void listView_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-
         }
 
         private void listView_Drop(object sender, DragEventArgs e)
@@ -196,6 +224,7 @@ namespace VideoExplorer
             int index = 0;
             foreach (var fullpath in fileList)
             {
+                if (FindFilename(fullpath) >= 0) continue;
                 statusBar_TextBlock.Text = $"{Path.GetFileName(fullpath)}({++index}/{fileList.Count})";
                 await AddVideoFileAsync(fullpath);
             }
@@ -233,17 +262,29 @@ namespace VideoExplorer
                 videoInfoSettings.Owner = this;
                 videoInfoSettings.SetVideoInfo(listViewItems[listView.SelectedIndex]);
                 videoInfoSettings.ShowDialog();
+                string[] categorys = listViewItems[listView.SelectedIndex].Category.Split(',');
+                foreach (string category in categorys)
+                {
+                    if(category != string.Empty)
+                        _categoryWordsList.Add(category);
+                }
             }
         }
 
         private void listView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-
+            int selectedIndex = listView.SelectedIndex;
+            Utils.OpenFileWithDefaultProgram(listViewItems[selectedIndex].fullPath);
         }
 
         private void listView_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
         {
+        }
 
+        private void MenuItem_OpenFolder(object sender, RoutedEventArgs e)
+        {
+            int selectedIndex = listView.SelectedIndex;
+            Utils.OpenFileInExplorer(listViewItems[selectedIndex].fullPath);
         }
     }
 }
