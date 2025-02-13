@@ -66,7 +66,7 @@ namespace VideoExplorer
         private static bool IsVideoFile(string filePath)
         {
             string extension = Path.GetExtension(filePath).ToLower();
-            return (extension == ".avi" || extension == ".mp4");
+            return (extension == ".avi" || extension == ".mp4" || extension == ".mkv");
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -176,6 +176,27 @@ namespace VideoExplorer
                 fullPath = fullpath
             });
             bVideoFilesChanged = true;
+        }
+
+        private void MenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if(listView.SelectedIndex >= 0)
+            {
+                VideoInfoSettings videoInfoSettings = new();
+                videoInfoSettings.Owner = this;
+                videoInfoSettings.SetVideoInfo(listViewItems[listView.SelectedIndex]);
+                videoInfoSettings.ShowDialog();
+            }
+        }
+
+        private void listView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+
+        }
+
+        private void listView_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+
         }
     }
 }
