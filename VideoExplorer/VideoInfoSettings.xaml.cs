@@ -35,6 +35,17 @@ namespace VideoExplorer
                 }
             }
 
+            public List<string> _imagePaths;
+            public List<string> ImagePaths 
+            {
+                get => _imagePaths;
+                set
+                {
+                    _imagePaths = value;
+                    OnPropertyChanged();
+                }
+            }
+
             public event PropertyChangedEventHandler PropertyChanged;
             protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
             {
@@ -42,7 +53,8 @@ namespace VideoExplorer
             }
         }
 
-       
+
+        MainWindow.ItemModel itemModel;
 
         //public string ImagePath { get; set; }
         public VideoInfoSettings()
@@ -56,9 +68,26 @@ namespace VideoExplorer
             //DataContext
             var vm = (MyViewModel)DataContext;
             vm.ImagePath = itemModel.ImagePath;
+            textBox_Title.Text = itemModel.Title;
 
+            vm.ImagePaths = Utils.GenerateSequentialFiles(itemModel.ImagePath);
+
+            this.itemModel = itemModel;
             //ImagePath = itemModel.ImagePath;
             //image_Cover.Source = new ImageSource(itemModel.fullPath);
+        }
+
+        private void listBox_Cover_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var vm = (MyViewModel)DataContext;
+            vm.ImagePath = vm.ImagePaths[listBox_Cover.SelectedIndex];
+        }
+
+        private void Window_Closing(object sender, CancelEventArgs e)
+        {
+            var vm = (MyViewModel)DataContext;
+            itemModel.ImagePath = vm.ImagePath;
+            itemModel.Title = textBox_Title.Text;
         }
     }
 }

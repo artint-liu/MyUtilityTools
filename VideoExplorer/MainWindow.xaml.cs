@@ -15,6 +15,8 @@ using System.ComponentModel;
 using System.Windows.Controls.Primitives;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 
 namespace VideoExplorer
 {
@@ -29,17 +31,60 @@ namespace VideoExplorer
         public event PropertyChangedEventHandler PropertyChanged;
         string thumbDirectory;
         readonly string videoFiles = "videoFiles.json";
-        bool bVideoFilesChanged = false;
+        //bool bVideoFilesChanged = false;
 
-        public class ItemModel
+        public class ItemModel : INotifyPropertyChanged
         {
-            public string Title { get; set; }
-            public string Category { get; set; }
-            public string Details { get; set; }
-            public string ImagePath { get; set; }
+            public string _title;
+            public string _category;
+            public string _details;
+            public string _imagePath;
+            public string Title
+            {
+                get { return _title;}
+                set
+                {
+                    _title = value;
+                    OnPropertyChanged();
+                }
+            }
+            public string Category
+            {
+                get { return _category; }
+                set
+                {
+                    _category = value;
+                    OnPropertyChanged();
+                }
+            }
+
+            public string Details
+            {
+                get { return _details; }
+                set
+                {
+                    _details = value; OnPropertyChanged();
+                }
+            }
+
+            public string ImagePath
+            {
+                get { return _imagePath; }
+                set
+                {
+                    _imagePath = value;
+                    OnPropertyChanged();
+                }
+            }
 
             public string fullPath;
             public string sha1;
+
+            public event PropertyChangedEventHandler PropertyChanged;
+            protected virtual void OnPropertyChanged([CallerMemberName] string propertyName = null)
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            }
         }
 
         public MainWindow()
@@ -56,7 +101,7 @@ namespace VideoExplorer
 
             listViewItems = new ObservableCollection<ItemModel>();
             //StatusMessage = "hello world";
-            statusBar_TextBlock.Text = "hello world";
+            //statusBar_TextBlock.Text = "hello world";
             //statusBar_ProgressBar.Value
 
             // 绑定数据到 ListBox
@@ -95,14 +140,16 @@ namespace VideoExplorer
 
         private void Window_Closing(object sender, CancelEventArgs e)
         {
-            if (bVideoFilesChanged)
+            var itemsArray = listViewItems.ToArray();
+            var option = new JsonSerializerOptions
             {
-                var itemsArray = listViewItems.ToArray();
-                var option = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                };
-                string jsonText = JsonSerializer.Serialize(itemsArray, option);
+                WriteIndented = true,
+            };
+            string jsonText = JsonSerializer.Serialize(itemsArray, option);
+            string jsonOldText = File.ReadAllText(videoFiles);
+            
+            if (jsonOldText != jsonText) // 减少文件写入
+            {
                 File.WriteAllText(videoFiles, jsonText);
             }
         }
@@ -175,7 +222,7 @@ namespace VideoExplorer
                 ImagePath = thumbnailPath,
                 fullPath = fullpath
             });
-            bVideoFilesChanged = true;
+            //bVideoFilesChanged = true;
         }
 
         private void MenuItem_Click(object sender, RoutedEventArgs e)

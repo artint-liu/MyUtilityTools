@@ -1,5 +1,6 @@
 ﻿using System.IO;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace VideoExplorer
 {
@@ -46,6 +47,52 @@ namespace VideoExplorer
         {
             string extension = Path.GetExtension(filename);
             return Path.ChangeExtension(filename, $"{postfix}{extension}");
+        }
+
+        public static List<string> GenerateSequentialFiles(string filepath)
+        {
+            var result = new List<string>();
+
+            // 检查初始文件是否存在
+            if (!File.Exists(filepath))
+            {
+                return result;
+            }
+
+            // 解析路径组成部分
+            string directory = Path.GetDirectoryName(filepath);
+            string fileName = Path.GetFileNameWithoutExtension(filepath);
+            string extension = Path.GetExtension(filepath);
+
+            // 使用正则匹配数字部分
+            var match = Regex.Match(fileName, @"\.(\d+)$");
+            if (!match.Success) return result;
+
+            // 获取前缀和初始编号
+            string prefix = fileName.Substring(0, match.Index);
+            //int startNumber = int.Parse(match.Groups[1].Value);
+            int digits = match.Groups[1].Length;  // 保持原始数字位数
+
+            // 生成后续文件
+            int currentNumber = 1;
+            while (true)
+            {
+                // 格式化新文件名（保持前导零）
+                string newFileName = $"{prefix}.{currentNumber.ToString($"D{digits}")}{extension}";
+                string fullPath = Path.Combine(directory, newFileName);
+
+                if (File.Exists(fullPath))
+                {
+                    result.Add(fullPath);
+                    currentNumber++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return result;
         }
     }
 }
