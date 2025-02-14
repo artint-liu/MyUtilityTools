@@ -121,7 +121,39 @@ namespace VideoExplorer
                     };
                     newButton.Click += (s, e) =>
                     {
-                        textBox_Category.Text += $",{(s as Button).Content}";
+                        if (s is Button button && button.Content != null)
+                        {
+                            string strButtonContent = button.Content.ToString();
+
+                            if (textBox_Category.Text.Length == 0)
+                            {
+                                textBox_Category.Text = strButtonContent;
+                            }
+                            else
+                            {
+                                string text = textBox_Category.Text;
+                                text = text.Replace('，', ',').Replace('\t', ',').Replace('\\', ',').Replace('/', ',');
+                                
+                                if(text == strButtonContent)
+                                {
+                                    textBox_Category.Text = "";
+                                }
+                                else if(text.StartsWith($"{strButtonContent},"))
+                                {
+                                    textBox_Category.Text = text.Remove(0, strButtonContent.Length + 1);
+                                }
+                                else if(text.EndsWith($",{strButtonContent}"))
+                                {
+                                    textBox_Category.Text = text.Remove(text.Length - (strButtonContent.Length + 1));
+                                }
+                                else if(text.Contains($",{strButtonContent},"))
+                                {
+                                    textBox_Category.Text = text.Replace($",{strButtonContent}", "");
+                                }
+                                else
+                                    textBox_Category.Text += $",{strButtonContent}";
+                            }
+                        }
                     };
                     ButtonPanel.Children.Add(newButton);
                 }
