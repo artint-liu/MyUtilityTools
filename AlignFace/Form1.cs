@@ -6,6 +6,8 @@ using DlibDotNet.Dnn; // 新增命名空间
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Windows.Forms;
 //using Emgu.CV;
 //using Emgu.CV.CvEnum;
 
@@ -15,10 +17,18 @@ namespace AlignFace
 {
     public partial class Form1 : Form
     {
+        class FaceInfo
+        {
+            public string filename { get; set; }
+            public System.Drawing.Point[] points { get; set; }
+        }
+
+        private readonly string faceInfoFilename = "faceinfo.json";
         List<string> files = new();
         FrontalFaceDetector faceDetector = Dlib.GetFrontalFaceDetector();
         ShapePredictor shapePredictor = ShapePredictor.Deserialize("shape_predictor_68_face_landmarks.dat");
         List<System.Drawing.Point> points = null;
+        Dictionary<string, FaceInfo> faceInfos = new();
         int index = 0;
         private readonly int heigh_limit = 500;
 
@@ -73,10 +83,25 @@ namespace AlignFace
                 index += dir;
 
             string strPngPath = GetJpegFilepath(files[index]); // 备用路径
-            pictureBox_Photo.Image = LoadImage(files[index], strPngPath);
-            Detect(strPngPath);
-            button_Prev.Enabled = index > 0;
-            button_Next.Enabled = index < files.Count - 1;
+            points = Detect(strPngPath);
+
+            this.Invoke(new Action(() =>
+            {
+                pictureBox_Photo.Image = LoadImage(files[index], strPngPath);
+                button_Prev.Enabled = index > 0;
+                button_Next.Enabled = index < files.Count - 1;
+            }));
+
+            string filename = Path.GetFileName(strPngPath);
+            if (!faceInfos.ContainsKey(filename))
+            {
+                faceInfos.Add(filename, new FaceInfo()
+                {
+                    filename = filename,
+                    points = points.ToArray()
+                });
+            }
+            toolStripStatusLabel1.Text = strPngPath;
         }
 
         private static string GetJpegFilepath(string path)
@@ -117,7 +142,7 @@ namespace AlignFace
 
 
 
-        void Detect(string imagepath)
+        private List<System.Drawing.Point> Detect(string imagepath)
         {
             // 加载图像
             Mat image = Cv2.ImRead(imagepath, ImreadModes.Color);
@@ -129,17 +154,12 @@ namespace AlignFace
             // 将OpenCV的Mat转换为Dlib的Array2D
             byte[] imageData = new byte[imageResize.Rows * imageResize.Cols * imageResize.Channels()];
             Marshal.Copy(imageResize.Data, imageData, 0, imageData.Length);
-            Array2D<RgbPixel> dlibImage = Dlib.LoadImageData<RgbPixel>(imageData, (uint)imageResize.Rows, (uint)imageResize.Cols, (uint)imageResize.Step());
-
-            // 加载Dlib的人脸检测器和关键点检测器
-            //using (var faceDetector = Dlib.GetFrontalFaceDetector())
-            //using (var mmodDetector = LossMmod.Deserialize("mmod_human_face_detector.dat"))
-            //using (var shapePredictor = ShapePredictor.Deserialize("shape_predictor_68_face_landmarks.dat"))
+            
+            List<System.Drawing.Point> _points = new();
+            using (Array2D<RgbPixel> dlibImage = Dlib.LoadImageData<RgbPixel>(imageData, (uint)imageResize.Rows, (uint)imageResize.Cols, (uint)imageResize.Step()))
             {
                 // 检测人脸
-                //var faces = mmodDetector.Operator<Matrix<RgbPixel>>(dlibImage);
                 var faces = faceDetector.Operator(dlibImage);
-                points = new();
                 // 遍历检测到的人脸
                 foreach (var face in faces)
                 {
@@ -150,14 +170,15 @@ namespace AlignFace
                     for (uint i = 0; i < shape.Parts; i++)
                     {
                         var point = shape.GetPart(i);
-                        points.Add(new System.Drawing.Point(point.X, point.Y));
-                        //Cv2.Circle(imageResize, point.X, point.Y, 2, Scalar.Red);
+                        _points.Add(new System.Drawing.Point(point.X, point.Y));
                     }
 
                     // 绘制人脸矩形框
                     //Cv2.Rectangle(imageResize, new Rect(face.Left, face.Top, (int)face.Width, (int)face.Height), new Scalar(255, 0, 0), 2);
                 }
             }
+            
+            return _points;
         }
 
         private void pictureBox_Photo_Paint(object sender, PaintEventArgs e)
@@ -166,20 +187,39 @@ namespace AlignFace
             if (points != null)
             {
                 Pen pen = new Pen(Color.Red);
+                Font font = new Font("Arial", 10);
+                Brush solidBrush = new SolidBrush(Color.FromArgb(255, 0, 255, 0));
                 int radius = 5;
                 float scale = (float)pictureBox_Photo.Height / heigh_limit;
                 float display_width = (float)pictureBox_Photo.Image.Width / pictureBox_Photo.Image.Height * pictureBox_Photo.Height;
                 float offsetx = (pictureBox_Photo.Width - display_width) / 2;
+                int i = 0;
+                bool showIndex = checkBox_ShowIndex.Checked;
                 foreach (var point in points)
                 {
-
-                    g.DrawEllipse(pen, point.X * scale - radius + offsetx, point.Y * scale - radius, radius * 2, radius * 2);
+                    float x = point.X * scale + offsetx;
+                    float y = point.Y * scale;
+                    g.DrawEllipse(pen, x - radius, y - radius, radius * 2, radius * 2);
+                    if (showIndex)
+                        g.DrawString($"{i++}", font, solidBrush, new PointF(x, y));
                 }
             }
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
+            JsonSerializerOptions options = new JsonSerializerOptions()
+            {
+                WriteIndented = true
+            };
+
+            string jsonText = JsonSerializer.Serialize(faceInfos, options);
+            string jsonTextOld = File.Exists(faceInfoFilename) ? File.ReadAllText(faceInfoFilename) : "";
+            if (jsonText != jsonTextOld)
+            {
+                File.WriteAllText(faceInfoFilename, jsonText);
+            }
+
             faceDetector.Dispose();
             shapePredictor.Dispose();
         }
@@ -192,6 +232,35 @@ namespace AlignFace
         private void button_Next_Click(object sender, EventArgs e)
         {
             UpdateImage(1);
+        }
+
+        private void checkBox_ShowIndex_CheckedChanged(object sender, EventArgs e)
+        {
+            pictureBox_Photo.Invalidate();
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            if (File.Exists(faceInfoFilename))
+            {
+                string jsonText = File.ReadAllText(faceInfoFilename);
+                if (jsonText != string.Empty)
+                {
+                    faceInfos = JsonSerializer.Deserialize<Dictionary<string, FaceInfo>>(jsonText);
+                }
+            }
+        }
+
+        private async void checkBox_Auto_CheckedChanged(object sender, EventArgs e)
+        {
+            while (checkBox_Auto.Checked && index < files.Count - 1)
+            {
+                await Task.Run(() =>
+                {
+                    UpdateImage(1);
+                });
+            }
+            checkBox_Auto.Checked = false;
         }
     }
 }

@@ -33,6 +33,8 @@
             pictureBox_Photo = new PictureBox();
             statusStrip1 = new StatusStrip();
             toolStripStatusLabel1 = new ToolStripStatusLabel();
+            checkBox_ShowIndex = new CheckBox();
+            checkBox_Auto = new CheckBox();
             ((System.ComponentModel.ISupportInitialize)pictureBox_Photo).BeginInit();
             statusStrip1.SuspendLayout();
             SuspendLayout();
@@ -84,11 +86,37 @@
             toolStripStatusLabel1.Size = new Size(75, 17);
             toolStripStatusLabel1.Text = "Hello world";
             // 
+            // checkBox_ShowIndex
+            // 
+            checkBox_ShowIndex.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            checkBox_ShowIndex.AutoSize = true;
+            checkBox_ShowIndex.Location = new Point(12, 763);
+            checkBox_ShowIndex.Name = "checkBox_ShowIndex";
+            checkBox_ShowIndex.Size = new Size(75, 21);
+            checkBox_ShowIndex.TabIndex = 4;
+            checkBox_ShowIndex.Text = "显示索引";
+            checkBox_ShowIndex.UseVisualStyleBackColor = true;
+            checkBox_ShowIndex.CheckedChanged += checkBox_ShowIndex_CheckedChanged;
+            // 
+            // checkBox_Auto
+            // 
+            checkBox_Auto.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            checkBox_Auto.AutoSize = true;
+            checkBox_Auto.Location = new Point(627, 763);
+            checkBox_Auto.Name = "checkBox_Auto";
+            checkBox_Auto.Size = new Size(75, 21);
+            checkBox_Auto.TabIndex = 6;
+            checkBox_Auto.Text = "自动遍历";
+            checkBox_Auto.UseVisualStyleBackColor = true;
+            checkBox_Auto.CheckedChanged += checkBox_Auto_CheckedChanged;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 17F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(876, 809);
+            Controls.Add(checkBox_Auto);
+            Controls.Add(checkBox_ShowIndex);
             Controls.Add(statusStrip1);
             Controls.Add(pictureBox_Photo);
             Controls.Add(button_Next);
@@ -96,6 +124,7 @@
             Name = "Form1";
             Text = "Form1";
             FormClosing += Form1_FormClosing;
+            Load += Form1_Load;
             ((System.ComponentModel.ISupportInitialize)pictureBox_Photo).EndInit();
             statusStrip1.ResumeLayout(false);
             statusStrip1.PerformLayout();
@@ -110,5 +139,7 @@
         private PictureBox pictureBox_Photo;
         private StatusStrip statusStrip1;
         private ToolStripStatusLabel toolStripStatusLabel1;
+        private CheckBox checkBox_ShowIndex;
+        private CheckBox checkBox_Auto;
     }
 }
