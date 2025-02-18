@@ -19,16 +19,16 @@ namespace AlignFace
     {
         class FaceInfo
         {
-            public string filename { get; set; }
-            public System.Drawing.Point[] points { get; set; }
+            public string? filename { get; set; }
+            public System.Drawing.Point[]? points { get; set; }
         }
 
         private readonly string faceInfoFilename = "faceinfo.json";
         List<string> files = new();
         FrontalFaceDetector faceDetector = Dlib.GetFrontalFaceDetector();
-        ShapePredictor shapePredictor = ShapePredictor.Deserialize("shape_predictor_68_face_landmarks.dat");
-        List<System.Drawing.Point> points = null;
-        Dictionary<string, FaceInfo> faceInfos = new();
+        ShapePredictor? shapePredictor = null;
+        List<System.Drawing.Point>? points = null;
+        Dictionary<string, FaceInfo>? faceInfos = new();
         int index = 0;
         private readonly int heigh_limit = 500;
 
@@ -36,6 +36,9 @@ namespace AlignFace
         {
             InitializeComponent();
             ScanFiles();
+
+            if(File.Exists("shape_predictor_68_face_landmarks.dat"))
+                shapePredictor = ShapePredictor.Deserialize("shape_predictor_68_face_landmarks.dat");
         }
 
         private async void ScanFiles()
@@ -154,7 +157,7 @@ namespace AlignFace
             // 将OpenCV的Mat转换为Dlib的Array2D
             byte[] imageData = new byte[imageResize.Rows * imageResize.Cols * imageResize.Channels()];
             Marshal.Copy(imageResize.Data, imageData, 0, imageData.Length);
-            
+
             List<System.Drawing.Point> _points = new();
             using (Array2D<RgbPixel> dlibImage = Dlib.LoadImageData<RgbPixel>(imageData, (uint)imageResize.Rows, (uint)imageResize.Cols, (uint)imageResize.Step()))
             {
@@ -177,7 +180,7 @@ namespace AlignFace
                     //Cv2.Rectangle(imageResize, new Rect(face.Left, face.Top, (int)face.Width, (int)face.Height), new Scalar(255, 0, 0), 2);
                 }
             }
-            
+
             return _points;
         }
 
@@ -221,7 +224,7 @@ namespace AlignFace
             }
 
             faceDetector.Dispose();
-            shapePredictor.Dispose();
+            shapePredictor?.Dispose();
         }
 
         private void button_Prev_Click(object sender, EventArgs e)

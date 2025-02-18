@@ -10,11 +10,38 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="asstes\video-box.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AForge.Controls" Version="2.2.5" />
+    <PackageReference Include="AForge.Video.DirectShow" Version="2.2.5" />
     <PackageReference Include="DlibDotNet" Version="19.21.0.20220724" />
     <PackageReference Include="Emgu.CV" Version="4.10.0.5680" />
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.4.0" />
     <PackageReference Include="OpenCvSharp4" Version="4.10.0.20241108" />
     <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20241108" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="asstes\video-box.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Resource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

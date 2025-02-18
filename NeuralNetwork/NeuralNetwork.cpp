@@ -8,8 +8,12 @@
 #include <algorithm>
 #include <filesystem>
 #include <execution>  // 包含并行执行策略
+#include <future>
+#include <functional>
+#include <immintrin.h> // 包含AVX2内联函数的头文件
 
-//#define PARALLE
+//#define PARALLEL
+//#define PARALLEL_TRANSFORM
 #if 0
 #define ACTIVATION sigmoid
 #define ACTIVATION_DERIVATIVE sigmoidDerivative
@@ -32,6 +36,7 @@ public:
         std::cout << str << " => " << (end - start) / 1000.0 << '\n';
     }
 };
+
 
 typedef float real;
 namespace fs = std::filesystem;
@@ -153,27 +158,47 @@ std::vector<Layer> initializeNetwork(size_t inputSize, const std::vector<int>& h
     return network;
 }
 
+real mul_array(real sum, const std::vector<real>& a, const std::vector<real>& b)
+{
+#if 1
+    __m256 vc = _mm256_setzero_ps();
+    for (size_t i = 0; i < b.size(); i += 8) {
+        __m256 va = _mm256_loadu_ps(&a[i]);
+        __m256 vb = _mm256_loadu_ps(&b[i]);
+        vc = _mm256_fmadd_ps(va, vb, vc);
+    }
+
+    float r[8];
+    _mm256_storeu_ps(r, vc);
+    for (size_t i = 0; i < 8; i++)
+    {
+        sum += r[i];
+    }
+#else
+    for (size_t i = 0; i < b.size(); ++i) {
+        sum += a[i] * b[i];
+    }
+#endif
+    return sum;
+}
+
 // 前向传播
 void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& input) {
     // 输入层到第一个隐藏层
     network[0].inputs = input;
-#ifdef PARALLE
+#ifdef PARALLEL
+#   ifdef PARALLEL_TRANSFORM
+    parallel_transform_pool(network[0].biases.begin(), network[0].biases.end(), network[0].weights.begin(), network[0].outputs.begin(),
+#   else
     std::transform(std::execution::par_unseq, network[0].biases.begin(), network[0].biases.end(), network[0].weights.begin(), network[0].outputs.begin(),
+#   endif
         [&input](real sum, std::vector<real>& b)
         {
-            for (size_t j = 0; j < input.size(); ++j)
-            {
-                sum += b[j] * input[j];
-            }
-            return ACTIVATION(sum);
+            return ACTIVATION(mul_array(sum, b, input));
         });
 #else
     for (size_t i = 0; i < network[0].outputs.size(); ++i) {
-        real sum = network[0].biases[i];
-        for (size_t j = 0; j < input.size(); ++j) {
-            sum += network[0].weights[i][j] * input[j];
-        }
-        network[0].outputs[i] = ACTIVATION(sum);
+        network[0].outputs[i] = ACTIVATION(mul_array(network[0].biases[i], network[0].weights[i], input));
     }
 #endif
 
@@ -181,24 +206,21 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
     for (size_t i = 1; i < network.size() - 1; ++i)
     {
         network[i].inputs = network[i - 1].outputs;
-#ifdef PARALLE
+#ifdef PARALLEL
         std::vector<real>& inputs = network[i].inputs;
 
+#   ifdef PARALLEL_TRANSFORM
         std::transform(std::execution::par_unseq, network[i].biases.begin(), network[i].biases.end(), network[i].weights.begin(), network[i].outputs.begin(),
+#   else
+        std::transform(std::execution::par_unseq, network[i].biases.begin(), network[i].biases.end(), network[i].weights.begin(), network[i].outputs.begin(),
+#   endif
             [i, &inputs](real sum, std::vector<real>& b)
             {
-                for (size_t k = 0; k < inputs.size(); ++k) {
-                    sum += b[k] * inputs[k];
-                }
-                return ACTIVATION(sum);
+                return ACTIVATION(mul_array(sum, b, inputs));
             });
 #else
         for (size_t j = 0; j < network[i].outputs.size(); ++j) {
-            real sum = network[i].biases[j];
-            for (size_t k = 0; k < network[i].inputs.size(); ++k) {
-                sum += network[i].weights[j][k] * network[i].inputs[k];
-            }
-            network[i].outputs[j] = ACTIVATION(sum);
+            network[i].outputs[j] = ACTIVATION(mul_array(network[i].biases[j], network[i].weights[j], network[i].inputs));
         }
 #endif
     }
@@ -206,23 +228,20 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
     // 输出层使用softmax
     Layer& outputLayer = network.back();
     outputLayer.inputs = network[network.size() - 2].outputs;
-#ifdef PARALLE
+#ifdef PARALLEL
     std::vector<real>& outputLayer_inputs = outputLayer.inputs;
+#   ifdef PARALLEL_TRANSFORM
     std::transform(std::execution::par_unseq, outputLayer.biases.begin(), outputLayer.biases.end(), outputLayer.weights.begin(), outputLayer.outputs.begin(),
+#   else
+    std::transform(std::execution::par_unseq, outputLayer.biases.begin(), outputLayer.biases.end(), outputLayer.weights.begin(), outputLayer.outputs.begin(),
+#   endif
         [&outputLayer_inputs](real sum, std::vector<real>& b)
         {
-            for (size_t k = 0; k < outputLayer_inputs.size(); ++k) {
-                sum += b[k] * outputLayer_inputs[k];
-            }
-            return sum; // 先存储线性输出
+            return mul_array(sum, b, outputLayer_inputs); // 先存储线性输出
         });
 #else
     for (size_t j = 0; j < outputLayer.outputs.size(); ++j) {
-        real sum = outputLayer.biases[j];
-        for (size_t k = 0; k < outputLayer.inputs.size(); ++k) {
-            sum += outputLayer.weights[j][k] * outputLayer.inputs[k];
-        }
-        outputLayer.outputs[j] = sum; // 先存储线性输出
+        outputLayer.outputs[j] = mul_array(outputLayer.biases[j], outputLayer.weights[j], outputLayer.inputs); // 先存储线性输出
     }
 #endif
     softmax(outputLayer.outputs); // 应用softmax
@@ -271,19 +290,27 @@ void backPropagation(std::vector<Layer>& network, const std::vector<real>& targe
     }
 
     // 更新权重和偏置（添加L2正则化）
-    for (size_t i = 0; i < network.size(); ++i) {
-        for (size_t j = 0; j < network[i].weights.size(); ++j) {
-            for (size_t k = 0; k < network[i].weights[j].size(); ++k) {
-                real gradient = network[i].errors[j] * network[i].inputs[k];
-                real regularization = lambda * network[i].weights[j][k];
+    for (size_t i = 0; i < network.size(); ++i)
+    {
+        for (size_t j = 0; j < network[i].weights.size(); ++j)
+        {
+            const std::vector<real>& errors = network[i].errors;
+            const std::vector<real>& inputs = network[i].inputs;
+            std::vector<real>& weights = network[i].weights[j];
+            std::vector<real>& biases = network[i].biases;
+
+            for (size_t k = 0; k < weights.size(); ++k)
+            {
+                real gradient = errors[j] * inputs[k];
+                real regularization = lambda * weights[k];
                 real delta = learningRate * (gradient + regularization);
 
-                network[i].weights[j][k] -= delta + momentum * prevWeightUpdates[i][j][k];
+                weights[k] -= delta + momentum * prevWeightUpdates[i][j][k];
                 prevWeightUpdates[i][j][k] = delta;  // 存储当前更新量供下次使用
             }
             // 更新偏置
-            real biasDelta = learningRate * network[i].errors[j];
-            network[i].biases[j] -= biasDelta + momentum * prevBiasUpdates[i][j];
+            real biasDelta = learningRate * errors[j];
+            biases[j] -= biasDelta + momentum * prevBiasUpdates[i][j];
             prevBiasUpdates[i][j] = biasDelta;  // 存储当前更新量
         }
     }
@@ -306,8 +333,6 @@ void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::
         // 批量训练
         for (size_t start = 0; start < shuffledData.size(); start += batchSize) {
             auto end = std::min(start + batchSize, shuffledData.size());
-            //std::vector<std::vector<real>> batchInputs;
-            //std::vector<std::vector<real>> batchTargets;
 
             // 累积梯度
             for (size_t i = start; i < end; ++i) {
@@ -325,12 +350,7 @@ void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::
         real currentAccuracy = static_cast<real>(testNetwork(network, testData));
         if (currentAccuracy > bestAccuracy) {
             bestAccuracy = currentAccuracy;
-            //learningRate *= static_cast<real>(1.05);
         }
-        //else {
-        //    learningRate *= static_cast<real>(0.5);
-        //}
-        //learningRate = std::max(learningRate, 1e-5f);
     }
 }
 
@@ -476,7 +496,7 @@ int main() {
     }
 
     size_t inputSize = trainingData[0].first.size();
-    std::vector<int> hiddenSizes = { 256, 128, 64 };
+    std::vector<int> hiddenSizes = { 256, 128, 64, 32 };
     int outputSize = 10;
 
     // 初始化神经网络
