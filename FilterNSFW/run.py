@@ -1,0 +1,65 @@
+import tensorflow as tf
+import numpy as np
+import cv2
+import argparse
+
+# 加载模型
+# model = tf.saved_model.load("resnet_50_1by2_nsfw.caffemodel")
+# model = tf.saved_model.load("open_nsfw_weights.h5")
+
+# 加载 Caffe 模型
+def load_model(prototxt_path, model_path):
+    net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+    return net
+
+# 预处理图片
+def preprocess_image(image_path):
+    # 读取图片
+    image = cv2.imread(image_path)
+    # 调整图片大小为 224x224，并进行归一化
+    blob = cv2.dnn.blobFromImage(image, scalefactor=1.0, size=(224, 224), mean=(104.0, 117.0, 123.0), swapRB=False, crop=False)
+    return blob
+
+def predict_nsfw(net, image_blob):
+    # 输入图片到模型
+    net.setInput(image_blob)
+    # 获取输出
+    predictions = net.forward()
+    # 获取 NSFW 分数（第二个输出值）
+    nsfw_score = predictions[0][1]
+    return nsfw_score
+
+def main():
+    # 设置命令行参数解析器
+    parser = argparse.ArgumentParser(description="Detect NSFW image")
+    parser.add_argument("image_path", type=str, help="input image file")
+    args = parser.parse_args()
+
+    # 模型文件路径
+    prototxt_path = "deploy.prototxt"  # Caffe 模型配置文件
+    model_path = "resnet_50_1by2_nsfw.caffemodel"  # Caffe 模型权重文件
+
+    # 加载模型
+    net = load_model(prototxt_path, model_path)
+
+# 获取图片路径
+    image_path = args.image_path
+
+# 预处理图片
+    image_blob = preprocess_image(image_path)
+
+    # 进行预测
+    nsfw_score = predict_nsfw(net, image_blob)
+    print(f"NSFW Score: {nsfw_score}")
+
+# # 示例使用
+#     nsfw_score = predict_nsfw(image_path)
+#     print(f"NSFW Score: {nsfw_score}")
+
+    if nsfw_score > 0.5:
+        print("The image may contain NSFW content.")
+    else:
+        print("The image is safe.")
+
+if __name__ == "__main__":
+    main()
