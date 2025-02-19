@@ -1,4 +1,6 @@
-﻿namespace AlignFace
+﻿using AForge.Controls;
+
+namespace AlignFace
 {
     partial class Form_WebCamera
     {
@@ -30,26 +32,21 @@
         {
             components = new System.ComponentModel.Container();
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form_WebCamera));
-            pictureBox_Video = new PictureBox();
+            videoSourcePlayer = new VideoSourcePlayer();
             button_Start = new Button();
             imageList1 = new ImageList(components);
             button_Stop = new Button();
-            ((System.ComponentModel.ISupportInitialize)pictureBox_Video).BeginInit();
             SuspendLayout();
             // 
-            // pictureBox_Video
+            // videoSourcePlayer
             // 
-            pictureBox_Video.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            pictureBox_Video.BackgroundImage = Properties.Resources.video_box;
-            pictureBox_Video.BackgroundImageLayout = ImageLayout.Zoom;
-            pictureBox_Video.ErrorImage = Properties.Resources.video_box;
-            pictureBox_Video.InitialImage = Properties.Resources.video_box;
-            pictureBox_Video.Location = new Point(12, 12);
-            pictureBox_Video.Name = "pictureBox_Video";
-            pictureBox_Video.Size = new Size(936, 762);
-            pictureBox_Video.SizeMode = PictureBoxSizeMode.Zoom;
-            pictureBox_Video.TabIndex = 0;
-            pictureBox_Video.TabStop = false;
+            videoSourcePlayer.AutoSizeControl = true;
+            videoSourcePlayer.Location = new Point(319, 307);
+            videoSourcePlayer.Name = "videoSourcePlayer";
+            videoSourcePlayer.Size = new Size(322, 242);
+            videoSourcePlayer.TabIndex = 0;
+            videoSourcePlayer.TabStop = false;
+            videoSourcePlayer.VideoSource = null;
             // 
             // button_Start
             // 
@@ -95,18 +92,19 @@
             ClientSize = new Size(960, 856);
             Controls.Add(button_Stop);
             Controls.Add(button_Start);
-            Controls.Add(pictureBox_Video);
+            Controls.Add(videoSourcePlayer);
+            MinimizeBox = false;
             Name = "Form_WebCamera";
+            ShowIcon = false;
             Text = "Form_WebCamera";
             FormClosing += Form_WebCamera_FormClosing;
             FormClosed += Form_WebCamera_FormClosed;
-            ((System.ComponentModel.ISupportInitialize)pictureBox_Video).EndInit();
             ResumeLayout(false);
         }
 
         #endregion
 
-        private PictureBox pictureBox_Video;
+        private AForge.Controls.VideoSourcePlayer videoSourcePlayer;
         private Button button_Start;
         private Button button_Stop;
         private ImageList imageList1;
