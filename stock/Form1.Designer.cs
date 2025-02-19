@@ -42,6 +42,8 @@
             label6 = new Label();
             label_Max = new Label();
             label_Min = new Label();
+            label_UpdateTime = new Label();
+            label_DataTime = new Label();
             SuspendLayout();
             // 
             // timer1
@@ -158,11 +160,33 @@
             label_Min.TabIndex = 11;
             label_Min.Text = "Min";
             // 
+            // label_UpdateTime
+            // 
+            label_UpdateTime.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            label_UpdateTime.AutoSize = true;
+            label_UpdateTime.Location = new Point(172, 196);
+            label_UpdateTime.Name = "label_UpdateTime";
+            label_UpdateTime.Size = new Size(118, 24);
+            label_UpdateTime.TabIndex = 12;
+            label_UpdateTime.Text = "更新数据时间";
+            // 
+            // label_DataTime
+            // 
+            label_DataTime.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            label_DataTime.AutoSize = true;
+            label_DataTime.Location = new Point(208, 172);
+            label_DataTime.Name = "label_DataTime";
+            label_DataTime.Size = new Size(82, 24);
+            label_DataTime.TabIndex = 13;
+            label_DataTime.Text = "数据时间";
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(11F, 24F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(302, 164);
+            ClientSize = new Size(302, 229);
+            Controls.Add(label_DataTime);
+            Controls.Add(label_UpdateTime);
             Controls.Add(label_Min);
             Controls.Add(label_Max);
             Controls.Add(label6);
@@ -200,5 +224,7 @@
         private Label label6;
         private Label label_Max;
         private Label label_Min;
+        private Label label_UpdateTime;
+        private Label label_DataTime;
     }
 }

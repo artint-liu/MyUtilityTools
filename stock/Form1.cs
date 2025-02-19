@@ -23,10 +23,36 @@ namespace stock
 
         private void timer1_Tick(object sender, EventArgs e)
         {
-            Task.Run(() =>
+            if (IsMarketOpen())
             {
-                ReadData();
-            });
+                SetTimeInterval(30 * 1000); // 30秒
+                // 在这里执行更新逻辑
+                Task.Run(() =>
+                {
+                    ReadData();
+                });
+            }
+            else
+            {
+                SetTimeInterval(10 * 60 * 1000); // 十分钟
+            }
+        }
+
+        private void SetTimeInterval(int val)
+        {
+            if(timer1.Interval != val)
+                timer1.Interval = val;
+        }
+
+        private bool IsMarketOpen()
+        {
+            DateTime now = DateTime.Now;
+            // 假设股市开市时间为上午9:30到下午4:00
+            TimeSpan openTime = new TimeSpan(9, 30, 0);
+            TimeSpan closeTime = new TimeSpan(16, 0, 0);
+
+            // 判断当前时间是否在开市时间内
+            return now.TimeOfDay >= openTime && now.TimeOfDay <= closeTime;
         }
 
         private async Task ReadData()
@@ -67,6 +93,9 @@ namespace stock
 
                             label_Min.Text = min.ToString();
                             label_Max.Text = max.ToString();
+                            label_DataTime.Text = $"数据时间：{data[30]}";
+                            
+                            label_UpdateTime.Text = "更新时间: " + DateTime.Now.ToString("HH:mm:ss");
                         });
                     }
                     else
