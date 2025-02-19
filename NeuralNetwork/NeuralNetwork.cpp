@@ -33,7 +33,7 @@ public:
 
     ~Timer() {
         clock_t end = clock();
-        std::cout << str << " => " << (end - start) / 1000.0 << '\n';
+        std::cout << str << " => " << (end - start) / 1000.0 << "秒\n";
     }
 };
 
@@ -96,7 +96,8 @@ struct Layer {
     std::vector<real> errors;                // 误差向量
 };
 
-int testNetwork(std::vector<Layer> network, std::vector<std::pair<std::vector<real>, int>> testData);
+int testNetwork(const std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& testData)
+;
 
 // 初始化神经网络
 // 改进的权重初始化（He初始化）
@@ -162,7 +163,8 @@ real mul_array(real sum, const std::vector<real>& a, const std::vector<real>& b)
 {
 #if 1
     __m256 vc = _mm256_setzero_ps();
-    for (size_t i = 0; i < b.size(); i += 8) {
+    size_t i = 0;
+    for (; i < b.size(); i += 8) {
         __m256 va = _mm256_loadu_ps(&a[i]);
         __m256 vb = _mm256_loadu_ps(&b[i]);
         vc = _mm256_fmadd_ps(va, vb, vc);
@@ -170,10 +172,20 @@ real mul_array(real sum, const std::vector<real>& a, const std::vector<real>& b)
 
     float r[8];
     _mm256_storeu_ps(r, vc);
+
     for (size_t i = 0; i < 8; i++)
     {
         sum += r[i];
     }
+
+    if (i > b.size()) // 处理剩余
+    {
+        for (i -= 8; i < b.size(); i++)
+        {
+            sum += a[i] * b[i];
+        }
+    }
+
 #else
     for (size_t i = 0; i < b.size(); ++i) {
         sum += a[i] * b[i];
@@ -247,6 +259,53 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
     softmax(outputLayer.outputs); // 应用softmax
 }
 
+
+void UpdateWeight(
+    std::vector<real>& prevWeightUpdates,
+    std::vector<real>& weights,
+    std::vector<real>& biases,
+    const std::vector<real>& inputs,
+    real error,
+    real momentum,
+    real learningRate,
+    real lambda
+    )
+{
+#if 1
+    __m256 verror = _mm256_set1_ps(error);
+    __m256 vlambda = _mm256_set1_ps(lambda);
+    __m256 vmomentum = _mm256_set1_ps(momentum);
+    __m256 vlearningRate = _mm256_set1_ps(learningRate);
+
+    for (size_t i = 0; i < weights.size(); i += 8)
+    {
+        __m256 va = _mm256_load_ps(&weights[i]);
+        __m256 vb = _mm256_loadu_ps(&inputs[i]);
+        va = _mm256_mul_ps(vlambda, va);
+        __m256 vc = _mm256_loadu_ps(&prevWeightUpdates[i]);
+        va = _mm256_fmadd_ps(verror, vb, va);
+        __m256 vd = _mm256_loadu_ps(&weights[i]);
+        va = _mm256_mul_ps(vlearningRate, va);
+        vc = _mm256_fmadd_ps(vmomentum, vc, va);
+        _mm256_storeu_ps(&prevWeightUpdates[i], va);
+
+        vd = _mm256_sub_ps(vd, vc);
+
+        _mm256_storeu_ps(&weights[i], vd);
+    }
+#else
+    for (size_t k = 0; k < weights.size(); ++k)
+    {
+        real gradient = error * inputs[k];
+        real regularization = lambda * weights[k];
+        real delta = learningRate * (gradient + regularization);
+
+        weights[k] -= delta + momentum * prevWeightUpdates[k];
+        prevWeightUpdates[k] = delta;  // 存储当前更新量供下次使用
+    }
+#endif
+}
+
 // 反向传播
 void backPropagation(std::vector<Layer>& network, const std::vector<real>& target, real learningRate, real lambda)
 {
@@ -292,25 +351,12 @@ void backPropagation(std::vector<Layer>& network, const std::vector<real>& targe
     // 更新权重和偏置（添加L2正则化）
     for (size_t i = 0; i < network.size(); ++i)
     {
-        for (size_t j = 0; j < network[i].weights.size(); ++j)
+        for (size_t j = 0; j < network[i].weights.size(); ++j) // 循环：10
         {
-            const std::vector<real>& errors = network[i].errors;
-            const std::vector<real>& inputs = network[i].inputs;
-            std::vector<real>& weights = network[i].weights[j];
-            std::vector<real>& biases = network[i].biases;
-
-            for (size_t k = 0; k < weights.size(); ++k)
-            {
-                real gradient = errors[j] * inputs[k];
-                real regularization = lambda * weights[k];
-                real delta = learningRate * (gradient + regularization);
-
-                weights[k] -= delta + momentum * prevWeightUpdates[i][j][k];
-                prevWeightUpdates[i][j][k] = delta;  // 存储当前更新量供下次使用
-            }
+            UpdateWeight(prevWeightUpdates[i][j], network[i].weights[j], network[i].biases, network[i].inputs, network[i].errors[j], momentum, learningRate, lambda);
             // 更新偏置
-            real biasDelta = learningRate * errors[j];
-            biases[j] -= biasDelta + momentum * prevBiasUpdates[i][j];
+            real biasDelta = learningRate * network[i].errors[j];
+            network[i].biases[j] -= biasDelta + momentum * prevBiasUpdates[i][j];
             prevBiasUpdates[i][j] = biasDelta;  // 存储当前更新量
         }
     }
@@ -319,7 +365,7 @@ void backPropagation(std::vector<Layer>& network, const std::vector<real>& targe
 
 // 训练神经网络
 void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& trainingData,
-    std::vector<std::pair<std::vector<real>, int>> testData, int epochs, real learningRate, real lambda, int batchSize = 256)
+    const std::vector<std::pair<std::vector<real>, int>>& testData, int epochs, real learningRate, real lambda, int batchSize = 256)
 {
     real bestAccuracy = 0.0;
     for (int epoch = 0; epoch < epochs; ++epoch) {
@@ -342,7 +388,7 @@ void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::
 
                 forwardPropagation(network, data.first);
                 backPropagation(network, target, learningRate / (end - start), lambda);
-                std::cout << "进度:" << i++ << "/" << trainingData.size() << "\r";
+                //std::cout << "进度:" << i++ << "/" << trainingData.size() << "\r";
             }
         }
 
@@ -463,7 +509,7 @@ std::vector<std::pair<std::vector<real>, int>> loadData(const std::string& filen
     return data;
 }
 
-int testNetwork(std::vector<Layer> network, std::vector<std::pair<std::vector<real>, int>> testData)
+int testNetwork(const std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& testData)
 {
     // 测试神经网络
     int correctCount = 0;
@@ -496,7 +542,7 @@ int main() {
     }
 
     size_t inputSize = trainingData[0].first.size();
-    std::vector<int> hiddenSizes = { 256, 128, 64, 32 };
+    std::vector<int> hiddenSizes = { 256, 128, 64 };
     int outputSize = 10;
 
     // 初始化神经网络
