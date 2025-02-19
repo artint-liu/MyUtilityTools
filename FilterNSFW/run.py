@@ -15,7 +15,15 @@ def load_model(prototxt_path, model_path):
 # 预处理图片
 def preprocess_image(image_path):
     # 读取图片
-    image = cv2.imread(image_path)
+    # image = cv2.imread(image_path)
+
+    # 用二进制模式读取文件
+    with open(image_path, 'rb') as f:
+        image_data = np.frombuffer(f.read(), dtype=np.uint8)
+
+    # 解码图像数据
+    image = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
+
     # 调整图片大小为 224x224，并进行归一化
     blob = cv2.dnn.blobFromImage(image, scalefactor=1.0, size=(224, 224), mean=(104.0, 117.0, 123.0), swapRB=False, crop=False)
     return blob
@@ -44,6 +52,7 @@ def main():
 
 # 获取图片路径
     image_path = args.image_path
+    print(image_path)
 
 # 预处理图片
     image_blob = preprocess_image(image_path)
