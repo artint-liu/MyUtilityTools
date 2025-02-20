@@ -14,6 +14,7 @@
 
 //#define PARALLEL
 //#define PARALLEL_TRANSFORM
+#define ENABLE_AVX2
 #if 0
 #define ACTIVATION sigmoid
 #define ACTIVATION_DERIVATIVE sigmoidDerivative
@@ -33,7 +34,7 @@ public:
 
     ~Timer() {
         clock_t end = clock();
-        std::cout << str << " => " << (end - start) / 1000.0 << "秒\n";
+        std::cout << str << " => " << (end - start) / 1000.0 << "秒\n\n";
     }
 };
 
@@ -96,8 +97,7 @@ struct Layer {
     std::vector<real> errors;                // 误差向量
 };
 
-int testNetwork(const std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& testData)
-;
+int testNetwork(const std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& testData);
 
 // 初始化神经网络
 // 改进的权重初始化（He初始化）
@@ -161,7 +161,7 @@ std::vector<Layer> initializeNetwork(size_t inputSize, const std::vector<int>& h
 
 real mul_array(real sum, const std::vector<real>& a, const std::vector<real>& b)
 {
-#if 1
+#ifdef ENABLE_AVX2
     __m256 vc = _mm256_setzero_ps();
     size_t i = 0;
     for (; i < b.size(); i += 8) {
@@ -199,11 +199,7 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
     // 输入层到第一个隐藏层
     network[0].inputs = input;
 #ifdef PARALLEL
-#   ifdef PARALLEL_TRANSFORM
-    parallel_transform_pool(network[0].biases.begin(), network[0].biases.end(), network[0].weights.begin(), network[0].outputs.begin(),
-#   else
     std::transform(std::execution::par_unseq, network[0].biases.begin(), network[0].biases.end(), network[0].weights.begin(), network[0].outputs.begin(),
-#   endif
         [&input](real sum, std::vector<real>& b)
         {
             return ACTIVATION(mul_array(sum, b, input));
@@ -220,12 +216,7 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
         network[i].inputs = network[i - 1].outputs;
 #ifdef PARALLEL
         std::vector<real>& inputs = network[i].inputs;
-
-#   ifdef PARALLEL_TRANSFORM
         std::transform(std::execution::par_unseq, network[i].biases.begin(), network[i].biases.end(), network[i].weights.begin(), network[i].outputs.begin(),
-#   else
-        std::transform(std::execution::par_unseq, network[i].biases.begin(), network[i].biases.end(), network[i].weights.begin(), network[i].outputs.begin(),
-#   endif
             [i, &inputs](real sum, std::vector<real>& b)
             {
                 return ACTIVATION(mul_array(sum, b, inputs));
@@ -242,11 +233,7 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
     outputLayer.inputs = network[network.size() - 2].outputs;
 #ifdef PARALLEL
     std::vector<real>& outputLayer_inputs = outputLayer.inputs;
-#   ifdef PARALLEL_TRANSFORM
     std::transform(std::execution::par_unseq, outputLayer.biases.begin(), outputLayer.biases.end(), outputLayer.weights.begin(), outputLayer.outputs.begin(),
-#   else
-    std::transform(std::execution::par_unseq, outputLayer.biases.begin(), outputLayer.biases.end(), outputLayer.weights.begin(), outputLayer.outputs.begin(),
-#   endif
         [&outputLayer_inputs](real sum, std::vector<real>& b)
         {
             return mul_array(sum, b, outputLayer_inputs); // 先存储线性输出
@@ -271,7 +258,7 @@ void UpdateWeight(
     real lambda
     )
 {
-#if 1
+#ifdef ENABLE_AVX2
     __m256 verror = _mm256_set1_ps(error);
     __m256 vlambda = _mm256_set1_ps(lambda);
     __m256 vmomentum = _mm256_set1_ps(momentum);
@@ -524,9 +511,9 @@ int testNetwork(const std::vector<Layer>& network, const std::vector<std::pair<s
     }
 
     // 计算准确率
-    std::cout << "计算准确率(" << correctCount << "/" << testData.size() << ")" << std::endl;
     real accuracy = static_cast<real>(correctCount) / testData.size();
-    std::cout << "Accuracy: " << accuracy * 100 << "%" << std::endl;
+    std::cout << "Accuracy: " << accuracy * 100 << "%" <<
+        "(" << correctCount << "/" << testData.size() << ")" << std::endl;
     return correctCount;
 }
 
@@ -547,8 +534,7 @@ int main() {
 
     // 初始化神经网络
     std::cout << "初始化神经网络" << std::endl;
-    std::vector<Layer> network = 
-        initializeNetwork(inputSize, hiddenSizes, outputSize);
+    std::vector<Layer> network = std::move(initializeNetwork(inputSize, hiddenSizes, outputSize));
 
     // 训练神经网络
     int epochs = 100;
