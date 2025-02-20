@@ -195,7 +195,18 @@ real mul_array(real sum, const std::vector<real>& a, const std::vector<real>& b)
 }
 
 // 前向传播
-void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& input) {
+void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& input)
+{
+#if 1
+    // 输入层，第一个层和隐藏层
+    for (size_t i = 0; i < network.size() - 1; ++i)
+    {
+        network[i].inputs = i == 0 ? input : network[i - 1].outputs;
+        for (size_t j = 0; j < network[i].outputs.size(); ++j) {
+            network[i].outputs[j] = ACTIVATION(mul_array(network[i].biases[j], network[i].weights[j], network[i].inputs));
+        }
+    }
+#else
     // 输入层到第一个隐藏层
     network[0].inputs = input;
 #ifdef PARALLEL
@@ -227,6 +238,7 @@ void forwardPropagation(std::vector<Layer>& network, const std::vector<real>& in
         }
 #endif
     }
+#endif
 
     // 输出层使用softmax
     Layer& outputLayer = network.back();

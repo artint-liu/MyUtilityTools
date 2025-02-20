@@ -87,6 +87,7 @@ def main():
             with open("result.txt", 'wt') as f:
                 for filename in file_list:
                     f.write(filename)
+                    f.write('\n')
 
 
 if __name__ == "__main__":
