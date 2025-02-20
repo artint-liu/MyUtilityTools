@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import argparse
+import os
 
 # 加载模型
 # model = tf.saved_model.load("resnet_50_1by2_nsfw.caffemodel")
@@ -13,7 +14,7 @@ def load_model(prototxt_path, model_path):
     return net
 
 # 预处理图片
-def preprocess_image(image_path):
+def preprocess_image(net, image_path):
     # 读取图片
     # image = cv2.imread(image_path)
 
@@ -26,7 +27,11 @@ def preprocess_image(image_path):
 
     # 调整图片大小为 224x224，并进行归一化
     blob = cv2.dnn.blobFromImage(image, scalefactor=1.0, size=(224, 224), mean=(104.0, 117.0, 123.0), swapRB=False, crop=False)
-    return blob
+
+    # 进行预测
+    nsfw_score = predict_nsfw(net, blob)
+    print(f"NSFW Score: {image_path}: {nsfw_score:.4f}")
+    return nsfw_score
 
 def predict_nsfw(net, image_blob):
     # 输入图片到模型
@@ -36,6 +41,7 @@ def predict_nsfw(net, image_blob):
     # 获取 NSFW 分数（第二个输出值）
     nsfw_score = predictions[0][1]
     return nsfw_score
+
 
 def main():
     # 设置命令行参数解析器
@@ -50,25 +56,38 @@ def main():
     # 加载模型
     net = load_model(prototxt_path, model_path)
 
-# 获取图片路径
+    # 获取图片路径
     image_path = args.image_path
-    print(image_path)
 
-# 预处理图片
-    image_blob = preprocess_image(image_path)
+    if os.path.isfile(image_path):
+        print('file:' + image_path)
+        # 处理图片
+        nsfw_score = preprocess_image(net, image_path)
 
-    # 进行预测
-    nsfw_score = predict_nsfw(net, image_blob)
-    print(f"NSFW Score: {nsfw_score}")
+        if nsfw_score > 0.5:
+            print("The image may contain NSFW content.")
+        else:
+            print("The image is safe.")
+    elif os.path.isdir(image_path):
+        file_list = []
+        print('dir:' + image_path)
+        for root, dirs, files in os.walk(image_path):
+            for file in files:
+                name, ext = os.path.splitext(file)
+                ext = ext.lower()
+                # print('ext:' + ext)
+                if ext == '.jpg' or ext == '.png' or ext == '.jpeg':
+                    full_path = os.path.join(root, file)
+                    scrore = preprocess_image(net, full_path)
+                    if scrore > 0.5:
+                        print('nsfw:%s'%(full_path))
+                        file_list.append(full_path)
 
-# # 示例使用
-#     nsfw_score = predict_nsfw(image_path)
-#     print(f"NSFW Score: {nsfw_score}")
+        if len(file_list) > 0:
+            with open("result.txt", 'wt') as f:
+                for filename in file_list:
+                    f.write(filename)
 
-    if nsfw_score > 0.5:
-        print("The image may contain NSFW content.")
-    else:
-        print("The image is safe.")
 
 if __name__ == "__main__":
     main()
