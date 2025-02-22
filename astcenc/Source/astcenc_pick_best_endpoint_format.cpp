@@ -513,10 +513,10 @@ static void compute_color_error_for_every_integer_count_and_quant_level(
 			best_error[i][1] = ERROR_CALC_DEFAULT;
 			best_error[i][0] = ERROR_CALC_DEFAULT;
 
-			format_of_choice[i][3] = static_cast<uint8_t>(encode_hdr_alpha ? FMT_HDR_RGBA : FMT_HDR_RGB_LDR_ALPHA);
-			format_of_choice[i][2] = FMT_HDR_RGB;
-			format_of_choice[i][1] = FMT_HDR_RGB_SCALE;
-			format_of_choice[i][0] = FMT_HDR_LUMINANCE_LARGE_RANGE;
+			//format_of_choice[i][3] = static_cast<uint8_t>(encode_hdr_alpha ? FMT_HDR_RGBA : FMT_HDR_RGB_LDR_ALPHA);
+			//format_of_choice[i][2] = FMT_HDR_RGB;
+			//format_of_choice[i][1] = FMT_HDR_RGB_SCALE;
+			//format_of_choice[i][0] = FMT_HDR_LUMINANCE_LARGE_RANGE;
 		}
 
 		for (int i = QUANT_16; i <= QUANT_256; i++)
@@ -531,25 +531,25 @@ static void compute_color_error_for_every_integer_count_and_quant_level(
 
 			// For 8 integers, we have two encodings: one with HDR A and another one with LDR A
 
-			float full_hdr_rgba_error = rgba_quantization_error + rgb_range_error + alpha_range_error;
-			best_error[i][3] = full_hdr_rgba_error;
-			format_of_choice[i][3] = static_cast<uint8_t>(encode_hdr_alpha ? FMT_HDR_RGBA : FMT_HDR_RGB_LDR_ALPHA);
+			//float full_hdr_rgba_error = rgba_quantization_error + rgb_range_error + alpha_range_error;
+			//best_error[i][3] = full_hdr_rgba_error;
+			//format_of_choice[i][3] = static_cast<uint8_t>(encode_hdr_alpha ? FMT_HDR_RGBA : FMT_HDR_RGB_LDR_ALPHA);
 
 			// For 6 integers, we have one HDR-RGB encoding
-			float full_hdr_rgb_error = (rgb_quantization_error * mode11mult) + rgb_range_error + eci.alpha_drop_error;
-			best_error[i][2] = full_hdr_rgb_error;
-			format_of_choice[i][2] = FMT_HDR_RGB;
+			//float full_hdr_rgb_error = (rgb_quantization_error * mode11mult) + rgb_range_error + eci.alpha_drop_error;
+			//best_error[i][2] = full_hdr_rgb_error;
+			//format_of_choice[i][2] = FMT_HDR_RGB;
 
 			// For 4 integers, we have one HDR-RGB-Scale encoding
-			float hdr_rgb_scale_error = (rgb_quantization_error * mode7mult) + rgb_range_error + eci.alpha_drop_error + eci.rgb_luma_error;
+			//float hdr_rgb_scale_error = (rgb_quantization_error * mode7mult) + rgb_range_error + eci.alpha_drop_error + eci.rgb_luma_error;
 
-			best_error[i][1] = hdr_rgb_scale_error;
-			format_of_choice[i][1] = FMT_HDR_RGB_SCALE;
+			//best_error[i][1] = hdr_rgb_scale_error;
+			//format_of_choice[i][1] = FMT_HDR_RGB_SCALE;
 
-			// For 2 integers, we assume luminance-with-large-range
-			float hdr_luminance_error = (rgb_quantization_error * mode23mult) + rgb_range_error + eci.alpha_drop_error + eci.luminance_error;
-			best_error[i][0] = hdr_luminance_error;
-			format_of_choice[i][0] = FMT_HDR_LUMINANCE_LARGE_RANGE;
+			//// For 2 integers, we assume luminance-with-large-range
+			//float hdr_luminance_error = (rgb_quantization_error * mode23mult) + rgb_range_error + eci.alpha_drop_error + eci.luminance_error;
+			//best_error[i][0] = hdr_luminance_error;
+			//format_of_choice[i][0] = FMT_HDR_LUMINANCE_LARGE_RANGE;
 		}
 	}
 	else

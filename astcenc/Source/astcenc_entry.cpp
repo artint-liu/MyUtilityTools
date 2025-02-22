@@ -174,8 +174,8 @@ static astcenc_error validate_profile(
 	{
 	case ASTCENC_PRF_LDR_SRGB:
 	case ASTCENC_PRF_LDR:
-	case ASTCENC_PRF_HDR_RGB_LDR_A:
-	case ASTCENC_PRF_HDR:
+	//case ASTCENC_PRF_HDR_RGB_LDR_A:
+	//case ASTCENC_PRF_HDR:
 		return ASTCENC_SUCCESS;
 	default:
 		return ASTCENC_ERR_BAD_PROFILE;
@@ -243,8 +243,8 @@ static astcenc_error validate_flags(
 
 	// Decode_unorm8 must only be used with an LDR profile
 	bool is_unorm8 = flags & ASTCENC_FLG_USE_DECODE_UNORM8;
-	bool is_hdr = (profile == ASTCENC_PRF_HDR) || (profile == ASTCENC_PRF_HDR_RGB_LDR_A);
-	if (is_unorm8 && is_hdr)
+	//bool is_hdr = (profile == ASTCENC_PRF_HDR) || (profile == ASTCENC_PRF_HDR_RGB_LDR_A);
+	if (is_unorm8 /*&& is_hdr*/)
 	{
 		return ASTCENC_ERR_BAD_DECODE_MODE;
 	}
@@ -591,11 +591,11 @@ astcenc_error astcenc_config_init(
 	case ASTCENC_PRF_LDR:
 	case ASTCENC_PRF_LDR_SRGB:
 		break;
-	case ASTCENC_PRF_HDR_RGB_LDR_A:
-	case ASTCENC_PRF_HDR:
-		config.tune_db_limit = 999.0f;
-		config.tune_search_mode0_enable = 0.0f;
-		break;
+	//case ASTCENC_PRF_HDR_RGB_LDR_A:
+	//case ASTCENC_PRF_HDR:
+	//	config.tune_db_limit = 999.0f;
+	//	config.tune_search_mode0_enable = 0.0f;
+	//	break;
 	default:
 		return ASTCENC_ERR_BAD_PROFILE;
 	}
@@ -836,10 +836,10 @@ static void compress_image(
 	bool needs_swz = (swizzle.r != ASTCENC_SWZ_R) || (swizzle.g != ASTCENC_SWZ_G) ||
 	                 (swizzle.b != ASTCENC_SWZ_B) || (swizzle.a != ASTCENC_SWZ_A);
 
-	bool needs_hdr = (decode_mode == ASTCENC_PRF_HDR) ||
-	                 (decode_mode == ASTCENC_PRF_HDR_RGB_LDR_A);
+	//bool needs_hdr = (decode_mode == ASTCENC_PRF_HDR) ||
+	//                 (decode_mode == ASTCENC_PRF_HDR_RGB_LDR_A);
 
-	bool use_fast_load = !needs_swz && !needs_hdr &&
+	bool use_fast_load = !needs_swz && //!needs_hdr &&
 	                     block_z == 1 && image.data_type == ASTCENC_TYPE_U8;
 
 	auto load_func = load_image_block;

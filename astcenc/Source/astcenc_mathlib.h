@@ -43,17 +43,17 @@
   #endif
 #endif
 
-#ifndef ASTCENC_SSE
-  #if defined(__SSE4_2__)
-    #define ASTCENC_SSE 42
-  #elif defined(__SSE4_1__)
-    #define ASTCENC_SSE 41
-  #elif defined(__SSE2__)
-    #define ASTCENC_SSE 20
-  #else
-    #define ASTCENC_SSE 0
-  #endif
-#endif
+//#ifndef ASTCENC_SSE
+//  #if defined(__SSE4_2__)
+//    #define ASTCENC_SSE 42
+//  #elif defined(__SSE4_1__)
+//    #define ASTCENC_SSE 41
+//  #elif defined(__SSE2__)
+//    #define ASTCENC_SSE 20
+//  #else
+//    #define ASTCENC_SSE 0
+//  #endif
+//#endif
 
 #ifndef ASTCENC_AVX
   #if defined(__AVX2__)
@@ -67,28 +67,28 @@
   #endif
 #endif
 
-#ifndef ASTCENC_NEON
-  #if defined(__aarch64__)
-    #define ASTCENC_NEON 1
-  #else
-    #define ASTCENC_NEON 0
-  #endif
-#endif
-
-#ifndef ASTCENC_SVE
-  #if defined(__ARM_FEATURE_SVE)
-    #if defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS == 256
-      #define ASTCENC_SVE 8
-    // Auto-detected SVE can only assume vector width of 4 is available, but
-    // must also allow for hardware being longer and so all use of intrinsics
-    // must explicitly use predicate masks to limit to 4-wide.
-    #else
-      #define ASTCENC_SVE 4
-    #endif
-    #else
-    #define ASTCENC_SVE 0
-  #endif
-#endif
+//#ifndef ASTCENC_NEON
+//  #if defined(__aarch64__)
+//    #define ASTCENC_NEON 1
+//  #else
+//    #define ASTCENC_NEON 0
+//  #endif
+//#endif
+//
+//#ifndef ASTCENC_SVE
+//  #if defined(__ARM_FEATURE_SVE)
+//    #if defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS == 256
+//      #define ASTCENC_SVE 8
+//    // Auto-detected SVE can only assume vector width of 4 is available, but
+//    // must also allow for hardware being longer and so all use of intrinsics
+//    // must explicitly use predicate masks to limit to 4-wide.
+//    #else
+//      #define ASTCENC_SVE 4
+//    #endif
+//    #else
+//    #define ASTCENC_SVE 0
+//  #endif
+//#endif
 
 // Force vector-sized SIMD alignment
 #if ASTCENC_AVX || ASTCENC_SVE == 8

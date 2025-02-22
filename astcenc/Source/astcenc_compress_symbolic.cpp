@@ -1223,15 +1223,15 @@ void compress_block(
 		scb.partition_count = 0;
 
 		// Encode as FP16 if using HDR
-		if ((decode_mode == ASTCENC_PRF_HDR) ||
-		    (decode_mode == ASTCENC_PRF_HDR_RGB_LDR_A))
-		{
-			scb.block_type = SYM_BTYPE_CONST_F16;
-			vint4 color_f16 = float_to_float16(blk.origin_texel);
-			store(color_f16, scb.constant_color);
-		}
-		// Encode as UNORM16 if NOT using HDR
-		else
+		//if ((decode_mode == ASTCENC_PRF_HDR) ||
+		//    (decode_mode == ASTCENC_PRF_HDR_RGB_LDR_A))
+		//{
+		//	scb.block_type = SYM_BTYPE_CONST_F16;
+		//	vint4 color_f16 = float_to_float16(blk.origin_texel);
+		//	store(color_f16, scb.constant_color);
+		//}
+		//// Encode as UNORM16 if NOT using HDR
+		//else
 		{
 			scb.block_type = SYM_BTYPE_CONST_U16;
 			vfloat4 color_f32 = clamp(0.0f, 1.0f, blk.origin_texel) * 65535.0f;

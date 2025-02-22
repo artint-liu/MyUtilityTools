@@ -234,12 +234,12 @@ void decompress_symbolic_block(
 			case ASTCENC_PRF_LDR:
 				color = vfloat4(error_color_nan());
 				break;
-			case ASTCENC_PRF_HDR_RGB_LDR_A:
-			case ASTCENC_PRF_HDR:
-				// Constant-color block; unpack from FP16 to FP32.
-				color = float16_to_float(vint4(scb.constant_color));
-				use_lns = 1;
-				break;
+			//case ASTCENC_PRF_HDR_RGB_LDR_A:
+			//case ASTCENC_PRF_HDR:
+			//	// Constant-color block; unpack from FP16 to FP32.
+			//	color = float16_to_float(vint4(scb.constant_color));
+			//	use_lns = 1;
+			//	break;
 			}
 		}
 

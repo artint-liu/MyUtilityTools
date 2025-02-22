@@ -232,9 +232,9 @@ enum astcenc_profile {
 	/** @brief The LDR linear color profile. */
 	ASTCENC_PRF_LDR,
 	/** @brief The HDR RGB with LDR alpha color profile. */
-	ASTCENC_PRF_HDR_RGB_LDR_A,
+	//ASTCENC_PRF_HDR_RGB_LDR_A,
 	/** @brief The HDR RGBA color profile. */
-	ASTCENC_PRF_HDR
+	//ASTCENC_PRF_HDR
 };
 
 /** @brief The fastest, lowest quality, search preset. */

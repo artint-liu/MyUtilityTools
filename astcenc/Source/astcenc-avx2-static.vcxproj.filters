@@ -73,4 +73,9 @@
       <UniqueIdentifier>{298F94D0-B2A9-3F34-AF0C-4F55C3746883}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="astcenc_vecmathlib.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>
