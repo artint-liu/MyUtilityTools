@@ -79,7 +79,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -100,10 +100,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;_CRT_SECURE_NO_WARNINGS;ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=20;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0;ASTCENC_X86_GATHERS=0;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -116,7 +116,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <DisableSpecificWarnings>4324</DisableSpecificWarnings>
       <ExceptionHandling>Sync</ExceptionHandling>
@@ -137,10 +137,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_CRT_SECURE_NO_WARNINGS;ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=20;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0;ASTCENC_X86_GATHERS=0;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -153,7 +153,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <DisableSpecificWarnings>4324</DisableSpecificWarnings>
       <ExceptionHandling>Sync</ExceptionHandling>
@@ -174,10 +174,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_CRT_SECURE_NO_WARNINGS;ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=20;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0;ASTCENC_X86_GATHERS=0;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -190,7 +190,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <DisableSpecificWarnings>4324</DisableSpecificWarnings>
@@ -210,10 +210,10 @@
     </ClCompile>
     <ResourceCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_CRT_SECURE_NO_WARNINGS;ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=20;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0;ASTCENC_X86_GATHERS=0;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Midl>
-      <AdditionalIncludeDirectories>E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
       <HeaderFileName>%(Filename).h</HeaderFileName>
       <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
@@ -225,88 +225,31 @@
     </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <CustomBuild Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeLists.txt">
-      <UseUtf8Encoding>Always</UseUtf8Encoding>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeLists.txt</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
-"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SE:/codes/PMGame/PMGameToolSrc/astc-encoder -BE:/codes/PMGame/PMGameToolSrc/astc-encoder --check-stamp-file E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeFiles/generate.stamp
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_version.h.in;E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\cmake_core.cmake;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeFiles\generate.stamp</Outputs>
-      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
-      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeLists.txt</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
-"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SE:/codes/PMGame/PMGameToolSrc/astc-encoder -BE:/codes/PMGame/PMGameToolSrc/astc-encoder --check-stamp-file E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeFiles/generate.stamp
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_version.h.in;E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\cmake_core.cmake;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeFiles\generate.stamp</Outputs>
-      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
-      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeLists.txt</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
-"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SE:/codes/PMGame/PMGameToolSrc/astc-encoder -BE:/codes/PMGame/PMGameToolSrc/astc-encoder --check-stamp-file E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeFiles/generate.stamp
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_version.h.in;E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\cmake_core.cmake;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeFiles\generate.stamp</Outputs>
-      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
-      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeLists.txt</Message>
-      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
-"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SE:/codes/PMGame/PMGameToolSrc/astc-encoder -BE:/codes/PMGame/PMGameToolSrc/astc-encoder --check-stamp-file E:/codes/PMGame/PMGameToolSrc/astc-encoder/Source/CMakeFiles/generate.stamp
-if %errorlevel% neq 0 goto :cmEnd
-:cmEnd
-endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
-:cmErrorLevel
-exit /b %1
-:cmDone
-if %errorlevel% neq 0 goto :VCEnd</Command>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_version.h.in;E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\cmake_core.cmake;%(AdditionalInputs)</AdditionalInputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeFiles\generate.stamp</Outputs>
-      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
-    </CustomBuild>
+    <ClCompile Include="astcenc_averages_and_directions.cpp" />
+    <ClCompile Include="astcenc_block_sizes.cpp" />
+    <ClCompile Include="astcenc_color_quantize.cpp" />
+    <ClCompile Include="astcenc_color_unquantize.cpp" />
+    <ClCompile Include="astcenc_compress_symbolic.cpp" />
+    <ClCompile Include="astcenc_compute_variance.cpp" />
+    <ClCompile Include="astcenc_decompress_symbolic.cpp" />
+    <ClCompile Include="astcenc_diagnostic_trace.cpp" />
+    <ClCompile Include="astcenc_entry.cpp" />
+    <ClCompile Include="astcenc_find_best_partitioning.cpp" />
+    <ClCompile Include="astcenc_ideal_endpoints_and_weights.cpp" />
+    <ClCompile Include="astcenc_image.cpp" />
+    <ClCompile Include="astcenc_integer_sequence.cpp" />
+    <ClCompile Include="astcenc_mathlib.cpp" />
+    <ClCompile Include="astcenc_mathlib_softfloat.cpp" />
+    <ClCompile Include="astcenc_partition_tables.cpp" />
+    <ClCompile Include="astcenc_percentile_tables.cpp" />
+    <ClCompile Include="astcenc_pick_best_endpoint_format.cpp" />
+    <ClCompile Include="astcenc_quantization.cpp" />
+    <ClCompile Include="astcenc_symbolic_physical.cpp" />
+    <ClCompile Include="astcenc_weight_align.cpp" />
+    <ClCompile Include="astcenc_weight_quant_xfer_tables.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_averages_and_directions.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_block_sizes.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_color_quantize.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_color_unquantize.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_compress_symbolic.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_compute_variance.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_decompress_symbolic.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_diagnostic_trace.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_entry.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_find_best_partitioning.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_ideal_endpoints_and_weights.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_image.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_integer_sequence.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_mathlib.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_mathlib_softfloat.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_partition_tables.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_percentile_tables.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_pick_best_endpoint_format.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_quantization.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_symbolic_physical.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_weight_align.cpp" />
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenc_weight_quant_xfer_tables.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\ZERO_CHECK.vcxproj">
+    <ProjectReference Include="ZERO_CHECK.vcxproj">
       <Project>{D47F5DE2-661B-3316-85DC-E8F6726DBF82}</Project>
       <Name>ZERO_CHECK</Name>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>

@@ -1,30 +1,30 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_error_metrics.cpp">
+    <ClCompile Include="Source\astcenccli_error_metrics.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_image.cpp">
+    <ClCompile Include="Source\astcenccli_image.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_image_external.cpp">
+    <ClCompile Include="Source\astcenccli_image_external.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_image_load_store.cpp">
+    <ClCompile Include="Source\astcenccli_image_load_store.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_platform_dependents.cpp">
+    <ClCompile Include="Source\astcenccli_platform_dependents.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_toplevel.cpp">
+    <ClCompile Include="Source\astcenccli_toplevel.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\astcenccli_toplevel_help.cpp">
+    <ClCompile Include="Source\astcenccli_toplevel_help.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <CustomBuild Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\Source\CMakeLists.txt" />
+    <CustomBuild Include="Source\CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Source Files">

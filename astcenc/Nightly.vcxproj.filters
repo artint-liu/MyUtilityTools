@@ -1,13 +1,13 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <CustomBuild Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\CMakeFiles\1a689adf08eaead4426a2b685ab34931\Nightly.rule">
+    <CustomBuild Include="astc-encoder\CMakeFiles\1a689adf08eaead4426a2b685ab34931\Nightly.rule">
       <Filter>CMake Rules</Filter>
     </CustomBuild>
-    <CustomBuild Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\CMakeLists.txt" />
+    <CustomBuild Include="astc-encoder\CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="E:\codes\PMGame\PMGameToolSrc\astc-encoder\CMakeFiles\Nightly" />
+    <None Include="astc-encoder\CMakeFiles\Nightly" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="CMake Rules">
