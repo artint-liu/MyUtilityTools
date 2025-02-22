@@ -1,0 +1,12 @@
+原始项目地址：
+https://github.com/ARM-software/astc-encoder.git
+
+配置方法：
+1. 打开vs2022命令行
+2. 在工程目录执行：cmake CMakeLists.txt -DASTCENC_ISA_AVX2=ON -DASTCENC_ISA_SSE41=ON -DASTCENC_ISA_SSE2=ON
+
+stdliu修改内容
+为了适配CDN中图片扩展命不准的问题（例如PNG文件扩展名为JPG，或者反之），增加了文件头识别加载
+另外去掉了测试代码
+
+这个工程是为了研究astc编解码远离，精简了很多研究之外的东西
