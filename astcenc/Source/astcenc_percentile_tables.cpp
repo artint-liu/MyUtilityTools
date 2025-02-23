@@ -1225,27 +1225,3 @@ bool is_legal_2d_block_size(
 	return false;
 }
 
-/* See header for documentation. */
-bool is_legal_3d_block_size(
-	unsigned int xdim,
-	unsigned int ydim,
-	unsigned int zdim
-) {
-	unsigned int idx = (xdim << 16) | (ydim << 8) | zdim;
-	switch (idx)
-	{
-		case 0x030303:
-		case 0x040303:
-		case 0x040403:
-		case 0x040404:
-		case 0x050404:
-		case 0x050504:
-		case 0x050505:
-		case 0x060505:
-		case 0x060605:
-		case 0x060606:
-			return true;
-	}
-
-	return false;
-}

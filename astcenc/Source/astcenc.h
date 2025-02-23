@@ -646,7 +646,7 @@ struct astcenc_block_info
 	bool is_constant_block;
 
 	/** @brief True if this block is an HDR block. */
-	bool is_hdr_block;
+	//bool is_hdr_block;
 
 	/** @brief True if this block uses two weight planes. */
 	bool is_dual_plane_block;
@@ -710,7 +710,7 @@ struct astcenc_block_info
  * @return @c ASTCENC_SUCCESS on success, or an error if the inputs are invalid
  * either individually, or in combination.
  */
-ASTCENC_PUBLIC astcenc_error astcenc_config_init(
+ASTCENC_PUBLIC astcenc_error _RESEARCH_astcenc_config_init(
 	astcenc_profile profile,
 	unsigned int block_x,
 	unsigned int block_y,
@@ -737,7 +737,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_config_init(
  *
  * @return @c ASTCENC_SUCCESS on success, or an error if context creation failed.
  */
-ASTCENC_PUBLIC astcenc_error astcenc_context_alloc(
+ASTCENC_PUBLIC astcenc_error _RESEARCH_astcenc_context_alloc(
 	const astcenc_config* config,
 	unsigned int thread_count,
 	astcenc_context** context);
@@ -760,7 +760,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_context_alloc(
  *
  * @return @c ASTCENC_SUCCESS on success, or an error if compression failed.
  */
-ASTCENC_PUBLIC astcenc_error astcenc_compress_image(
+ASTCENC_PUBLIC astcenc_error _RESEARCH_astcenc_compress_image(
 	astcenc_context* context,
 	astcenc_image* image,
 	const astcenc_swizzle* swizzle,
@@ -781,7 +781,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_compress_image(
  *
  * @return @c ASTCENC_SUCCESS on success, or an error if reset failed.
  */
-ASTCENC_PUBLIC astcenc_error astcenc_compress_reset(
+ASTCENC_PUBLIC astcenc_error _RESEARCH_astcenc_compress_reset(
 	astcenc_context* context);
 
 /**
@@ -796,7 +796,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_compress_reset(
  *
  * @return @c ASTCENC_SUCCESS on success, or an error if decompression failed.
  */
-ASTCENC_PUBLIC astcenc_error astcenc_decompress_image(
+ASTCENC_PUBLIC astcenc_error _RESEARCH_astcenc_decompress_image(
 	astcenc_context* context,
 	const uint8_t* data,
 	size_t data_len,
@@ -825,7 +825,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_decompress_reset(
  *
  * @param context   The codec context.
  */
-ASTCENC_PUBLIC void astcenc_context_free(
+ASTCENC_PUBLIC void _RESEARCH_astcenc_context_free(
 	astcenc_context* context);
 
 /**
@@ -854,7 +854,7 @@ ASTCENC_PUBLIC astcenc_error astcenc_get_block_info(
  *
  * @return A human readable nul-terminated string.
  */
-ASTCENC_PUBLIC const char* astcenc_get_error_string(
+ASTCENC_PUBLIC const char* _RESEARCH_astcenc_get_error_string(
 	astcenc_error status);
 
 #endif

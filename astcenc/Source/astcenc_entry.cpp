@@ -143,7 +143,7 @@ static const std::array<astcenc_preset_config, 6> preset_configs_low {{
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_cpu_float()
+static astcenc_error _RESEARCH_validate_cpu_float()
 {
 	if32 p;
 	volatile float xprec_testval = 2.51f;
@@ -191,14 +191,14 @@ static astcenc_error validate_profile(
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_block_size(
+static astcenc_error _RESEARCH_validate_block_size(
 	unsigned int block_x,
 	unsigned int block_y,
 	unsigned int block_z
 ) {
 	// Test if this is a legal block size at all
-	bool is_legal = (((block_z <= 1) && is_legal_2d_block_size(block_x, block_y)) ||
-	                 ((block_z >= 2) && is_legal_3d_block_size(block_x, block_y, block_z)));
+	bool is_legal = (((block_z <= 1) && is_legal_2d_block_size(block_x, block_y)) /* ||
+	                 ((block_z >= 2) && is_legal_3d_block_size(block_x, block_y, block_z))*/);
 	if (!is_legal)
 	{
 		return ASTCENC_ERR_BAD_BLOCK_SIZE;
@@ -222,7 +222,7 @@ static astcenc_error validate_block_size(
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_flags(
+static astcenc_error _RESEARCH_validate_flags(
 	astcenc_profile profile,
 	unsigned int flags
 ) {
@@ -286,7 +286,7 @@ static astcenc_error validate_compression_swz(
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_compression_swizzle(
+static astcenc_error _RESEARCH_validate_compression_swizzle(
 	const astcenc_swizzle& swizzle
 ) {
 	if (validate_compression_swz(swizzle.r) ||
@@ -335,7 +335,7 @@ static astcenc_error validate_decompression_swz(
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_decompression_swizzle(
+static astcenc_error _RESEARCH_validate_decompression_swizzle(
 	const astcenc_swizzle& swizzle
 ) {
 	if (validate_decompression_swz(swizzle.r) ||
@@ -363,7 +363,7 @@ static astcenc_error validate_decompression_swizzle(
  *
  * @return Return @c ASTCENC_SUCCESS if validated, otherwise an error on failure.
  */
-static astcenc_error validate_config(
+static astcenc_error _RESEARCH_validate_config(
 	astcenc_config &config
 ) {
 	astcenc_error status;
@@ -374,13 +374,13 @@ static astcenc_error validate_config(
 		return status;
 	}
 
-	status = validate_flags(config.profile, config.flags);
+	status = _RESEARCH_validate_flags(config.profile, config.flags);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
 	}
 
-	status = validate_block_size(config.block_x, config.block_y, config.block_z);
+	status = _RESEARCH_validate_block_size(config.block_x, config.block_y, config.block_z);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -433,7 +433,7 @@ static astcenc_error validate_config(
 }
 
 /* See header for documentation. */
-astcenc_error astcenc_config_init(
+astcenc_error _RESEARCH_astcenc_config_init(
 	astcenc_profile profile,
 	unsigned int block_x,
 	unsigned int block_y,
@@ -444,7 +444,7 @@ astcenc_error astcenc_config_init(
 ) {
 	astcenc_error status;
 
-	status = validate_cpu_float();
+	status = _RESEARCH_validate_cpu_float();
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -456,7 +456,7 @@ astcenc_error astcenc_config_init(
 
 	// Process the block size
 	block_z = astc::max(block_z, 1u); // For 2D blocks Z==0 is accepted, but convert to 1
-	status = validate_block_size(block_x, block_y, block_z);
+	status = _RESEARCH_validate_block_size(block_x, block_y, block_z);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -601,7 +601,7 @@ astcenc_error astcenc_config_init(
 	}
 
 	// Flags field must not contain any unknown flag bits
-	status = validate_flags(profile, flags);
+	status = _RESEARCH_validate_flags(profile, flags);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -654,7 +654,7 @@ astcenc_error astcenc_config_init(
 }
 
 /* See header for documentation. */
-astcenc_error astcenc_context_alloc(
+astcenc_error _RESEARCH_astcenc_context_alloc(
 	const astcenc_config* configp,
 	unsigned int thread_count,
 	astcenc_context** context
@@ -662,7 +662,7 @@ astcenc_error astcenc_context_alloc(
 	astcenc_error status;
 	const astcenc_config& config = *configp;
 
-	status = validate_cpu_float();
+	status = _RESEARCH_validate_cpu_float();
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -691,14 +691,14 @@ astcenc_error astcenc_context_alloc(
 	ctx->input_alpha_averages = nullptr;
 
 	// Copy the config first and validate the copy (we may modify it)
-	status = validate_config(ctx->config);
+	status = _RESEARCH_validate_config(ctx->config);
 	if (status != ASTCENC_SUCCESS)
 	{
 		delete ctxo;
 		return status;
 	}
 
-	ctx->bsd = aligned_malloc<block_size_descriptor>(sizeof(block_size_descriptor), ASTCENC_VECALIGN);
+	ctx->bsd = _RESEARCH_aligned_malloc<block_size_descriptor>(sizeof(block_size_descriptor), ASTCENC_VECALIGN);
 	if (!ctx->bsd)
 	{
 		delete ctxo;
@@ -706,7 +706,7 @@ astcenc_error astcenc_context_alloc(
 	}
 
 	bool can_omit_modes = static_cast<bool>(config.flags & ASTCENC_FLG_SELF_DECOMPRESS_ONLY);
-	init_block_size_descriptor(config.block_x, config.block_y, config.block_z,
+	_RESEARCH_init_block_size_descriptor(config.block_x, config.block_y, config.block_z,
 	                           can_omit_modes,
 	                           config.tune_partition_count_limit,
 	                           static_cast<float>(config.tune_block_mode_limit) / 100.0f,
@@ -727,7 +727,7 @@ astcenc_error astcenc_context_alloc(
 		}
 
 		size_t worksize = sizeof(compression_working_buffers) * thread_count;
-		ctx->working_buffers = aligned_malloc<compression_working_buffers>(worksize, ASTCENC_VECALIGN);
+		ctx->working_buffers = _RESEARCH_aligned_malloc<compression_working_buffers>(worksize, ASTCENC_VECALIGN);
 		static_assert((ASTCENC_VECALIGN == 0) || ((sizeof(compression_working_buffers) % ASTCENC_VECALIGN) == 0),
 		              "compression_working_buffers size must be multiple of vector alignment");
 		if (!ctx->working_buffers)
@@ -762,7 +762,7 @@ astcenc_error astcenc_context_alloc(
 }
 
 /* See header dor documentation. */
-void astcenc_context_free(
+void _RESEARCH_astcenc_context_free(
 	astcenc_context* ctxo
 ) {
 	if (ctxo)
@@ -788,7 +788,7 @@ void astcenc_context_free(
  * @param      swizzle        The input swizzle.
  * @param[out] buffer         The output array for the compressed data.
  */
-static void compress_image(
+static void _RESEARCH_compress_image(
 	astcenc_context& ctxo,
 	unsigned int thread_index,
 	const astcenc_image& image,
@@ -842,10 +842,10 @@ static void compress_image(
 	bool use_fast_load = !needs_swz && //!needs_hdr &&
 	                     block_z == 1 && image.data_type == ASTCENC_TYPE_U8;
 
-	auto load_func = load_image_block;
+	auto load_func = _RESEARCH_load_image_block;
 	if (use_fast_load)
 	{
-		load_func = load_image_block_fast_ldr;
+		load_func = _RESEARCH_load_image_block_fast_ldr;
 	}
 
 	// All threads run this processing loop until there is no work remaining
@@ -950,7 +950,7 @@ static void compress_image(
  * @param[out] ctx   The context.
  * @param      ag    The average and variance arguments created during setup.
  */
-static void compute_averages(
+static void _RESEARCH_compute_averages(
 	astcenc_context& ctx,
 	const avg_args &ag
 ) {
@@ -1004,7 +1004,7 @@ static void compute_averages(
 #endif
 
 /* See header for documentation. */
-astcenc_error astcenc_compress_image(
+astcenc_error _RESEARCH_astcenc_compress_image(
 	astcenc_context* ctxo,
 	astcenc_image* imagep,
 	const astcenc_swizzle* swizzle,
@@ -1030,7 +1030,7 @@ astcenc_error astcenc_compress_image(
 		return ASTCENC_ERR_BAD_CONTEXT;
 	}
 
-	status = validate_compression_swizzle(*swizzle);
+	status = _RESEARCH_validate_compression_swizzle(*swizzle);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -1059,7 +1059,7 @@ astcenc_error astcenc_compress_image(
 	// If context thread count is one then implicitly reset
 	if (ctx->thread_count == 1)
 	{
-		astcenc_compress_reset(ctxo);
+		_RESEARCH_astcenc_compress_reset(ctxo);
 	}
 
 	if (ctx->config.a_scale_radius != 0)
@@ -1071,7 +1071,7 @@ astcenc_error astcenc_compress_image(
 			size_t texel_count = image.dim_x * image.dim_y * image.dim_z;
 			ctx->input_alpha_averages = new float[texel_count];
 
-			return init_compute_averages(
+			return _RESEARCH_init_compute_averages(
 				image, ctx->config.a_scale_radius, *swizzle,
 				ctx->avg_preprocess_args);
 		};
@@ -1080,13 +1080,13 @@ astcenc_error astcenc_compress_image(
 		ctxo->manage_avg.init(init_avg);
 
 		// All threads will enter this function and dynamically grab work
-		compute_averages(*ctxo, ctx->avg_preprocess_args);
+		_RESEARCH_compute_averages(*ctxo, ctx->avg_preprocess_args);
 	}
 
 	// Wait for compute_averages to complete before compressing
 	ctxo->manage_avg.wait();
 
-	compress_image(*ctxo, thread_index, image, *swizzle, data_out);
+	_RESEARCH_compress_image(*ctxo, thread_index, image, *swizzle, data_out);
 
 	// Wait for compress to complete before freeing memory
 	ctxo->manage_compress.wait();
@@ -1104,7 +1104,7 @@ astcenc_error astcenc_compress_image(
 }
 
 /* See header for documentation. */
-astcenc_error astcenc_compress_reset(
+astcenc_error _RESEARCH_astcenc_compress_reset(
 	astcenc_context* ctxo
 ) {
 #if defined(ASTCENC_DECOMPRESS_ONLY)
@@ -1124,7 +1124,7 @@ astcenc_error astcenc_compress_reset(
 }
 
 /* See header for documentation. */
-astcenc_error astcenc_decompress_image(
+astcenc_error _RESEARCH_astcenc_decompress_image(
 	astcenc_context* ctxo,
 	const uint8_t* data,
 	size_t data_len,
@@ -1142,7 +1142,7 @@ astcenc_error astcenc_decompress_image(
 		return ASTCENC_ERR_BAD_PARAM;
 	}
 
-	status = validate_decompression_swizzle(*swizzle);
+	status = _RESEARCH_validate_decompression_swizzle(*swizzle);
 	if (status != ASTCENC_SUCCESS)
 	{
 		return status;
@@ -1207,11 +1207,11 @@ astcenc_error astcenc_decompress_image(
 
 			physical_to_symbolic(*ctx->bsd, bp, scb);
 
-			decompress_symbolic_block(ctx->config.profile, *ctx->bsd,
+			_RESEARCH_decompress_symbolic_block(ctx->config.profile, *ctx->bsd,
 			                          x * block_x, y * block_y, z * block_z,
 			                          scb, blk);
 
-			store_image_block(image_out, blk, *ctx->bsd,
+			_RESEARCH_store_image_block(image_out, blk, *ctx->bsd,
 			                  x * block_x, y * block_y, z * block_z, *swizzle);
 		}
 
@@ -1299,22 +1299,23 @@ astcenc_error astcenc_get_block_info(
 	// Unpack color endpoints for each active partition
 	for (unsigned int i = 0; i < scb.partition_count; i++)
 	{
-		bool rgb_hdr;
-		bool a_hdr;
+		//bool rgb_hdr;
+		//bool a_hdr;
 		vint4 endpnt[2];
 
 		unpack_color_endpoints(ctx->config.profile,
 		                       scb.color_formats[i],
 		                       scb.color_values[i],
-		                       rgb_hdr, a_hdr,
+		                       //rgb_hdr, a_hdr,
 		                       endpnt[0], endpnt[1]);
 
 		// Store the color endpoint mode info
 		info->color_endpoint_modes[i] = scb.color_formats[i];
-		info->is_hdr_block = info->is_hdr_block || rgb_hdr || a_hdr;
+		//info->is_hdr_block = info->is_hdr_block || rgb_hdr || a_hdr;
 
 		// Store the unpacked and decoded color endpoint
-		vmask4 hdr_mask(rgb_hdr, rgb_hdr, rgb_hdr, a_hdr);
+		//vmask4 hdr_mask(rgb_hdr, rgb_hdr, rgb_hdr, a_hdr);
+		vmask4 hdr_mask(0, 0, 0, 0);
 		for (int j = 0; j < 2; j++)
 		{
 			vint4 color_lns = lns_to_sf16(endpnt[j]);
@@ -1349,7 +1350,7 @@ astcenc_error astcenc_get_block_info(
 }
 
 /* See header for documentation. */
-const char* astcenc_get_error_string(
+const char* _RESEARCH_astcenc_get_error_string(
 	astcenc_error status
 ) {
 	// Values in this enum are from an external user, so not guaranteed to be

@@ -169,7 +169,7 @@ static float error_color_nan()
 }
 
 /* See header for documentation. */
-void decompress_symbolic_block(
+void _RESEARCH_decompress_symbolic_block(
 	astcenc_profile decode_mode,
 	const block_size_descriptor& bsd,
 	int xpos,
@@ -215,7 +215,7 @@ void decompress_symbolic_block(
 			vint4 colori(scb.constant_color);
 
 			// Determine the UNORM8 rounding on the decode
-			vmask4 u8_mask = get_u8_component_mask(decode_mode, blk);
+			vmask4 u8_mask = _RESEARCH_get_u8_component_mask(decode_mode, blk);
 
 			// The real decoder would just use the top 8 bits, but we rescale
 			// in to a 16-bit value that rounds correctly.
@@ -275,23 +275,24 @@ void decompress_symbolic_block(
 	int plane2_component = scb.plane2_component;
 	vmask4 plane2_mask = vint4::lane_id() == vint4(plane2_component);
 
-	vmask4 u8_mask = get_u8_component_mask(decode_mode, blk);
+	vmask4 u8_mask = _RESEARCH_get_u8_component_mask(decode_mode, blk);
 
 	for (int i = 0; i < partition_count; i++)
 	{
 		// Decode the color endpoints for this partition
 		vint4 ep0;
 		vint4 ep1;
-		bool rgb_lns;
-		bool a_lns;
+		//bool rgb_lns;
+		//bool a_lns;
 
 		unpack_color_endpoints(decode_mode,
 		                       scb.color_formats[i],
 		                       scb.color_values[i],
-		                       rgb_lns, a_lns,
+		                       //rgb_lns, a_lns,
 		                       ep0, ep1);
 
-		vmask4 lns_mask(rgb_lns, rgb_lns, rgb_lns, a_lns);
+		//vmask4 lns_mask(rgb_lns, rgb_lns, rgb_lns, a_lns);
+		vmask4 lns_mask(0, 0, 0, 0);
 
 		int texel_count = pi.partition_texel_count[i];
 		for (int j = 0; j < texel_count; j++)
@@ -350,10 +351,10 @@ float compute_symbolic_block_difference_2plane(
 	unpack_color_endpoints(config.profile,
 	                       scb.color_formats[0],
 	                       scb.color_values[0],
-	                       rgb_lns, a_lns,
+	                       //rgb_lns, a_lns,
 	                       ep0, ep1);
 
-	vmask4 u8_mask = get_u8_component_mask(config.profile, blk);
+	vmask4 u8_mask = _RESEARCH_get_u8_component_mask(config.profile, blk);
 
 	// Unpack and compute error for each texel in the partition
 	unsigned int texel_count = bsd.texel_count;
@@ -434,7 +435,7 @@ float compute_symbolic_block_difference_1plane(
 	int plane1_weights[BLOCK_MAX_TEXELS];
 	unpack_weights(bsd, scb, di, false, plane1_weights, nullptr);
 
-	vmask4 u8_mask = get_u8_component_mask(config.profile, blk);
+	vmask4 u8_mask = _RESEARCH_get_u8_component_mask(config.profile, blk);
 
 	vfloat4 summa = vfloat4::zero();
 	for (unsigned int i = 0; i < partition_count; i++)
@@ -448,7 +449,7 @@ float compute_symbolic_block_difference_1plane(
 		unpack_color_endpoints(config.profile,
 		                       scb.color_formats[i],
 		                       scb.color_values[i],
-		                       rgb_lns, a_lns,
+		                       //rgb_lns, a_lns,
 		                       ep0, ep1);
 
 		// Unpack and compute error for each texel in the partition
@@ -530,16 +531,16 @@ float compute_symbolic_block_difference_1plane_1partition(
 	// Decode the color endpoints for this partition
 	vint4 ep0;
 	vint4 ep1;
-	bool rgb_lns;
-	bool a_lns;
+	//bool rgb_lns;
+	//bool a_lns;
 
 	unpack_color_endpoints(config.profile,
 	                       scb.color_formats[0],
 	                       scb.color_values[0],
-	                       rgb_lns, a_lns,
+	                       //rgb_lns, a_lns,
 	                       ep0, ep1);
 
-	vmask4 u8_mask = get_u8_component_mask(config.profile, blk);
+	vmask4 u8_mask = _RESEARCH_get_u8_component_mask(config.profile, blk);
 
 	// Unpack and compute error for each texel in the partition
 	vfloatacc summav = vfloatacc::zero();

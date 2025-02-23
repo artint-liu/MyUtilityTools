@@ -261,6 +261,8 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="astcenc.h" />
+    <ClInclude Include="astcenc_internal.h" />
     <ClInclude Include="astcenc_vecmathlib.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

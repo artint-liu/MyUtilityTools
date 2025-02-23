@@ -35,7 +35,7 @@
  * @param      partition_of_texel   The partition assignments, in hash order.
  * @param[out] bit_pattern          The output bit pattern representation.
  */
-static void generate_canonical_partitioning(
+static void _RESEARCH_generate_canonical_partitioning(
 	unsigned int texel_count,
 	const uint8_t* partition_of_texel,
 	uint64_t bit_pattern[BIT_PATTERN_WORDS]
@@ -78,7 +78,7 @@ static void generate_canonical_partitioning(
  *
  * @return @c true if the patterns are the same, @c false otherwise.
  */
-static bool compare_canonical_partitionings(
+static bool _RESEARCH_compare_canonical_partitionings(
 	const uint64_t part1[BIT_PATTERN_WORDS],
 	const uint64_t part2[BIT_PATTERN_WORDS]
 ) {
@@ -139,7 +139,7 @@ static uint32_t hash52(
  *
  * @return The assigned partition index for this texel.
  */
-static uint8_t select_partition(
+static uint8_t _RESEARCH_select_partition(
 	int seed,
 	int x,
 	int y,
@@ -273,7 +273,7 @@ static uint8_t select_partition(
  *
  * @return True if this is a useful partition index, False if we can skip it.
  */
-static bool generate_one_partition_info_entry(
+static bool _RESEARCH_generate_one_partition_info_entry(
 	block_size_descriptor& bsd,
 	unsigned int partition_count,
 	unsigned int partition_index,
@@ -294,7 +294,7 @@ static bool generate_one_partition_info_entry(
 		{
 			for (unsigned int x = 0; x <  bsd.xdim; x++)
 			{
-				uint8_t part = select_partition(partition_index, x, y, z, partition_count, small_block);
+				uint8_t part = _RESEARCH_select_partition(partition_index, x, y, z, partition_count, small_block);
 				pi.texels_of_partition[part][counts[part]++] = static_cast<uint8_t>(texel_idx++);
 				*partition_of_texel++ = part;
 			}
@@ -305,7 +305,7 @@ static bool generate_one_partition_info_entry(
 	for (unsigned int i = 0; i < partition_count; i++)
 	{
 		int ptex_count = counts[i];
-		int ptex_count_simd = round_up_to_simd_multiple_vla(ptex_count);
+		int ptex_count_simd = _RESEARCH_round_up_to_simd_multiple_vla(ptex_count);
 		for (int j = ptex_count; j < ptex_count_simd; j++)
 		{
 			pi.texels_of_partition[i][j] = pi.texels_of_partition[i][ptex_count - 1];
@@ -379,7 +379,7 @@ static bool generate_one_partition_info_entry(
 	return valid;
 }
 
-static void build_partition_table_for_one_partition_count(
+static void _RESEARCH_build_partition_table_for_one_partition_count(
 	block_size_descriptor& bsd,
 	bool can_omit_partitionings,
 	unsigned int partition_count_cutoff,
@@ -414,17 +414,17 @@ static void build_partition_table_for_one_partition_count(
 				continue;
 			}
 
-			bool keep_useful = generate_one_partition_info_entry(bsd, partition_count, i, next_index, ptab[next_index]);
+			bool keep_useful = _RESEARCH_generate_one_partition_info_entry(bsd, partition_count, i, next_index, ptab[next_index]);
 			if ((x == 0) && !keep_useful)
 			{
 				continue;
 			}
 
-			generate_canonical_partitioning(bsd.texel_count, ptab[next_index].partition_of_texel, canonical_patterns + next_index * BIT_PATTERN_WORDS);
+			_RESEARCH_generate_canonical_partitioning(bsd.texel_count, ptab[next_index].partition_of_texel, canonical_patterns + next_index * BIT_PATTERN_WORDS);
 			bool keep_canonical = true;
 			for (unsigned int j = 0; j < next_index; j++)
 			{
-				bool match = compare_canonical_partitionings(canonical_patterns + next_index * BIT_PATTERN_WORDS, canonical_patterns +  j * BIT_PATTERN_WORDS);
+				bool match = _RESEARCH_compare_canonical_partitionings(canonical_patterns + next_index * BIT_PATTERN_WORDS, canonical_patterns +  j * BIT_PATTERN_WORDS);
 				if (match)
 				{
 					keep_canonical = false;
@@ -457,7 +457,7 @@ static void build_partition_table_for_one_partition_count(
 }
 
 /* See header for documentation. */
-void init_partition_tables(
+void _RESEARCH_init_partition_tables(
 	block_size_descriptor& bsd,
 	bool can_omit_partitionings,
 	unsigned int partition_count_cutoff
@@ -467,15 +467,15 @@ void init_partition_tables(
 	partition_info* par_tab4 = par_tab3 + BLOCK_MAX_PARTITIONINGS;
 	partition_info* par_tab1 = par_tab4 + BLOCK_MAX_PARTITIONINGS;
 
-	generate_one_partition_info_entry(bsd, 1, 0, 0, *par_tab1);
+	_RESEARCH_generate_one_partition_info_entry(bsd, 1, 0, 0, *par_tab1);
 	bsd.partitioning_count_selected[0] = 1;
 	bsd.partitioning_count_all[0] = 1;
 
 	uint64_t* canonical_patterns = new uint64_t[BLOCK_MAX_PARTITIONINGS * BIT_PATTERN_WORDS];
 
-	build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 2, par_tab2, canonical_patterns);
-	build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 3, par_tab3, canonical_patterns);
-	build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 4, par_tab4, canonical_patterns);
+	_RESEARCH_build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 2, par_tab2, canonical_patterns);
+	_RESEARCH_build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 3, par_tab3, canonical_patterns);
+	_RESEARCH_build_partition_table_for_one_partition_count(bsd, can_omit_partitionings, partition_count_cutoff, 4, par_tab4, canonical_patterns);
 
 	delete[] canonical_patterns;
 }

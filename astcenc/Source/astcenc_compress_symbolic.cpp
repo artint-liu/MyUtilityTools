@@ -86,8 +86,8 @@ static bool realign_weights_undecimated(
 	vmask4 plane_mask = vint4::lane_id() == vint4(plane2_component);
 
 	// Decode the color endpoints
-	bool rgb_hdr;
-	bool alpha_hdr;
+	//bool rgb_hdr;
+	//bool alpha_hdr;
 	vint4 endpnt0[BLOCK_MAX_PARTITIONS];
 	vint4 endpnt1[BLOCK_MAX_PARTITIONS];
 	vfloat4 endpnt0f[BLOCK_MAX_PARTITIONS];
@@ -100,7 +100,7 @@ static bool realign_weights_undecimated(
 		unpack_color_endpoints(decode_mode,
 		                       scb.color_formats[pa_idx],
 		                       scb.color_values[pa_idx],
-		                       rgb_hdr, alpha_hdr,
+		                       //rgb_hdr, alpha_hdr,
 		                       endpnt0[pa_idx],
 		                       endpnt1[pa_idx]);
 	}
@@ -210,8 +210,8 @@ static bool realign_weights_decimated(
 	vmask4 plane_mask = vint4::lane_id() == vint4(plane2_component);
 
 	// Decode the color endpoints
-	bool rgb_hdr;
-	bool alpha_hdr;
+	//bool rgb_hdr;
+	//bool alpha_hdr;
 	vint4 endpnt0[BLOCK_MAX_PARTITIONS];
 	vint4 endpnt1[BLOCK_MAX_PARTITIONS];
 	vfloat4 endpnt0f[BLOCK_MAX_PARTITIONS];
@@ -225,7 +225,7 @@ static bool realign_weights_decimated(
 		unpack_color_endpoints(decode_mode,
 		                       scb.color_formats[pa_idx],
 		                       scb.color_values[pa_idx],
-		                       rgb_hdr, alpha_hdr,
+		                       //rgb_hdr, alpha_hdr,
 		                       endpnt0[pa_idx],
 		                       endpnt1[pa_idx]);
 	}

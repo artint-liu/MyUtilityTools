@@ -77,5 +77,11 @@
     <ClInclude Include="astcenc_vecmathlib.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="astcenc.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="astcenc_internal.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

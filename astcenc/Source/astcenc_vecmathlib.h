@@ -258,7 +258,7 @@ ASTCENC_SIMD_INLINE unsigned int round_down_to_simd_multiple_vla(unsigned int co
  *
  * @return The rounded value.
  */
-ASTCENC_SIMD_INLINE unsigned int round_up_to_simd_multiple_vla(unsigned int count)
+ASTCENC_SIMD_INLINE unsigned int _RESEARCH_round_up_to_simd_multiple_vla(unsigned int count)
 {
 	unsigned int multiples = (count + ASTCENC_SIMD_WIDTH - 1) / ASTCENC_SIMD_WIDTH;
 	return multiples * ASTCENC_SIMD_WIDTH;

@@ -420,7 +420,7 @@ void compute_pixel_region_variance(
 }
 
 /* See header for documentation. */
-unsigned int init_compute_averages(
+unsigned int _RESEARCH_init_compute_averages(
 	const astcenc_image& img,
 	unsigned int alpha_kernel_radius,
 	const astcenc_swizzle& swz,

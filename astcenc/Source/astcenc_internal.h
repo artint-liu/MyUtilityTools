@@ -1262,7 +1262,7 @@ struct astcenc_contexti
  * @param      mode_cutoff              The block mode percentile cutoff [0-1].
  * @param[out] bsd                      The descriptor to initialize.
  */
-void init_block_size_descriptor(
+void _RESEARCH_init_block_size_descriptor(
 	unsigned int x_texels,
 	unsigned int y_texels,
 	unsigned int z_texels,
@@ -1281,7 +1281,7 @@ void init_block_size_descriptor(
  * @param      can_omit_partitionings   True if we can we drop partitionings that astcenc won't use.
  * @param      partition_count_cutoff   The partition count cutoff to use, if we can omit partitionings.
  */
-void init_partition_tables(
+void _RESEARCH_init_partition_tables(
 	block_size_descriptor& bsd,
 	bool can_omit_partitionings,
 	unsigned int partition_count_cutoff);
@@ -1312,15 +1312,6 @@ bool is_legal_2d_block_size(
 	unsigned int xdim,
 	unsigned int ydim);
 
-/**
- * @brief Query if a 3D block size is legal.
- *
- * @return True if legal, false otherwise.
- */
-bool is_legal_3d_block_size(
-	unsigned int xdim,
-	unsigned int ydim,
-	unsigned int zdim);
 
 /* ============================================================================
   Functionality for managing BISE quantization and unquantization.
@@ -1579,7 +1570,7 @@ unsigned int find_best_partition_candidates(
  *
  * @return The component mask vector.
  */
-static inline vmask4 get_u8_component_mask(
+static inline vmask4 _RESEARCH_get_u8_component_mask(
 	astcenc_profile decode_mode,
 	const image_block& blk
 ) {
@@ -1613,7 +1604,7 @@ static inline vmask4 get_u8_component_mask(
  *
  * @return The number of tasks in the processing stage.
  */
-unsigned int init_compute_averages(
+unsigned int _RESEARCH_init_compute_averages(
 	const astcenc_image& img,
 	unsigned int alpha_kernel_radius,
 	const astcenc_swizzle& swz,
@@ -1643,7 +1634,7 @@ void compute_pixel_region_variance(
  * @param      zpos          The block Z coordinate in the input image.
  * @param      swz           The swizzle to apply on load.
  */
-void load_image_block(
+void _RESEARCH_load_image_block(
 	astcenc_profile decode_mode,
 	const astcenc_image& img,
 	image_block& blk,
@@ -1668,7 +1659,7 @@ void load_image_block(
  * @param      zpos          The block Z coordinate in the input image.
  * @param      swz           The swizzle to apply on load.
  */
-void load_image_block_fast_ldr(
+void _RESEARCH_load_image_block_fast_ldr(
 	astcenc_profile decode_mode,
 	const astcenc_image& img,
 	image_block& blk,
@@ -1689,7 +1680,7 @@ void load_image_block_fast_ldr(
  * @param      zpos   The block Z coordinate in the input image.
  * @param      swz    The swizzle to apply on store.
  */
-void store_image_block(
+void _RESEARCH_store_image_block(
 	astcenc_image& img,
 	const image_block& blk,
 	const block_size_descriptor& bsd,
@@ -1864,8 +1855,8 @@ void unpack_color_endpoints(
 	astcenc_profile decode_mode,
 	int format,
 	const uint8_t* input,
-	bool& rgb_hdr,
-	bool& alpha_hdr,
+	//bool& rgb_hdr,
+	//bool& alpha_hdr,
 	vint4& output0,
 	vint4& output1);
 
@@ -2069,7 +2060,7 @@ void compress_block(
  * @param      zpos          The Z coordinate of the block in the overall image.
  * @param[out] blk           The decompressed image block color data.
  */
-void decompress_symbolic_block(
+void _RESEARCH_decompress_symbolic_block(
 	astcenc_profile decode_mode,
 	const block_size_descriptor& bsd,
 	int xpos,
@@ -2186,7 +2177,7 @@ Platform-specific functions.
  * @return The memory buffer pointer or nullptr on allocation failure.
  */
 template<typename T>
-T* aligned_malloc(size_t size, size_t align)
+T* _RESEARCH_aligned_malloc(size_t size, size_t align)
 {
 	void* ptr;
 	int error = 0;

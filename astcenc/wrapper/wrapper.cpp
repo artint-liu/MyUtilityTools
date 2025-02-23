@@ -19,7 +19,7 @@ ASTCENC_API int compress_astc(const unsigned char* inBuf, unsigned char* outBuf,
         astcenc_config config;
         astcenc_profile profile = ASTCENC_PRF_LDR;
 
-        astcenc_error status = astcenc_config_init(
+        astcenc_error status = _RESEARCH_astcenc_config_init(
             profile,
             block_x, block_y, 1, // 2D处理
             quality,
@@ -32,7 +32,7 @@ ASTCENC_API int compress_astc(const unsigned char* inBuf, unsigned char* outBuf,
         }
 
         astcenc_context* context;
-        status = astcenc_context_alloc(&config, 1, &context);
+        status = _RESEARCH_astcenc_context_alloc(&config, 1, &context);
         if (status != ASTCENC_SUCCESS) {
             throw std::runtime_error("Context allocation failed");
         }
@@ -52,9 +52,9 @@ ASTCENC_API int compress_astc(const unsigned char* inBuf, unsigned char* outBuf,
             ASTCENC_SWZ_A  // A <- A
         };
 
-        status = astcenc_compress_image(context, &image, &swz, outBuf, (size_t)outBufLen, 0);
+        status = _RESEARCH_astcenc_compress_image(context, &image, &swz, outBuf, (size_t)outBufLen, 0);
 
-        astcenc_context_free(context);
+        _RESEARCH_astcenc_context_free(context);
         return (status == ASTCENC_SUCCESS) ? 0 : -1;
     }
     catch (const std::exception& e) {
@@ -123,23 +123,23 @@ ASTCENC_API int decompress_astc(
     // 初始化解压配置
     astcenc_config config;
     astcenc_profile profile = ASTCENC_PRF_LDR;
-    astcenc_error status = astcenc_config_init(profile, block_x, block_y, 1, 0.0f,  // 质量参数对解压无效
+    astcenc_error status = _RESEARCH_astcenc_config_init(profile, block_x, block_y, 1, 0.0f,  // 质量参数对解压无效
         0, &config);
 
     if (status != ASTCENC_SUCCESS) {
         snprintf(lastError, MAX_ERROR_LEN,
             "Decompress config failed: %s",
-            astcenc_get_error_string(status));
+            _RESEARCH_astcenc_get_error_string(status));
         return -1;
     }
 
     // 创建解压上下文
     astcenc_context* context = nullptr;
-    status = astcenc_context_alloc(&config, 1, &context);
+    status = _RESEARCH_astcenc_context_alloc(&config, 1, &context);
     if (status != ASTCENC_SUCCESS) {
         snprintf(lastError, MAX_ERROR_LEN,
             "Context alloc failed: %s",
-            astcenc_get_error_string(status));
+            _RESEARCH_astcenc_get_error_string(status));
         return -1;
     }
 
@@ -161,7 +161,7 @@ ASTCENC_API int decompress_astc(
 
 
     // 执行解压 (跳过16字节头)
-    status = astcenc_decompress_image(
+    status = _RESEARCH_astcenc_decompress_image(
         context,
         inBuf,
         inSize,
@@ -172,11 +172,11 @@ ASTCENC_API int decompress_astc(
     );
 
     // 清理资源
-    astcenc_context_free(context);
+    _RESEARCH_astcenc_context_free(context);
 
     // 处理结果
     if (status != ASTCENC_SUCCESS) {
-        snprintf(lastError, MAX_ERROR_LEN, "Decompress failed: %s", astcenc_get_error_string(status));
+        snprintf(lastError, MAX_ERROR_LEN, "Decompress failed: %s", _RESEARCH_astcenc_get_error_string(status));
         return -1;
     }
 
