@@ -6,58 +6,61 @@
         xmlns:local="clr-namespace:VideoExplorer"
         mc:Ignorable="d"
         Title="VideoInfoSettings" Height="619" Width="800" Closing="Window_Closing">
-  <!--<Window.DataContext>
+    <!--<Window.DataContext>
         <local:VideoInfoSettings />
     </Window.DataContext>-->
 
-  <Window.Resources>
-    <local:StringToImageSourceConverter x:Key="PathToImageConverter"/>
-    <BitmapImage x:Key="DefaultImage" UriSource="assets/youtube.png"/>
-  </Window.Resources>
+    <Window.Resources>
+        <local:StringToImageSourceConverter x:Key="PathToImageConverter"/>
+        <BitmapImage x:Key="DefaultImage" UriSource="assets/youtube.png"/>
+    </Window.Resources>
 
-  <Grid>
-    <ListBox x:Name="listBox_Cover" ItemsSource="{Binding ImagePaths}" Margin="412,40,10,0" SelectionChanged="listBox_Cover_SelectionChanged" VerticalAlignment="Top" Height="224" HorizontalContentAlignment="Stretch">
-      <ListBox.ItemsPanel>
-        <ItemsPanelTemplate>
-          <WrapPanel Orientation="Horizontal"/>
-        </ItemsPanelTemplate>
-      </ListBox.ItemsPanel>
+    <Grid>
+        <ListBox x:Name="listBox_Cover" ItemsSource="{Binding ImagePaths}" Margin="412,40,10,0" SelectionChanged="listBox_Cover_SelectionChanged" VerticalAlignment="Top" Height="224" HorizontalContentAlignment="Stretch">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <WrapPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
 
-      <ListBox.ItemTemplate>
-        <DataTemplate>
-          <Image Source="{Binding Converter={StaticResource PathToImageConverter}}"
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Image Source="{Binding Converter={StaticResource PathToImageConverter}}"
                    Width="300"
                    Height="200"
                    Stretch="Uniform"/>
-        </DataTemplate>
-      </ListBox.ItemTemplate>
-    </ListBox>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
 
-    <Image x:Name="image_Cover" HorizontalAlignment="Left" Height="224" Margin="10,40,0,0" VerticalAlignment="Top" Width="390" ToolTip="封面图片" Stretch="UniformToFill">
-      <!--Source="{Binding ImagePath, Converter={StaticResource ImageConverter}, FallbackValue={StaticResource DefaultImage}, TargetNullValue={StaticResource DefaultImage}}">-->
-      <Image.Source>
-        <Binding Path="ImagePath" FallbackValue="assets/youtube.png" TargetNullValue="assets/youtube.png" Converter="{StaticResource PathToImageConverter}"/>
-      </Image.Source>
-    </Image>
+        <Image x:Name="image_Cover" HorizontalAlignment="Left" Height="224" Margin="10,40,0,0" VerticalAlignment="Top" Width="390" ToolTip="封面图片" Stretch="UniformToFill">
+            <!--Source="{Binding ImagePath, Converter={StaticResource ImageConverter}, FallbackValue={StaticResource DefaultImage}, TargetNullValue={StaticResource DefaultImage}}">-->
+            <Image.Source>
+                <Binding Path="ImagePath" FallbackValue="assets/youtube.png" TargetNullValue="assets/youtube.png" Converter="{StaticResource PathToImageConverter}"/>
+            </Image.Source>
+        </Image>
 
-    <Label Content="封面" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
-    <Label Content="封面列表" HorizontalAlignment="Left" Margin="412,10,0,0" VerticalAlignment="Top"/>
-    
-    <Label Content="标题" HorizontalAlignment="Left" Margin="10,270,0,0" VerticalAlignment="Top"/>
-    <TextBox x:Name="textBox_Title" Margin="54,274,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
+        <Label Content="文件" HorizontalAlignment="Left" Margin="10,301,0,0" VerticalAlignment="Top"/>
+        <TextBox x:Name="textBox_File" Margin="54,305,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
 
-    <Label Content="演员" HorizontalAlignment="Left" Margin="10,300,0,0" VerticalAlignment="Top"/>
-    <TextBox x:Name="textBox_Actor" Margin="54,304,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
+        <Label Content="封面" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
+        <Label Content="封面列表" HorizontalAlignment="Left" Margin="412,10,0,0" VerticalAlignment="Top"/>
 
-    <Label Content="分类" HorizontalAlignment="Left" Margin="10,330,0,0" VerticalAlignment="Top"/>
-    <TextBox x:Name="textBox_Category" Margin="54,334,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
-    <Grid Margin="54,360,10,129">
-      <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <WrapPanel x:Name="ButtonPanel" Margin="3" />
-      </ScrollViewer>
+        <Label Content="标题" HorizontalAlignment="Left" Margin="10,323,0,0" VerticalAlignment="Top"/>
+        <TextBox x:Name="textBox_Title" Margin="54,327,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
+
+        <Label Content="演员" HorizontalAlignment="Left" Margin="10,345,0,0" VerticalAlignment="Top"/>
+        <TextBox x:Name="textBox_Actor" Margin="54,349,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
+
+        <Label Content="分类" HorizontalAlignment="Left" Margin="10,367,0,0" VerticalAlignment="Top"/>
+        <TextBox x:Name="textBox_Category" Margin="54,371,10,0" TextWrapping="Wrap" Text="" VerticalAlignment="Top"/>
+        <Grid Margin="54,393,10,129">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <WrapPanel x:Name="ButtonPanel" Margin="3" />
+            </ScrollViewer>
+        </Grid>
+
+        <Label Content="简介" HorizontalAlignment="Left" Margin="10,487,0,0" VerticalAlignment="Top"/>
+        <TextBox x:Name="textBox_Detail" Margin="54,491,10,10" TextWrapping="Wrap" Text=""/>
     </Grid>
-
-    <Label Content="简介" HorizontalAlignment="Left" Margin="10,487,0,0" VerticalAlignment="Top"/>
-    <TextBox x:Name="textBox_Detail" Margin="54,491,10,10" TextWrapping="Wrap" Text=""/>
-  </Grid>
 </Window>
