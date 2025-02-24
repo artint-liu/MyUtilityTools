@@ -44,6 +44,8 @@
             label_Min = new Label();
             label_UpdateTime = new Label();
             label_DataTime = new Label();
+            label7 = new Label();
+            textBox_Warn = new TextBox();
             SuspendLayout();
             // 
             // timer1
@@ -64,7 +66,7 @@
             // label2
             // 
             label2.AutoSize = true;
-            label2.Location = new Point(12, 33);
+            label2.Location = new Point(12, 57);
             label2.Name = "label2";
             label2.Size = new Size(82, 24);
             label2.TabIndex = 1;
@@ -73,7 +75,7 @@
             // label3
             // 
             label3.AutoSize = true;
-            label3.Location = new Point(12, 57);
+            label3.Location = new Point(12, 81);
             label3.Name = "label3";
             label3.Size = new Size(64, 24);
             label3.TabIndex = 2;
@@ -82,7 +84,7 @@
             // label4
             // 
             label4.AutoSize = true;
-            label4.Location = new Point(12, 81);
+            label4.Location = new Point(12, 105);
             label4.Name = "label4";
             label4.Size = new Size(64, 24);
             label4.TabIndex = 3;
@@ -100,7 +102,7 @@
             // label_Price
             // 
             label_Price.AutoSize = true;
-            label_Price.Location = new Point(100, 33);
+            label_Price.Location = new Point(100, 57);
             label_Price.Name = "label_Price";
             label_Price.Size = new Size(53, 24);
             label_Price.TabIndex = 5;
@@ -109,7 +111,7 @@
             // label_Change
             // 
             label_Change.AutoSize = true;
-            label_Change.Location = new Point(100, 57);
+            label_Change.Location = new Point(100, 81);
             label_Change.Name = "label_Change";
             label_Change.Size = new Size(73, 24);
             label_Change.TabIndex = 6;
@@ -118,7 +120,7 @@
             // label_ChangePercent
             // 
             label_ChangePercent.AutoSize = true;
-            label_ChangePercent.Location = new Point(100, 81);
+            label_ChangePercent.Location = new Point(100, 105);
             label_ChangePercent.Name = "label_ChangePercent";
             label_ChangePercent.Size = new Size(138, 24);
             label_ChangePercent.TabIndex = 7;
@@ -127,7 +129,7 @@
             // label5
             // 
             label5.AutoSize = true;
-            label5.Location = new Point(13, 105);
+            label5.Location = new Point(12, 129);
             label5.Name = "label5";
             label5.Size = new Size(46, 24);
             label5.TabIndex = 8;
@@ -136,7 +138,7 @@
             // label6
             // 
             label6.AutoSize = true;
-            label6.Location = new Point(13, 129);
+            label6.Location = new Point(12, 153);
             label6.Name = "label6";
             label6.Size = new Size(46, 24);
             label6.TabIndex = 9;
@@ -145,7 +147,7 @@
             // label_Max
             // 
             label_Max.AutoSize = true;
-            label_Max.Location = new Point(100, 105);
+            label_Max.Location = new Point(100, 129);
             label_Max.Name = "label_Max";
             label_Max.Size = new Size(47, 24);
             label_Max.TabIndex = 10;
@@ -154,7 +156,7 @@
             // label_Min
             // 
             label_Min.AutoSize = true;
-            label_Min.Location = new Point(100, 129);
+            label_Min.Location = new Point(100, 153);
             label_Min.Name = "label_Min";
             label_Min.Size = new Size(44, 24);
             label_Min.TabIndex = 11;
@@ -164,7 +166,7 @@
             // 
             label_UpdateTime.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             label_UpdateTime.AutoSize = true;
-            label_UpdateTime.Location = new Point(172, 196);
+            label_UpdateTime.Location = new Point(172, 217);
             label_UpdateTime.Name = "label_UpdateTime";
             label_UpdateTime.Size = new Size(118, 24);
             label_UpdateTime.TabIndex = 12;
@@ -174,17 +176,35 @@
             // 
             label_DataTime.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             label_DataTime.AutoSize = true;
-            label_DataTime.Location = new Point(208, 172);
+            label_DataTime.Location = new Point(208, 193);
             label_DataTime.Name = "label_DataTime";
             label_DataTime.Size = new Size(82, 24);
             label_DataTime.TabIndex = 13;
             label_DataTime.Text = "数据时间";
             // 
+            // label7
+            // 
+            label7.AutoSize = true;
+            label7.Location = new Point(12, 33);
+            label7.Name = "label7";
+            label7.Size = new Size(82, 24);
+            label7.TabIndex = 14;
+            label7.Text = "提醒价格";
+            // 
+            // textBox_Warn
+            // 
+            textBox_Warn.Location = new Point(100, 30);
+            textBox_Warn.Name = "textBox_Warn";
+            textBox_Warn.Size = new Size(150, 30);
+            textBox_Warn.TabIndex = 15;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(11F, 24F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(302, 229);
+            ClientSize = new Size(302, 250);
+            Controls.Add(textBox_Warn);
+            Controls.Add(label7);
             Controls.Add(label_DataTime);
             Controls.Add(label_UpdateTime);
             Controls.Add(label_Min);
@@ -205,6 +225,8 @@
             Name = "Form1";
             SizeGripStyle = SizeGripStyle.Hide;
             Text = "股票";
+            FormClosing += Form1_FormClosing;
+            Load += Form1_Load;
             ResumeLayout(false);
             PerformLayout();
         }
@@ -226,5 +248,7 @@
         private Label label_Min;
         private Label label_UpdateTime;
         private Label label_DataTime;
+        private Label label7;
+        private TextBox textBox_Warn;
     }
 }

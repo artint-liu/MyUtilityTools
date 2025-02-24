@@ -25,7 +25,8 @@ namespace VideoExplorer
             try
             {
                 // 打开输入文件
-                int ret = ffmpeg.avformat_open_input(&pFormatContext, videoPath, null, null);
+                AVInputFormat fmt;
+                int ret = ffmpeg.avformat_open_input(&pFormatContext, videoPath, &fmt, null);
                 if (ret != 0) throw new ApplicationException("Could not open file");
 
                 // 获取流信息

@@ -18,7 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="assets\youtube.png" />
+    <EmbeddedResource Include="assets\youtube.png">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

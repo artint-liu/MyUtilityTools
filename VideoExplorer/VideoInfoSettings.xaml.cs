@@ -101,6 +101,7 @@ namespace VideoExplorer
             var vm = (MyViewModel)DataContext;
             vm.ImagePath = itemModel.ImagePath;
             textBox_Title.Text = itemModel.Title;
+            textBox_File.Text = itemModel.fullPath;
             textBox_Actor.Text = itemModel.Actor;
             textBox_Category.Text = itemModel.Category;
             textBox_Detail.Text = itemModel.Details;
@@ -172,6 +173,7 @@ namespace VideoExplorer
             var vm = (MyViewModel)DataContext;
             itemModel.ImagePath = vm.ImagePath;
             itemModel.Title = textBox_Title.Text;
+            itemModel.fullPath = textBox_File.Text;
             itemModel.Actor = textBox_Actor.Text;
             itemModel.Category = Utils.NormalizeCategory(textBox_Category.Text);
             itemModel.Details = textBox_Detail.Text;

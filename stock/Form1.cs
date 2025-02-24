@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace stock
 {
@@ -6,6 +7,13 @@ namespace stock
     {
         float min = float.MaxValue;
         float max = float.MinValue;
+        float prevPrice = float.MaxValue;
+        private readonly string strSettingsPath = "settings.json";
+        //private Settings settings;
+        class Settings
+        {
+            public float warnPrice { get; set; }
+        }
 
         private static readonly HttpClient client = new HttpClient()
         {
@@ -40,7 +48,7 @@ namespace stock
 
         private void SetTimeInterval(int val)
         {
-            if(timer1.Interval != val)
+            if (timer1.Interval != val)
                 timer1.Interval = val;
         }
 
@@ -90,11 +98,19 @@ namespace stock
                             float price = float.Parse(currentPrice);
                             max = Math.Max(price, max);
                             min = Math.Min(price, min);
+                            if (float.TryParse(textBox_Warn.Text, out float warnPrice))
+                            {
+                                if (warnPrice > 0 && prevPrice < warnPrice && price > warnPrice)
+                                {
+                                    MessageBox.Show("达到指定价格");
+                                }
+                            }
+                            prevPrice = price;
 
                             label_Min.Text = min.ToString();
                             label_Max.Text = max.ToString();
                             label_DataTime.Text = $"数据时间：{data[30]}";
-                            
+
                             label_UpdateTime.Text = "更新时间: " + DateTime.Now.ToString("HH:mm:ss");
                         });
                     }
@@ -115,6 +131,28 @@ namespace stock
             catch (ArgumentException e)
             {
                 Console.WriteLine($"参数错误: {e.Message}");
+            }
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            float.TryParse(textBox_Warn.Text, out float warnPrice);
+            Settings settings = new();
+            settings.warnPrice = warnPrice;
+            string text = JsonSerializer.Serialize(settings);
+            File.WriteAllText(strSettingsPath, text);
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            if(File.Exists(strSettingsPath))
+            {
+                string text = File.ReadAllText(strSettingsPath);
+                Settings settings = JsonSerializer.Deserialize<Settings>(text);
+                if (settings != null)
+                {
+                    textBox_Warn.Text = settings.warnPrice.ToString();
+                }
             }
         }
     }
