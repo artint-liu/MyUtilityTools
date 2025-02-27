@@ -9,6 +9,7 @@ namespace stock
         float max = float.MinValue;
         float prevPrice = float.MaxValue;
         private readonly string strSettingsPath = "settings.json";
+        private bool bWarned = false;
         //private Settings settings;
         class Settings
         {
@@ -100,8 +101,9 @@ namespace stock
                             min = Math.Min(price, min);
                             if (float.TryParse(textBox_Warn.Text, out float warnPrice))
                             {
-                                if (warnPrice > 0 && prevPrice < warnPrice && price > warnPrice)
+                                if (warnPrice > 0 && prevPrice <= warnPrice && price > warnPrice && !bWarned)
                                 {
+                                    bWarned = true;
                                     MessageBox.Show("达到指定价格");
                                 }
                             }
@@ -145,7 +147,7 @@ namespace stock
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            if(File.Exists(strSettingsPath))
+            if (File.Exists(strSettingsPath))
             {
                 string text = File.ReadAllText(strSettingsPath);
                 Settings settings = JsonSerializer.Deserialize<Settings>(text);
@@ -154,6 +156,11 @@ namespace stock
                     textBox_Warn.Text = settings.warnPrice.ToString();
                 }
             }
+        }
+
+        private void textBox_Warn_TextChanged(object sender, EventArgs e)
+        {
+            bWarned = false;
         }
     }
 }

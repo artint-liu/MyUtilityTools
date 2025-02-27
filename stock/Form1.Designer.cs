@@ -197,6 +197,7 @@
             textBox_Warn.Name = "textBox_Warn";
             textBox_Warn.Size = new Size(150, 30);
             textBox_Warn.TabIndex = 15;
+            textBox_Warn.TextChanged += textBox_Warn_TextChanged;
             // 
             // Form1
             // 
