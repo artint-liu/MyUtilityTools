@@ -306,6 +306,69 @@ void UpdateWeight(
 }
 
 // 反向传播
+#if 0
+void backPropagation(std::vector<Layer>& network, const std::vector<real>& target, real learningRate, real lambda) {
+    const real momentum = 0.9f;
+    static std::vector<std::vector<std::vector<real>>> weightDeltas(network.size());
+    static std::vector<std::vector<real>> biasDeltas(network.size());
+
+    // 初始化动量存储（首次运行时）
+    if (weightDeltas[0].empty()) {
+        for (size_t i = 0; i < network.size(); ++i) {
+            weightDeltas[i].resize(network[i].weights.size(),
+                std::vector<real>(network[i].weights[0].size(), 0.0f));
+            biasDeltas[i].resize(network[i].biases.size(), 0.0f);
+        }
+    }
+
+    // --- 误差计算 ---
+    // 输出层误差：交叉熵损失 + softmax 的梯度简化
+    Layer& outputLayer = network.back();
+    for (size_t i = 0; i < outputLayer.outputs.size(); ++i) {
+        outputLayer.errors[i] = (outputLayer.outputs[i] - target[i]);
+    }
+
+    // 隐藏层误差反向传播
+    for (int i = network.size() - 2; i >= 0; --i) {
+        const auto& nextLayer = network[i + 1];
+        for (size_t j = 0; j < network[i].outputs.size(); ++j) {
+            real error = 0.0f;
+            for (size_t k = 0; k < nextLayer.errors.size(); ++k) {
+                error += nextLayer.errors[k] * nextLayer.weights[k][j];
+            }
+            network[i].errors[j] = error * ACTIVATION_DERIVATIVE(network[i].outputs[j]);
+        }
+    }
+
+    // --- 权重更新 ---
+    for (size_t layerIdx = 0; layerIdx < network.size(); ++layerIdx) {
+        Layer& layer = network[layerIdx];
+        const auto& inputs = (layerIdx == 0) ? layer.inputs : network[layerIdx - 1].outputs;
+
+        for (size_t neuronIdx = 0; neuronIdx < layer.weights.size(); ++neuronIdx) {
+            // 计算当前梯度
+            const real error = layer.errors[neuronIdx];
+
+            // 权重更新（含L2正则化和动量）
+            for (size_t weightIdx = 0; weightIdx < layer.weights[neuronIdx].size(); ++weightIdx) {
+                real& weight = layer.weights[neuronIdx][weightIdx];
+                const real gradient = error * inputs[weightIdx];
+                const real regularization = lambda * weight;
+
+                // 动量更新
+                real& delta = weightDeltas[layerIdx][neuronIdx][weightIdx];
+                delta = momentum * delta + learningRate * (gradient + regularization);
+                weight -= delta;
+            }
+
+            // 偏置更新
+            real& biasDelta = biasDeltas[layerIdx][neuronIdx];
+            biasDelta = momentum * biasDelta + learningRate * error;
+            layer.biases[neuronIdx] -= biasDelta;
+        }
+    }
+}
+#else
 void backPropagation(std::vector<Layer>& network, const std::vector<real>& target, real learningRate, real lambda)
 {
     // 初始化动量存储（改为延迟初始化）
@@ -360,7 +423,7 @@ void backPropagation(std::vector<Layer>& network, const std::vector<real>& targe
         }
     }
 }
-
+#endif
 
 // 训练神经网络
 void trainNetwork(std::vector<Layer>& network, const std::vector<std::pair<std::vector<real>, int>>& trainingData,
@@ -541,7 +604,7 @@ int main() {
     }
 
     size_t inputSize = trainingData[0].first.size();
-    std::vector<int> hiddenSizes = { 256, 128, 64 };
+    std::vector<int> hiddenSizes = { 256 };
     int outputSize = 10;
 
     // 初始化神经网络
