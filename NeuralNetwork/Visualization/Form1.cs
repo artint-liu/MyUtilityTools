@@ -7,6 +7,7 @@ using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics.LinearAlgebra.Single;
 using System.Drawing.Drawing2D;
 using System.Drawing;
+using System.Drawing.Imaging;
 
 namespace Visualization
 {
@@ -32,8 +33,36 @@ namespace Visualization
             // 打印权重形状（例如：256x784）
             toolStripStatusLabel.Text = $"权重形状: [{weights.GetLength(0)}, {weights.GetLength(1)}]";
             InitializeDrawingSurface();
+
+            //pictureBox2.Image = CreateFromWeight(weights);
+            for(int i = 0; i < 256; i++)
+            {
+                imageList1.Images.Add(CreateFromWeight(weights, i));
+                var listViewItem = listView1.Items.Add(i.ToString());
+                listViewItem.ImageIndex = i;
+            }
         }
 
+        private Image CreateFromWeight(float[,] layerweights, int index)
+        {
+            Bitmap image = new Bitmap(28, 28, PixelFormat.Format32bppRgb);
+            float[] weights = new float[28 * 28];
+            float minValue = float.MaxValue, maxValue = float.MinValue;
+            for (int i = 0; i < weights.Length; i++)
+            {
+                weights[i] = layerweights[i, index];
+                minValue = Math.Min(minValue, weights[i]);
+                maxValue = Math.Max(maxValue, weights[i]);
+            }
+            for(int y = 0; y < image.Height; y++) 
+                for(int x = 0; x < image.Width; x++)
+                { 
+                    byte L = (byte)Math.Clamp((weights[y * image.Width + x] - minValue) / (maxValue - minValue) * 255.0f, 0, 255);
+                    image.SetPixel(x, y, Color.FromArgb(L, L, L));
+                }    
+
+            return image;
+        }
 
         private Vector<float>[] ConvertToMatrix(float[] data, int rows, int cols)
         {

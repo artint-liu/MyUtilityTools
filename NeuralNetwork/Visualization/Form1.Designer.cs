@@ -28,11 +28,14 @@
         /// </summary>
         private void InitializeComponent()
         {
+            components = new System.ComponentModel.Container();
             statusStrip1 = new StatusStrip();
             toolStripStatusLabel = new ToolStripStatusLabel();
             pictureBox1 = new PictureBox();
             button_Clear = new Button();
             button_Do = new Button();
+            listView1 = new ListView();
+            imageList1 = new ImageList(components);
             statusStrip1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
@@ -68,7 +71,7 @@
             // 
             // button_Clear
             // 
-            button_Clear.Location = new Point(29, 349);
+            button_Clear.Location = new Point(62, 298);
             button_Clear.Name = "button_Clear";
             button_Clear.Size = new Size(112, 34);
             button_Clear.TabIndex = 2;
@@ -78,7 +81,7 @@
             // 
             // button_Do
             // 
-            button_Do.Location = new Point(147, 349);
+            button_Do.Location = new Point(180, 298);
             button_Do.Name = "button_Do";
             button_Do.Size = new Size(112, 34);
             button_Do.TabIndex = 3;
@@ -86,11 +89,28 @@
             button_Do.UseVisualStyleBackColor = true;
             button_Do.Click += button_Do_Click;
             // 
+            // listView1
+            // 
+            listView1.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            listView1.LargeImageList = imageList1;
+            listView1.Location = new Point(298, 12);
+            listView1.Name = "listView1";
+            listView1.Size = new Size(947, 810);
+            listView1.TabIndex = 4;
+            listView1.UseCompatibleStateImageBehavior = false;
+            // 
+            // imageList1
+            // 
+            imageList1.ColorDepth = ColorDepth.Depth32Bit;
+            imageList1.ImageSize = new Size(112, 112);
+            imageList1.TransparentColor = Color.Transparent;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(11F, 24F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1257, 856);
+            Controls.Add(listView1);
             Controls.Add(button_Do);
             Controls.Add(button_Clear);
             Controls.Add(pictureBox1);
@@ -112,5 +132,7 @@
         private PictureBox pictureBox1;
         private Button button_Clear;
         private Button button_Do;
+        private ListView listView1;
+        private ImageList imageList1;
     }
 }
