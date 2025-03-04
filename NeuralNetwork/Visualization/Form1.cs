@@ -18,6 +18,8 @@ namespace Visualization
         private Graphics graphics;
         private bool isDrawing = false;
         private Point lastPoint;
+        private string[] trainingData;
+        private Random rnd;
 
         private Dictionary<string, Array> tensors;
         public Form1()
@@ -35,18 +37,27 @@ namespace Visualization
             InitializeDrawingSurface();
 
             //pictureBox2.Image = CreateFromWeight(weights);
-            for(int i = 0; i < 256; i++)
+            for (int i = 0; i < 256; i++)
             {
-                imageList1.Images.Add(CreateFromWeight(weights, i));
                 var listViewItem = listView1.Items.Add(i.ToString());
-                listViewItem.ImageIndex = i;
+                listViewItem.ImageIndex = imageList1.Images.Count;
+                imageList1.Images.Add(CreateFromWeight(weights, 28, 28, i));
+            }
+
+            float[,] weights1 = (float[,])tensors["layer1_dense_1_weights"];
+
+            for (int i = 0; i < 10; i++)
+            {
+                var listViewItem = listView1.Items.Add(i.ToString());
+                listViewItem.ImageIndex = imageList1.Images.Count;
+                imageList1.Images.Add(CreateFromWeight(weights, 16, 16, i));
             }
         }
 
-        private Image CreateFromWeight(float[,] layerweights, int index)
+        private Image CreateFromWeight(float[,] layerweights, int w, int h, int index)
         {
-            Bitmap image = new Bitmap(28, 28, PixelFormat.Format32bppRgb);
-            float[] weights = new float[28 * 28];
+            Bitmap image = new Bitmap(w, h, PixelFormat.Format32bppRgb);
+            float[] weights = new float[w * h];
             float minValue = float.MaxValue, maxValue = float.MinValue;
             for (int i = 0; i < weights.Length; i++)
             {
@@ -54,12 +65,14 @@ namespace Visualization
                 minValue = Math.Min(minValue, weights[i]);
                 maxValue = Math.Max(maxValue, weights[i]);
             }
-            for(int y = 0; y < image.Height; y++) 
-                for(int x = 0; x < image.Width; x++)
-                { 
-                    byte L = (byte)Math.Clamp((weights[y * image.Width + x] - minValue) / (maxValue - minValue) * 255.0f, 0, 255);
+            for (int y = 0; y < image.Height; y++)
+                for (int x = 0; x < image.Width; x++)
+                {
+                    float v = weights[y * image.Width + x];
+                    byte L = (byte)Math.Clamp((v - minValue) / (maxValue - minValue) * 255.0f, 0, 255);
+                    //image.SetPixel(x, y, v > 0 ? Color.FromArgb(L, 0, L) : Color.FromArgb(L, L, 0));
                     image.SetPixel(x, y, Color.FromArgb(L, L, L));
-                }    
+                }
 
             return image;
         }
@@ -80,10 +93,10 @@ namespace Visualization
         {
             int count = matrix.GetLength(1);
             float[] result = new float[count];
-            for(int i = 0; i < count; i++)
+            for (int i = 0; i < count; i++)
             {
                 result[i] = biases[i];
-                for(int j = 0; j < inputs.Length; j++)
+                for (int j = 0; j < inputs.Length; j++)
                 {
                     result[i] += inputs[j] * matrix[j, i];
                 }
@@ -294,6 +307,31 @@ namespace Visualization
             float[] output = ForwardPass(tensors, input);
             int predictedDigit = ArgMax(output);
             toolStripStatusLabel.Text = $"result:{predictedDigit}";
+        }
+
+        private void button_LoadTrainData_Click(object sender, EventArgs e)
+        {
+            if(trainingData == null)
+            {
+                string text = File.ReadAllText("train.txt");
+                trainingData = text.Split('\n');
+                rnd = new Random();
+            }
+
+            int line = rnd.Next(0, 60000);
+            textBox_Line.Text = line.ToString();
+
+            string[] data = trainingData[line].Split(' ');
+            label1.Text = $"Ô¤ÆÚ£º{data[0]}";
+            for (int i = 1; i < data.Length; i++)
+            {
+                int index = i - 1;
+                int L = int.Parse(data[i]);
+                outputBitmap.SetPixel(index % 28, index / 28, Color.FromArgb(L, L, L));
+            }
+            Graphics g = Graphics.FromImage(drawingBitmap);
+            g.DrawImage(outputBitmap, new Rectangle(0, 0, drawingBitmap.Width, drawingBitmap.Height), new Rectangle(0, 0, outputBitmap.Width, outputBitmap.Height), GraphicsUnit.Pixel);
+            pictureBox1.Invalidate();
         }
     }
 }

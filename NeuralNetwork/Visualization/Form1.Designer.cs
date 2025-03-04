@@ -36,6 +36,10 @@
             button_Do = new Button();
             listView1 = new ListView();
             imageList1 = new ImageList(components);
+            textBox_Line = new TextBox();
+            button_LoadTrainData = new Button();
+            label1 = new Label();
+            label2 = new Label();
             statusStrip1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pictureBox1).BeginInit();
             SuspendLayout();
@@ -105,11 +109,50 @@
             imageList1.ImageSize = new Size(112, 112);
             imageList1.TransparentColor = Color.Transparent;
             // 
+            // textBox_Line
+            // 
+            textBox_Line.Location = new Point(82, 398);
+            textBox_Line.Name = "textBox_Line";
+            textBox_Line.Size = new Size(150, 30);
+            textBox_Line.TabIndex = 5;
+            // 
+            // button_LoadTrainData
+            // 
+            button_LoadTrainData.Location = new Point(50, 437);
+            button_LoadTrainData.Name = "button_LoadTrainData";
+            button_LoadTrainData.Size = new Size(112, 34);
+            button_LoadTrainData.TabIndex = 6;
+            button_LoadTrainData.Text = "加载训练数据";
+            button_LoadTrainData.UseVisualStyleBackColor = true;
+            button_LoadTrainData.Click += button_LoadTrainData_Click;
+            // 
+            // label1
+            // 
+            label1.AutoSize = true;
+            label1.Location = new Point(12, 374);
+            label1.Name = "label1";
+            label1.Size = new Size(64, 24);
+            label1.TabIndex = 7;
+            label1.Text = "预期：";
+            // 
+            // label2
+            // 
+            label2.AutoSize = true;
+            label2.Location = new Point(12, 404);
+            label2.Name = "label2";
+            label2.Size = new Size(64, 24);
+            label2.TabIndex = 8;
+            label2.Text = "行数：";
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(11F, 24F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1257, 856);
+            Controls.Add(label2);
+            Controls.Add(label1);
+            Controls.Add(button_LoadTrainData);
+            Controls.Add(textBox_Line);
             Controls.Add(listView1);
             Controls.Add(button_Do);
             Controls.Add(button_Clear);
@@ -134,5 +177,9 @@
         private Button button_Do;
         private ListView listView1;
         private ImageList imageList1;
+        private TextBox textBox_Line;
+        private Button button_LoadTrainData;
+        private Label label1;
+        private Label label2;
     }
 }
