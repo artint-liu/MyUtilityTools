@@ -774,7 +774,7 @@ VOID HookApi_Detours()
   // 保存旧函数的地址
   //Old_MessageBoxA = ::MessageBoxA;
   // HOOK API.这里可以连续多次调用DetourAttach, 表明HOOK多个函数
-  ATTACH_API(CreateFileW);
+  //ATTACH_API(CreateFileW);
   ATTACH_API(GetProcAddress);
   ATTACH_API(LoadLibraryW);
   ATTACH_API(LoadLibraryExW);
@@ -783,11 +783,11 @@ VOID HookApi_Detours()
   ATTACH_API(CreateDXGIFactory);
   ATTACH_API(CreateDXGIFactory1);
   ATTACH_API(CreateDXGIFactory2);
-  ATTACH_API(FindFirstFileW);
-  ATTACH_API(FindNextFileW);
-  ATTACH_API(CreateFileMappingNumaW);
+  //ATTACH_API(FindFirstFileW);
+  //ATTACH_API(FindNextFileW);
+  //ATTACH_API(CreateFileMappingNumaW);
   //ATTACH_API(IsDebuggerPresent);
-  ATTACH_API(SetUnhandledExceptionFilter);
+  //ATTACH_API(SetUnhandledExceptionFilter);
 
   g_LogFile.Writef("Attach D3DKMTPresent\r\n");
   if(Real_D3DKMTPresent) { ATTACH_API(D3DKMTPresent); }
@@ -811,7 +811,7 @@ VOID UnhookApi_Detours()
 
   // UNHOOK API.这可多次调用DetourDetach,表明撤销多个函数HOOK
   //DetourDetach((PVOID *)(&Real_CreateFileW), MyCreateFileW);
-  DETACH_API(CreateFileW);
+  //DETACH_API(CreateFileW);
   DETACH_API(GetProcAddress);
   DETACH_API(LoadLibraryW);
   DETACH_API(LoadLibraryExW);
@@ -821,11 +821,11 @@ VOID UnhookApi_Detours()
   DETACH_API(CreateDXGIFactory);
   DETACH_API(CreateDXGIFactory1);
   DETACH_API(CreateDXGIFactory2);
-  DETACH_API(FindFirstFileW);
-  DETACH_API(FindNextFileW);
-  DETACH_API(CreateFileMappingNumaW);
+  //DETACH_API(FindFirstFileW);
+  //DETACH_API(FindNextFileW);
+  //DETACH_API(CreateFileMappingNumaW);
   //DETACH_API(IsDebuggerPresent);
-  DETACH_API(SetUnhandledExceptionFilter);
+  //DETACH_API(SetUnhandledExceptionFilter);
 
   if(Real_D3DKMTPresent)
   {
