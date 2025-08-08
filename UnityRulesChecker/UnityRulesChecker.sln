@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36221.1 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnityRulesChecker", "UnityRulesChecker.csproj", "{E1A08611-2482-42F0-B525-1A4727028348}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E1A08611-2482-42F0-B525-1A4727028348}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E1A08611-2482-42F0-B525-1A4727028348}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E1A08611-2482-42F0-B525-1A4727028348}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E1A08611-2482-42F0-B525-1A4727028348}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {9993EED5-B370-412B-9601-D9C0A61C7FFD}
+	EndGlobalSection
+EndGlobal
