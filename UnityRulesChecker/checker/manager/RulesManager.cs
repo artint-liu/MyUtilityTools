@@ -22,7 +22,6 @@ namespace ResourceChecker
 {
     public class RulesManager
     {
-
         private static readonly Lazy<RulesManager> _instance = new Lazy<RulesManager>(() => new RulesManager());
         private List<Type> _ruleTypes = null;
         private List<Rule> _rules = null;
@@ -30,6 +29,7 @@ namespace ResourceChecker
         public List<Type> RuleTypes { get => _ruleTypes; }
         public List<Rule> DefaultRules { get => _rules; }
         private Dictionary<string, object> referenceCache = new Dictionary<string, object>();
+        //private HashSet<Rule> m_RuleSet = new();
 
         public Dictionary<string, string> RuleAssemblyQualifiedTypes
         {
@@ -96,7 +96,9 @@ namespace ResourceChecker
                     }
 
                     object obj = child.rule.Resolve(fileInfo);
-                    child.EvaluateTree(fileInfo.FullName, obj);
+
+                    if (child.children != null)
+                        child.EvaluateTree(fileInfo.FullName, obj);
                 }
             }
 
@@ -105,14 +107,16 @@ namespace ResourceChecker
                 Debug.Assert(rule == null);
                 foreach (RulesTree child in children)
                 {
-                    if (rule.GetResolveType() != Rule.ResolveType.FileContent)
+                    if (child.rule.GetResolveType() != Rule.ResolveType.FileContent)
                     {
                         UnityEngine.Debug.LogError("在没有解决FileContent的规则中调用了处理规则");
                         return;
                     }
 
-                    object obj = rule.Resolve(fileContent);
-                    child.EvaluateTree(filePath, obj);
+                    object obj = child.rule.Resolve(fileContent);
+
+                    if(child.children != null)
+                        child.EvaluateTree(filePath, obj);
                 }
             }
 
@@ -254,9 +258,29 @@ namespace ResourceChecker
 
         public List<Rule> CreateDefaultRules()
         {
-            _rules = RuleTypes.Select(type => (Rule)Activator.CreateInstance(type)).ToList();
+            if (_rules == null || _rules.Count != RuleTypes.Count)
+            {
+                _rules = RuleTypes.Select(type => (Rule)Activator.CreateInstance(type)).ToList();
+                //foreach (var rule in _rules)
+                //{
+                //    m_RuleSet.Add(rule);
+                //}
+            }
             return _rules;
         }
+
+        //public Rule UniquityRule(Rule rule)
+        //{
+        //    if (rule is DuplicateGUIDRule)
+        //    {
+        //        UnityEngine.Debug.Log("this");
+        //    }
+        //    if (m_RuleSet.TryGetValue(rule, out var result))
+        //        return result;
+        //    else
+        //        m_RuleSet.Add(rule);
+        //    return rule;
+        //}
 
         public void DoCheck(string strDir, List<Rule> userRules)
         {

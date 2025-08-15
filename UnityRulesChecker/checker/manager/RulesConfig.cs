@@ -194,6 +194,11 @@ namespace ResourceChecker
                         if (ruleType != null)
                         {
                             var rule = (Rule)JsonUtility.FromJson(wrapper.jsonData, ruleType);
+                            
+                            // 唯一化处理，一般是Rule自己实现了GetHashCode与Equal比较功能
+                            // 将参数相同的rule作为一个对象处理，实现规则内部的数据储存
+                            rule = RulesFactory.Instance.UniquityRule(rule);
+
                             if (wrapper.ruleType.StartsWith('*'))
                             {
                                 if(prevRule != null)
