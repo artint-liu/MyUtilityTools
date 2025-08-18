@@ -185,30 +185,17 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 //  WM_PAINT    - 绘制主窗口
 //  WM_DESTROY  - 发送退出消息并返回
 //
-//
 
-Gdiplus::Bitmap* CreateBitmap(HBITMAP hBitmap)
+
+
+Gdiplus::Bitmap* CreateBitmap(HBITMAP hBmp)
 {
-    DIBSECTION bitmap = { 0 };
-    int count = GetObject(hBitmap, sizeof(DIBSECTION), &bitmap);
-    DWORD err = GetLastError();
-    int nLineSize = bitmap.dsBm.bmWidthBytes;
-
-    LPBYTE pBmpBits = (LPBYTE)malloc(bitmap.dsBm.bmHeight * nLineSize); // 原位图是32位的。
-    GetBitmapBits(hBitmap, bitmap.dsBm.bmHeight * nLineSize, pBmpBits);
-
-    Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
-    //填充GDI+ Bitmap数据
-    Gdiplus::BitmapData bitmapData;
-    Gdiplus::Rect rect(0, 0, bitmap.dsBm.bmWidth, bitmap.dsBm.bmHeight);
-    pBitmap->LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &bitmapData);
-    BYTE* pDestBits = (BYTE*)bitmapData.Scan0;
-    for (int y = 0; y < bitmap.dsBm.bmHeight; y++)
-    {
-        memcpy(pDestBits + y * nLineSize, pBmpBits + y * nLineSize, nLineSize);//按行复制
+    // 参数2：调色板（无特殊需求传NULL）
+    Gdiplus::Bitmap* pBitmap = Gdiplus::Bitmap::FromHBITMAP(hBmp, NULL);
+    if (!pBitmap || pBitmap->GetLastStatus() != Gdiplus::Ok) {
+        delete pBitmap;
+        return nullptr;
     }
-    pBitmap->UnlockBits(&bitmapData);
-    free(pBmpBits);
     return pBitmap;
 }
 

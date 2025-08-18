@@ -163,12 +163,12 @@ void OnPaint(HWND hWnd, HDC hdc)
 
     if (pData->lifeTime > 0)
     {
-        Gdiplus::Font myFont(L"Î¢ÈíÑÅºÚ", 16);
+        Gdiplus::Font myFont(L"å¾®è½¯é›…é»‘", 16);
         Gdiplus::PointF origin(1.0f, 1.0f);
         Gdiplus::SolidBrush blackBrush(Gdiplus::Color(255, 0, 0, 0));
         Gdiplus::SolidBrush whiteBrush(Gdiplus::Color(0xffffffff));
         clStringW str;
-        str.Format(L"%dÃëºó¹Ø±Õ", pData->lifeTime);
+        str.Format(L"%dç§’åŽå…³é—­", pData->lifeTime);
         g.DrawString(str, str.GetLength(), &myFont, origin, &blackBrush);
         origin.X--; origin.Y--;
         g.DrawString(str, str.GetLength(), &myFont, origin, &whiteBrush);
@@ -193,7 +193,7 @@ void CreateImageMenu(HWND hWnd)
     //info.hbmpChecked;   // used if MIIM_CHECKMARKS
     //info.hbmpUnchecked; // used if MIIM_CHECKMARKS
     //info. dwItemData;   // used if MIIM_DATA
-    info.dwTypeData = (LPWSTR)L"¹Ø±Õ";    // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+    info.dwTypeData = (LPWSTR)L"å…³é—­";    // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
     //info.cch;           // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
 
     InsertMenuItemW(g_hImageMenu, 0, false, &info);
