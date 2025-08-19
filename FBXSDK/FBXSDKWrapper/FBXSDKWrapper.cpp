@@ -274,6 +274,120 @@ FBX_API FBXNodeHandle FBXScene_GetRootNode(FBXSceneHandle scene)
   return static_cast<FBXNodeHandle>(rootNode);
 }
 
+FBX_API FBXGlobalSettingsHandle FBXScene_GetGlobalSettings(FBXSceneHandle scene)
+{
+  g_lastError.clear();
+  FbxScene* fbxScene = static_cast<FbxScene*>(scene);
+  if (!fbxScene) {
+    g_lastError = "Invalid scene handle";
+    return nullptr;
+  }
+
+  FbxGlobalSettings& globalSettings = fbxScene->GetGlobalSettings();
+  return static_cast<FBXGlobalSettingsHandle>(&globalSettings);
+}
+
+FBX_API void FBXScene_ConvertSceneAxisSystemByUpFrontHand(FBXSceneHandle scene, int deep, int up, int front, int hand)
+{
+  g_lastError.clear();
+  FbxScene* fbxScene = static_cast<FbxScene*>(scene);
+  if (!fbxScene) {
+    g_lastError = "Invalid scene handle";
+    return;
+  }
+
+  //FbxAxisSystem targetAxis(FbxAxisSystem::eYAxis, FbxAxisSystem::eParityEven, FbxAxisSystem::eRightHanded);
+  fbxsdk::FbxAxisSystem targetAxis(
+    (fbxsdk::FbxAxisSystem::EUpVector)up,
+    (fbxsdk::FbxAxisSystem::EFrontVector)front,
+    (fbxsdk::FbxAxisSystem::ECoordSystem)hand);
+  
+  if (deep)
+  {
+    targetAxis.DeepConvertScene(fbxScene);
+  }
+  else
+  {
+    targetAxis.ConvertScene(fbxScene);
+  }
+  fbxScene->GetGlobalSettings().SetAxisSystem(targetAxis);
+}
+
+FBX_API void FBXScene_ConvertSceneAxisSystemByPreDefined(FBXSceneHandle scene, int deep, int predefined)
+{
+  g_lastError.clear();
+  FbxScene* fbxScene = static_cast<FbxScene*>(scene);
+  if (!fbxScene) {
+    g_lastError = "Invalid scene handle";
+    return;
+  }
+
+  //FbxAxisSystem targetAxis(FbxAxisSystem::eYAxis, FbxAxisSystem::eParityEven, FbxAxisSystem::eRightHanded);
+  fbxsdk::FbxAxisSystem targetAxis((fbxsdk::FbxAxisSystem::EPreDefinedAxisSystem)predefined);
+
+  if (deep)
+  {
+    targetAxis.DeepConvertScene(fbxScene);
+  }
+  else
+  {
+    targetAxis.ConvertScene(fbxScene);
+  }
+  fbxScene->GetGlobalSettings().SetAxisSystem(targetAxis);
+}
+
+FBX_API void FBXScene_ConvertSceneNodeAxisSystemByPreDefined(FBXSceneHandle scene, int predefined, FbxNode* node)
+{
+  g_lastError.clear();
+  FbxScene* fbxScene = static_cast<FbxScene*>(scene);
+  if (!fbxScene) {
+    g_lastError = "Invalid scene handle";
+    return;
+  }
+
+  fbxsdk::FbxAxisSystem targetAxis((fbxsdk::FbxAxisSystem::EPreDefinedAxisSystem)predefined);
+    
+  targetAxis.ConvertScene(fbxScene, node);
+  fbxScene->GetGlobalSettings().SetAxisSystem(targetAxis);
+}
+
+FBX_API int FBXGlobalSettings_GetAxisSystemUpVector(FBXGlobalSettingsHandle globalSettings, int* sign)
+{
+  g_lastError.clear();
+  FbxGlobalSettings* fbxGlobalSettings = static_cast<FbxGlobalSettings*>(globalSettings);
+  if (!fbxGlobalSettings) {
+    g_lastError = "Invalid global settings handle";
+    return -1;
+  }
+
+  return fbxGlobalSettings->GetAxisSystem().GetUpVector(*sign);
+}
+
+FBX_API int FBXGlobalSettings_GetAxisSystemFrontVector(FBXGlobalSettingsHandle globalSettings, int* sign)
+{
+  g_lastError.clear();
+  FbxGlobalSettings* fbxGlobalSettings = static_cast<FbxGlobalSettings*>(globalSettings);
+  if (!fbxGlobalSettings) {
+    g_lastError = "Invalid global settings handle";
+    return -1;
+  }
+
+  return fbxGlobalSettings->GetAxisSystem().GetFrontVector(*sign);
+}
+
+FBX_API int FBXGlobalSettings_GetAxisSystemCoord(FBXGlobalSettingsHandle globalSettings)
+{
+  g_lastError.clear();
+  FbxGlobalSettings* fbxGlobalSettings = static_cast<FbxGlobalSettings*>(globalSettings);
+  if (!fbxGlobalSettings) {
+    g_lastError = "Invalid global settings handle";
+    return -1;
+  }
+
+  return fbxGlobalSettings->GetAxisSystem().GetCoorSystem();
+}
+
+
 FBX_API FBXNodeHandle FBXNode_FindChild(FBXNodeHandle parent, const char* name)
 {
   g_lastError.clear();
@@ -349,6 +463,16 @@ FBX_API void FBXNode_SetLclRotation(FBXNodeHandle node, FBXVector3* rotation)
   fbxNode->LclRotation.Set(FbxVector4(rotation->x, rotation->y, rotation->z));
 }
 
+FBX_API void FBXNode_SetLclScaling(FBXNodeHandle node, FBXVector3* scaling)
+{
+  FbxNode* fbxNode = static_cast<FbxNode*>(node);
+  if (!fbxNode) {
+    g_lastError = "Invalid node handle";
+    return;
+  }
+  fbxNode->LclScaling.Set(FbxVector4(scaling->x, scaling->y, scaling->z));
+}
+
 FBX_API void FBXNode_GetLclTranslation(FBXNodeHandle node, FBXVector3* vout)
 {
   FBXVector3 result = { 0, 0, 0 };
@@ -378,6 +502,20 @@ FBX_API void FBXNode_GetLclRotation(FBXNodeHandle node, FBXVector3* vout)
   vout->x = rotation[0];
   vout->y = rotation[1];
   vout->z = rotation[2];
+}
+
+FBX_API void FBXNode_GetLclScaling(FBXNodeHandle node, FBXVector3* vout)
+{
+  FBXVector3 result = { 0, 0, 0 };
+  FbxNode* fbxNode = static_cast<FbxNode*>(node);
+  if (!fbxNode) {
+    g_lastError = "Invalid node handle";
+    return;
+  }
+  FbxDouble3 scaling = fbxNode->LclScaling.Get();
+  vout->x = scaling[0];
+  vout->y = scaling[1];
+  vout->z = scaling[2];
 }
 
 // ===================================
@@ -460,7 +598,8 @@ FBX_API void FBXMesh_Destroy(FBXMeshHandle mesh)
   // 不需要单独销毁，除非是独立创建的
 }
 
-FBX_API FBXMeshHandle FBXNode_GetMesh(FBXNodeHandle node) {
+FBX_API FBXMeshHandle FBXNode_GetMesh(FBXNodeHandle node)
+{
   g_lastError.clear();
   FbxNode* fbxNode = static_cast<FbxNode*>(node);
   if (!fbxNode) {
@@ -475,6 +614,24 @@ FBX_API FBXMeshHandle FBXNode_GetMesh(FBXNodeHandle node) {
   }
 
   return static_cast<FBXMeshHandle>(static_cast<FbxMesh*>(attribute));
+}
+
+FBX_API FBXSkeletonHandle FBXNode_GetSkeleton(FBXNodeHandle node)
+{
+  g_lastError.clear();
+  FbxNode* fbxNode = static_cast<FbxNode*>(node);
+  if (!fbxNode) {
+    g_lastError = "Invalid node handle";
+    return nullptr;
+  }
+
+  FbxNodeAttribute* attribute = fbxNode->GetNodeAttribute();
+  if (!attribute || attribute->GetAttributeType() != FbxNodeAttribute::eSkeleton) {
+    g_lastError = "Node doesn't contain a skeleton";
+    return nullptr;
+  }
+
+  return static_cast<FBXSkeletonHandle>(static_cast<FbxSkeleton*>(attribute));
 }
 
 FBX_API int FBXNode_GetChildCount(FBXNodeHandle node) {
@@ -676,6 +833,24 @@ FBX_API void FBXCluster_GetTransformLinkMatrix(FbxCluster* cluster, FBXMatrix* o
   memcpy(outMatrix->data, (double*)matrix, 16 * sizeof(double));
 }
 
+FBX_API void FBXCluster_GetTransformAssociateModelMatrix(FbxCluster* cluster, FBXMatrix* outMatrix)
+{
+  if (!cluster || !outMatrix) return;
+
+  FbxAMatrix matrix;
+  cluster->GetTransformAssociateModelMatrix(matrix);
+  memcpy(outMatrix->data, (double*)matrix, 16 * sizeof(double));
+}
+
+FBX_API void FBXCluster_GetTransformParentMatrix(FbxCluster* cluster, FBXMatrix* outMatrix)
+{
+  if (!cluster || !outMatrix) return;
+
+  FbxAMatrix matrix;
+  cluster->GetTransformParentMatrix(matrix);
+  memcpy(outMatrix->data, (double*)matrix, 16 * sizeof(double));
+}
+
 FBX_API void FBXCluster_SetTransformMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix)
 {
   if (!cluster || !inMatrix) return;
@@ -693,6 +868,24 @@ FBX_API void FBXCluster_SetTransformLinkMatrix(FbxCluster* cluster, const FBXMat
   FbxAMatrix matrix;
   memcpy((double*)matrix, inMatrix->data, 16 * sizeof(double));
   cluster->GetTransformLinkMatrix(matrix);
+}
+
+FBX_API void FBXCluster_SetTransformAssociateModelMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix)
+{
+  if (!cluster || !inMatrix) return;
+
+  FbxAMatrix matrix;
+  memcpy((double*)matrix, inMatrix->data, 16 * sizeof(double));
+  cluster->SetTransformAssociateModelMatrix(matrix);
+}
+
+FBX_API void FBXCluster_SetTransformParentMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix)
+{
+  if (!cluster || !inMatrix) return;
+
+  FbxAMatrix matrix;
+  memcpy((double*)matrix, inMatrix->data, 16 * sizeof(double));
+  cluster->SetTransformParentMatrix(matrix);
 }
 
 FBX_API FbxLayerElementIntArrayHandle FBXLayerElementNormal_GetIndexArray(FBXLayerElementNormalHandle handle)

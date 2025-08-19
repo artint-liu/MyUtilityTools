@@ -16,6 +16,8 @@ typedef void* FBXManagerHandle;
 typedef void* FBXIOSettingsHandle;
 typedef void* FBXImporterHandle;
 typedef void* FBXSceneHandle;
+typedef void* FBXGlobalSettingsHandle;
+typedef void* FBXAxisSystemHandle;
 typedef void* FBXNodeHandle;
 typedef void* FBXExporterHandle;
 typedef void* FBXNodeAttributeHandle;
@@ -24,6 +26,7 @@ typedef void* FBXLayerHandle;
 typedef void* FBXVectorArrayHandle;
 typedef void* FBXDeformerHandle;
 typedef void* FBXSkinHandle;
+typedef void* FBXSkeletonHandle;
 typedef void* FBXClusterHandle;
 typedef void* FBXLayerElementNormalHandle;
 
@@ -78,6 +81,15 @@ extern "C" {
 
   // 场景图操作
   FBX_API FBXNodeHandle FBXScene_GetRootNode(FBXSceneHandle scene);
+  FBX_API FBXGlobalSettingsHandle FBXScene_GetGlobalSettings(FBXSceneHandle scene);
+  FBX_API void FBXScene_ConvertSceneAxisSystemByUpFrontHand(FBXSceneHandle scene, int deep, int up, int front, int hand);
+  FBX_API void FBXScene_ConvertSceneAxisSystemByPreDefined(FBXSceneHandle scene, int deep, int predefined);
+  FBX_API void FBXScene_ConvertSceneNodeAxisSystemByPreDefined(FBXSceneHandle scene, int predefined, FbxNode* node);
+
+  
+  FBX_API int FBXGlobalSettings_GetAxisSystemUpVector(FBXGlobalSettingsHandle globalSettings, int* sign);
+  FBX_API int FBXGlobalSettings_GetAxisSystemFrontVector(FBXGlobalSettingsHandle globalSettings, int* sign);
+  FBX_API int FBXGlobalSettings_GetAxisSystemCoord(FBXGlobalSettingsHandle globalSettings);
 
 
 
@@ -91,8 +103,11 @@ extern "C" {
   FBX_API void FBXNode_SetLclTranslation(FBXNodeHandle node, FBXVector3* translation);
   FBX_API void FBXNode_GetLclRotation(FBXNodeHandle node, FBXVector3* rotation);
   FBX_API void FBXNode_SetLclRotation(FBXNodeHandle node, FBXVector3* rotation);
+  FBX_API void FBXNode_GetLclScaling(FBXNodeHandle node, FBXVector3* scaling);
+  FBX_API void FBXNode_SetLclScaling(FBXNodeHandle node, FBXVector3* scaling);
 
   FBX_API FBXMeshHandle FBXNode_GetMesh(FBXNodeHandle node);
+  FBX_API FBXSkeletonHandle FBXNode_GetSkeleton(FBXNodeHandle node);
   FBX_API int FBXNode_GetChildCount(FBXNodeHandle node);
   FBX_API FBXNodeHandle FBXNode_GetChild(FBXNodeHandle node, int index);
 
@@ -169,8 +184,13 @@ extern "C" {
   FBX_API FbxNode* FBXCluster_GetLink(FbxCluster* cluster);
   FBX_API void FBXCluster_GetTransformMatrix(FbxCluster* cluster, FBXMatrix* outMatrix);
   FBX_API void FBXCluster_GetTransformLinkMatrix(FbxCluster* cluster, FBXMatrix* outMatrix);
+  FBX_API void FBXCluster_GetTransformAssociateModelMatrix(FbxCluster* cluster, FBXMatrix* outMatrix);
+  FBX_API void FBXCluster_GetTransformParentMatrix(FbxCluster* cluster, FBXMatrix* outMatrix);
+
   FBX_API void FBXCluster_SetTransformMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix);
   FBX_API void FBXCluster_SetTransformLinkMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix);
+  FBX_API void FBXCluster_SetTransformAssociateModelMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix);
+  FBX_API void FBXCluster_SetTransformParentMatrix(FbxCluster* cluster, const FBXMatrix* inMatrix);
 
   FBX_API int FBXCluster_GetControlPointIndicesCount(FbxCluster* cluster)
   {
@@ -288,4 +308,8 @@ extern "C" {
     return static_cast<FBXClusterHandle>(pSkin->GetCluster(index));
   }
 
+  FBX_API FbxNode* FBXSkeleton_GetNode(FbxSkeleton* skeleton)
+  {
+    return skeleton ? skeleton->GetNode() : nullptr;
+  }
 } // extern "C"
