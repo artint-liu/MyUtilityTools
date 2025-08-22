@@ -106,6 +106,13 @@ extern "C" {
   FBX_API void FBXNode_GetLclScaling(FBXNodeHandle node, FBXVector3* scaling);
   FBX_API void FBXNode_SetLclScaling(FBXNodeHandle node, FBXVector3* scaling);
 
+  FBX_API void FBXNode_GetGeometricTranslation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* translation);
+  FBX_API void FBXNode_SetGeometricTranslation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* translation);
+  FBX_API void FBXNode_GetGeometricRotation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* rotation);
+  FBX_API void FBXNode_SetGeometricRotation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* rotation);
+  FBX_API void FBXNode_GetGeometricScaling(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* scaling);
+  FBX_API void FBXNode_SetGeometricScaling(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* scaling);
+
   FBX_API FBXMeshHandle FBXNode_GetMesh(FBXNodeHandle node);
   FBX_API FBXSkeletonHandle FBXNode_GetSkeleton(FBXNodeHandle node);
   FBX_API int FBXNode_GetChildCount(FBXNodeHandle node);

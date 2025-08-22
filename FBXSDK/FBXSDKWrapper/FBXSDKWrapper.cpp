@@ -518,6 +518,84 @@ FBX_API void FBXNode_GetLclScaling(FBXNodeHandle node, FBXVector3* vout)
   vout->z = scaling[2];
 }
 
+
+FBX_API void FBXNode_SetGeometricTranslation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* translation)
+{
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+    fbxNode->SetGeometricTranslation(pivotSet, FbxVector4(translation->x, translation->y, translation->z, translation->w));
+}
+
+FBX_API void FBXNode_SetGeometricRotation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* rotation)
+{
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+    fbxNode->SetGeometricRotation(pivotSet, FbxVector4(rotation->x, rotation->y, rotation->z, rotation->w));
+}
+
+FBX_API void FBXNode_SetGeometricScaling(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* scaling)
+{
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+    fbxNode->SetGeometricScaling(pivotSet, FbxVector4(scaling->x, scaling->y, scaling->z, scaling->w));
+}
+
+FBX_API void FBXNode_GetGeometricTranslation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* vout)
+{
+    FBXVector3 result = { 0, 0, 0 };
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+
+    fbxsdk::FbxDouble4 translation = fbxNode->GetGeometricTranslation(pivotSet);
+    vout->x = translation[0];
+    vout->y = translation[1];
+    vout->z = translation[2];
+    vout->w = translation[3];
+    //result = { translation[0], translation[1], translation[2] };
+    //return result;
+}
+
+FBX_API void FBXNode_GetGeometricRotation(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* vout)
+{
+    FBXVector3 result = { 0, 0, 0 };
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+    FbxDouble3 rotation = fbxNode->GetGeometricRotation(pivotSet);
+    vout->x = rotation[0];
+    vout->y = rotation[1];
+    vout->z = rotation[2];
+    vout->w = rotation[3];
+}
+
+FBX_API void FBXNode_GetGeometricScaling(FBXNodeHandle node, FbxNode::EPivotSet pivotSet, FBXVector4* vout)
+{
+    FBXVector3 result = { 0, 0, 0 };
+    FbxNode* fbxNode = static_cast<FbxNode*>(node);
+    if (!fbxNode) {
+        g_lastError = "Invalid node handle";
+        return;
+    }
+    FbxDouble3 scaling = fbxNode->GetGeometricScaling(pivotSet);
+    vout->x = scaling[0];
+    vout->y = scaling[1];
+    vout->z = scaling[2];
+    vout->w = scaling[3];
+}
 // ===================================
 // 网格操作函数
 // ===================================
