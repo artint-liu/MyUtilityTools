@@ -222,7 +222,7 @@ int main(int argc, char **argv)
 
         clStringA strFile = data.cFileName;
         strFile.MakeUpper();
-        if(clpathfile::CompareExtension(strFile, "MP4|MKV|AVI|MOV|RM|RMVB|WMV") && strFile.Find(".HEVC.") == clStringA::npos)
+        if(clpathfile::CompareExtension(strFile, "MP4|MKV|AVI|MOV|RM|RMVB|WMV|M2TS") && strFile.Find(".HEVC.") == clStringA::npos)
         {
           return TRUE;
         }

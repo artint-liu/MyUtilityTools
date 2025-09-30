@@ -490,13 +490,13 @@ const TCHAR *IGameExporter::Ext(int n)
 const TCHAR *IGameExporter::LongDesc()
 {
   //TODO: Return long ASCII description (i.e. "Targa 2.0 Image File")
-  return _T("Ä£ĞÍ¼ì²é±¨¸æ");
+  return _T("æ¨¡å‹æ£€æŸ¥æŠ¥å‘Š");
 }
 
 const TCHAR *IGameExporter::ShortDesc()
 {
   //TODO: Return short ASCII description (i.e. "Targa")
-  return _T("±¨¸æ");
+  return _T("æŠ¥å‘Š");
 }
 
 const TCHAR *IGameExporter::AuthorName()
@@ -2564,23 +2564,23 @@ clStringW UnitToString(int unit_type)
   switch(unit_type)
   {
   case UNITS_INCHES:
-    return _CLTEXT("ÃÀ¹ú±ê×¼/Ó¢´ç");
+    return _CLTEXT("ç¾å›½æ ‡å‡†/è‹±å¯¸");
   case UNITS_FEET:
-    return _CLTEXT("ÃÀ¹ú±ê×¼/Ó¢³ß");
+    return _CLTEXT("ç¾å›½æ ‡å‡†/è‹±å°º");
   case UNITS_MILES:
-    return _CLTEXT("ÃÀ¹ú±ê×¼/Ó¢Àï");
+    return _CLTEXT("ç¾å›½æ ‡å‡†/è‹±é‡Œ");
   case UNITS_MILLIMETERS:
-    return _CLTEXT("¹«ÖÆ/ºÁÃ×");
+    return _CLTEXT("å…¬åˆ¶/æ¯«ç±³");
   case UNITS_CENTIMETERS:
-    return _CLTEXT("¹«ÖÆ/ÀåÃ×");
+    return _CLTEXT("å…¬åˆ¶/å˜ç±³");
   case UNITS_METERS:
-    return _CLTEXT("¹«ÖÆ/Ã×");
+    return _CLTEXT("å…¬åˆ¶/ç±³");
   case UNITS_KILOMETERS:
-    return _CLTEXT("¹«ÖÆ/Ç§Ã×");
+    return _CLTEXT("å…¬åˆ¶/åƒç±³");
   default:
   {
     clStringW str;
-    str.Format(_CLTEXT("Î´Ê¶±ğµ¥Î»(%d)"), unit_type);
+    str.Format(_CLTEXT("æœªè¯†åˆ«å•ä½(%d)"), unit_type);
     return str;
   }
   }
@@ -2593,31 +2593,31 @@ clStringW DispInfoToString(DispInfo* info)
   {
   case UNITDISP_GENERIC:
   {
-    return _CLTEXT("Í¨ÓÃµ¥Î»");
+    return _CLTEXT("é€šç”¨å•ä½");
   }
   case UNITDISP_METRIC:
   {
-    str = _CLTEXT("¹«ÖÆ/");
+    str = _CLTEXT("å…¬åˆ¶/");
     switch(info->metricDisp)
     {
     case UNIT_METRIC_DISP_MM:
-      str.Append(_CLTEXT("ºÁÃ×"));
+      str.Append(_CLTEXT("æ¯«ç±³"));
       break;
     case UNIT_METRIC_DISP_CM:
-      str.Append(_CLTEXT("ÀåÃ×"));
+      str.Append(_CLTEXT("å˜ç±³"));
       break;
     case UNIT_METRIC_DISP_M:
-      str.Append(_CLTEXT("Ã×"));
+      str.Append(_CLTEXT("ç±³"));
       break;
     case UNIT_METRIC_DISP_KM:
-      str.Append(_CLTEXT("Ç§Ã×"));
+      str.Append(_CLTEXT("åƒç±³"));
       break;
     }
     return str;
   }
   case UNITDISP_US:
   {
-    str = _CLTEXT("ÃÀ¹ú/");
+    str = _CLTEXT("ç¾å›½/");
     switch(info->usDisp)
     {
     case UNIT_US_DISP_FRAC_IN:
@@ -2644,11 +2644,11 @@ clStringW DispInfoToString(DispInfo* info)
     return str;
   }
   case UNITDISP_CUSTOM:
-    return _CLTEXT("×Ô¶¨Òå");
+    return _CLTEXT("è‡ªå®šä¹‰");
   default:
   {
     clStringW str;
-    str.Format(_CLTEXT("Î´Ê¶±ğ±ê×¼(%d)"), info->dispType);
+    str.Format(_CLTEXT("æœªè¯†åˆ«æ ‡å‡†(%d)"), info->dispType);
     return str;
   }
   }
@@ -2731,18 +2731,18 @@ int	IGameExporter::DoExport(const TCHAR *name, ExpInterface *ei, Interface *i, B
     GetUnitDisplayInfo(&di);
     clStringW str_unit = DispInfoToString(&di);
 
-    strItem.Format(_CLTEXT("ÏÔÊ¾µ¥Î»£º%s"), str_unit);
+    strItem.Format(_CLTEXT("æ˜¾ç¤ºå•ä½ï¼š%s"), str_unit);
     AddReportItem(aReports, strItem, (di.dispType == UNITDISP_METRIC && di.metricDisp == UNIT_METRIC_DISP_CM));
 
-    //strReport.AppendFormat("ÏÔÊ¾µ¥Î»£º%s(%s)\n", str_unit.CStr(), 
+    //strReport.AppendFormat("æ˜¾ç¤ºå•ä½ï¼š%s(%s)\n", str_unit.CStr(), 
     //  (di.dispType == UNITDISP_METRIC && di.metricDisp == UNIT_METRIC_DISP_CM)
-    //  ? "OK" : "´íÎó");
+    //  ? "OK" : "é”™è¯¯");
 
     str_unit = UnitToString(type);
-    strItem.Format(_CLTEXT("ÏµÍ³µ¥Î»±ÈÀı£º%s"), str_unit.CStr());
+    strItem.Format(_CLTEXT("ç³»ç»Ÿå•ä½æ¯”ä¾‹ï¼š%s"), str_unit.CStr());
     AddReportItem(aReports, strItem, type == UNITS_CENTIMETERS);
-    //strReport.AppendFormat("ÏµÍ³µ¥Î»±ÈÀı£º%s(%s)\n", str_unit.CStr(),
-    //  (type == UNITS_CENTIMETERS) ? "OK" : "´íÎó");
+    //strReport.AppendFormat("ç³»ç»Ÿå•ä½æ¯”ä¾‹ï¼š%s(%s)\n", str_unit.CStr(),
+    //  (type == UNITS_CENTIMETERS) ? "OK" : "é”™è¯¯");
 
 
     //switch(type)
@@ -2843,10 +2843,10 @@ int	IGameExporter::DoExport(const TCHAR *name, ExpInterface *ei, Interface *i, B
     clStringW strDot;
     strDot.Append('.', nAlignWidth - nWidth + 5);
     strReport.AppendFormat(_CLTEXT("%s%s(%s)\r\n"), it->strItem, strDot, it->strResult);
-      //it->bResult ? _T("OK") : _T("´íÎó"));
+      //it->bResult ? _T("OK") : _T("é”™è¯¯"));
   }
 
-  MessageBox(i->GetMAXHWnd(), (LPCWSTR)strReport.CStr(), _T("¼ì²é±¨¸æ"), MB_OK);
+  MessageBox(i->GetMAXHWnd(), (LPCWSTR)strReport.CStr(), _T("æ£€æŸ¥æŠ¥å‘Š"), MB_OK);
   pIgame->ReleaseIGame();
 
   UnweldPoint.insert(clmake_pair("", float3(0,100,0)));
@@ -2875,7 +2875,7 @@ int	IGameExporter::DoExport(const TCHAR *name, ExpInterface *ei, Interface *i, B
     //pDummy->Move(0, mat3, mat3, Point3(it->second.x, it->second.y, it->second.z));
     //pDummy->SetColor(Point3(1,0,0));
     INode *node = ip->CreateObjectNode(pPointHelper);
-    node->SetName(_T("ÖØºÏ¶¥µãÖ¸Ê¾"));
+    node->SetName(_T("é‡åˆé¡¶ç‚¹æŒ‡ç¤º"));
     node->Move(0, mat3, Point3(it->second.x, it->second.y, it->second.z));
     //node->ResetTransform(0, FALSE);
     //Matrix3 tm;
@@ -2924,15 +2924,15 @@ void IGameExporter::CheckNodes(ReportItemArray& aReports, UnweldDict& UnweldPoin
 
   if(strName.Find(_CLTEXT("Clavicle")) != clStringW::npos)
   {
-    AddReportItem(aReports, strName, _CLTEXT("½Úµã¼ì²é"), CheckName(pNode->GetNodeParent(), _T("Spine")));
+    AddReportItem(aReports, strName, _CLTEXT("èŠ‚ç‚¹æ£€æŸ¥"), CheckName(pNode->GetNodeParent(), _T("Spine")));
   }
   else if(strName.Find(_CLTEXT("Thigh")) != clStringW::npos)
   {
-    AddReportItem(aReports, strName, _CLTEXT("½Úµã¼ì²é"), CheckName(pNode->GetNodeParent(), _T("Pelvis")));
+    AddReportItem(aReports, strName, _CLTEXT("èŠ‚ç‚¹æ£€æŸ¥"), CheckName(pNode->GetNodeParent(), _T("Pelvis")));
   }
   else if(pObj->GetIGameType() == IGameObject::IGAME_MESH)
   {
-    AddReportItem(aReports, strName, _CLTEXT("Ä£ĞÍÃû¼ì²é"), _CL_NOT_(HasSpaceEnds(strName)));
+    AddReportItem(aReports, strName, _CLTEXT("æ¨¡å‹åæ£€æŸ¥"), _CL_NOT_(HasSpaceEnds(strName)));
 
     IGameMesh * pIGameMesh = (IGameMesh*)pObj;
     int nNumOfVerts = pIGameMesh->GetNumberOfVerts();
@@ -2948,7 +2948,7 @@ void IGameExporter::CheckNodes(ReportItemArray& aReports, UnweldDict& UnweldPoin
       int nNumOfFaces = pIGameMesh->GetNumberOfFaces();
 
       clStringW strTitle;
-      strTitle.Format(_CLTEXT("Ä£ĞÍÊı¾İ¼ì²é(¶¥µã:%d,Ãæ:%d)"), nNumOfVerts, nNumOfFaces);
+      strTitle.Format(_CLTEXT("æ¨¡å‹æ•°æ®æ£€æŸ¥(é¡¶ç‚¹:%d,é¢:%d)"), nNumOfVerts, nNumOfFaces);
 
       AddReportItem(aReports, strName, strTitle, nNumOfFaces > 0 && nNumOfVerts >= 3);
 
@@ -2983,17 +2983,17 @@ void IGameExporter::CheckNodes(ReportItemArray& aReports, UnweldDict& UnweldPoin
       Point3 translation = mat.Translation();
       Point3 scaling = mat.Scaling();
       Point3 rotation = mat.Rotation();
-      AddReportItem(aReports, strName, _CLTEXT("×ø±ê¹éÁã¼ì²é"), translation.x == 0 && translation.y == 0 && translation.z == 0);
-      AddReportItem(aReports, strName, _CLTEXT("Ëõ·Å¹éÒ»¼ì²é"), scaling.x == 1 && scaling.y == 1 && scaling.z == 1);
-      AddReportItem(aReports, strName, _CLTEXT("Ğı×ª¹éÁã¼ì²é"), rotation.x == 0 && rotation.y == 0 && rotation.z == 0);
+      AddReportItem(aReports, strName, _CLTEXT("åæ ‡å½’é›¶æ£€æŸ¥"), translation.x == 0 && translation.y == 0 && translation.z == 0);
+      AddReportItem(aReports, strName, _CLTEXT("ç¼©æ”¾å½’ä¸€æ£€æŸ¥"), scaling.x == 1 && scaling.y == 1 && scaling.z == 1);
+      AddReportItem(aReports, strName, _CLTEXT("æ—‹è½¬å½’é›¶æ£€æŸ¥"), rotation.x == 0 && rotation.y == 0 && rotation.z == 0);
       CLNOP
     }
     else
     {
-      AddReportItem(aReports, strName, _CLTEXT("Ä£ĞÍÊı¾İ¼ì²é(¶¥µã£¬Ãæ£¬±ä»»ÖØÖÃ)"), FALSE);
+      AddReportItem(aReports, strName, _CLTEXT("æ¨¡å‹æ•°æ®æ£€æŸ¥(é¡¶ç‚¹ï¼Œé¢ï¼Œå˜æ¢é‡ç½®)"), FALSE);
     }
 
-    //strNodeInfo.AppendFormat("Ä£ĞÍÃû¼ì²é:\"%s\" (%s)\n", strName, HasSpaceEnds(strName) ? "´íÎó" : "OK");
+    //strNodeInfo.AppendFormat("æ¨¡å‹åæ£€æŸ¥:\"%s\" (%s)\n", strName, HasSpaceEnds(strName) ? "é”™è¯¯" : "OK");
   }
 
   for(int i = 0; i < pNode->GetChildCount(); i++)
@@ -3128,24 +3128,24 @@ void IGameExporter::CheckSymmetry(ReportItemArray& aReports, UnweldDict& UnweldP
   clStringW strPre;
   if(falx > 0.5f && falx > faly && falx > falz) {
     strPre.Format(_CLTEXT("x=%.2f"), planex);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÃæ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°é¢"), strPre);
     strPre.Format(_CLTEXT("%.2f%%"), falx * 100.0f);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÂÊ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°ç‡"), strPre);
   }
   else if(faly > 0.5f && faly > falx && faly > falz) {
     strPre.Format(_CLTEXT("y=%.2f"), planey);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÃæ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°é¢"), strPre);
     strPre.Format(_CLTEXT("%.2f%%"), faly * 100.0f);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÂÊ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°ç‡"), strPre);
   }
   else if(falz > 0.5f && falz > faly && falz > falx) {
     strPre.Format(_CLTEXT("z=%.2f"), planez);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÃæ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°é¢"), strPre);
     strPre.Format(_CLTEXT("%.2f%%"), falz * 100.0f);
-    AddReportItem(aReports, strName, _CLTEXT("¶Ô³ÆÂÊ"), strPre);
+    AddReportItem(aReports, strName, _CLTEXT("å¯¹ç§°ç‡"), strPre);
   }
 
-  AddReportItem(aReports, cf, strName, _CLTEXT("Î´º¸½Ó¶¥µãÊı"));
+  AddReportItem(aReports, cf, strName, _CLTEXT("æœªç„Šæ¥é¡¶ç‚¹æ•°"));
 }
 
 BOOL IGameExporter::CheckMesh(ReportItemArray& aReports, const clStringW& strName, Mesh* pMesh)
@@ -3167,7 +3167,7 @@ BOOL IGameExporter::CheckMesh(ReportItemArray& aReports, const clStringW& strNam
   for(auto it = aRefCount.begin(); it != aRefCount.end(); ++it)
   {
     if(*it == 0) {
-      AddReportItem(aReports, strName, _CLTEXT("¹ÂÁ¢¶¥µã¼ì²é"), FALSE);
+      AddReportItem(aReports, strName, _CLTEXT("å­¤ç«‹é¡¶ç‚¹æ£€æŸ¥"), FALSE);
       return FALSE;
     }
   }
@@ -3192,9 +3192,9 @@ void IGameExporter::CheckMaterials(ReportItemArray& aReports, IGameScene* pIGame
     IGameMaterial* pMtl = pIGame->GetRootMaterial(i);
     clStringW strMaterialName = (const wch*)pMtl->GetMaterialName();
 
-    AddReportItem(aReports, strMaterialName, _CLTEXT("²ÄÖÊÃû¼ì²é"), _CL_NOT_(HasSpaceEnds(strMaterialName)));
-    //strReport.AppendFormat("²ÄÖÊÃû%s¼ì²é(%s)\n", strMaterialName,
-    //  HasSpaceEnds(strMaterialName) ? "´íÎó" : "OK");
+    AddReportItem(aReports, strMaterialName, _CLTEXT("æè´¨åæ£€æŸ¥"), _CL_NOT_(HasSpaceEnds(strMaterialName)));
+    //strReport.AppendFormat("æè´¨å%sæ£€æŸ¥(%s)\n", strMaterialName,
+    //  HasSpaceEnds(strMaterialName) ? "é”™è¯¯" : "OK");
 
     int texCount = pMtl->GetNumberOfTextureMaps();
     if(texCount == 0) {
@@ -3231,9 +3231,9 @@ void IGameExporter::CheckMaterials(ReportItemArray& aReports, IGameScene* pIGame
         size_t pos = clpathfile::FindFileName(str);
         clStringW strFilename = (pos == clStringW::npos) ? str : &str[pos];
 
-        AddReportItem(aReports, strFilename, _CLTEXT("ÌùÍ¼ÎÄ¼şÃû¼ì²é"), _CL_NOT_(HasSpace(str)));
-        //strReport.AppendFormat("ÌùÍ¼\"%s\"ÎÄ¼şÃû¼ì²é(%s)", strFilename,
-        //  HasSpace(str) ? "´íÎó" : "OK");
+        AddReportItem(aReports, strFilename, _CLTEXT("è´´å›¾æ–‡ä»¶åæ£€æŸ¥"), _CL_NOT_(HasSpace(str)));
+        //strReport.AppendFormat("è´´å›¾\"%s\"æ–‡ä»¶åæ£€æŸ¥(%s)", strFilename,
+        //  HasSpace(str) ? "é”™è¯¯" : "OK");
 
         //makeValidURIFilename(str);
         //AddXMLAttribute(bitmapTexture, _T("Filename"), str);
@@ -3291,10 +3291,10 @@ void IGameExporter::AddReportItem(ReportItemArray& aReports, const clStringW& st
   //REPORT_ITEM ri;
   //ri.strItem = str;
   ////ri.bResult = result;
-  //ri.strResult = result ? _T("OK") : _T("´íÎó");
+  //ri.strResult = result ? _T("OK") : _T("é”™è¯¯");
   //aReports.push_back(ri);
 
-  AddReportItem(aReports, str, result ? _CLTEXT("OK") : _CLTEXT("´íÎó"));
+  AddReportItem(aReports, str, result ? _CLTEXT("OK") : _CLTEXT("é”™è¯¯"));
 }
 
 void IGameExporter::AddReportItem(ReportItemArray& aReports, const clStringW& strName, const clStringW& strItem, BOOL result)
@@ -3302,12 +3302,12 @@ void IGameExporter::AddReportItem(ReportItemArray& aReports, const clStringW& st
   //REPORT_ITEM ri;
   //ri.strItem.Append("\"").Append(strName).Append("\"").Append(strItem);
   ////ri.bResult = result;
-  //ri.strResult = result ? _T("OK") : _T("´íÎó");
+  //ri.strResult = result ? _T("OK") : _T("é”™è¯¯");
   //aReports.push_back(ri);
   
   clStringW strTemp;
   strTemp.Append(_CLTEXT("\"")).Append(strName).Append(_CLTEXT("\"")).Append(strItem);
-  AddReportItem(aReports, strTemp, result ? _CLTEXT("OK") : _CLTEXT("´íÎó"));
+  AddReportItem(aReports, strTemp, result ? _CLTEXT("OK") : _CLTEXT("é”™è¯¯"));
 }
 
 void IGameExporter::AddReportItem(ReportItemArray& aReports, int value, const clStringW& strName, const clStringW& strItem)
