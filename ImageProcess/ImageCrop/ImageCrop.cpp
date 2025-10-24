@@ -93,6 +93,8 @@ int CropImage(const char* inputFile, const char* outputFile, int left, int top, 
         std::cout << "图片已成功裁剪并保存为: " << outputFile << std::endl;
     }
 
+    FreeImage_Unload(croppedBitmap);
+    FreeImage_Unload(bitmap);
     return 0;
 }
 
