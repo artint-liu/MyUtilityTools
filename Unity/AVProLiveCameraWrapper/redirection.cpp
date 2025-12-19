@@ -163,6 +163,7 @@ ID3D11Device* UNITY_INTERFACE_API MyGetDevice()
 
 ID3D11Resource* UNITY_INTERFACE_API MyTextureFromRenderBuffer(UnityRenderBuffer buffer)
 {
+    // 因为插件没用调用该接口，可以直接返回空
     return nullptr;
 }
 
@@ -193,9 +194,21 @@ IUnityGraphicsD3D11 s_MyUnityGraphicsD3D11;
 
 IUnityInterface* UNITY_INTERFACE_API MyGetInterface(UnityInterfaceGUID guid)
 {
-    if (GetUnityInterfaceGUID<IUnityGraphicsD3D11>() == guid)
+    if (GetUnityInterfaceGUID<IUnityGraphics>() == guid)
+    {
+        IUnityGraphics* pUnityGraphics = static_cast<IUnityGraphics*>(oldGetInterface(guid));
+        if (oldGetRenderer == nullptr)
+        {
+            oldGetRenderer = pUnityGraphics->GetRenderer;
+            pUnityGraphics->GetRenderer = MyGetRenderer; // 更换为自己的Renderer枚举
+        }
+        return pUnityGraphics;
+    }
+    else if (GetUnityInterfaceGUID<IUnityGraphicsD3D11>() == guid)
     {
         UnityGfxRenderer realRenderer = oldGetRenderer();
+
+        // 如果Renderer是D3D12，则伪造一个D3D11的Renderer
         if (realRenderer == kUnityGfxRendererD3D12)
         {
             if (s_pMyD3D11Device == nullptr)
@@ -203,17 +216,14 @@ IUnityInterface* UNITY_INTERFACE_API MyGetInterface(UnityInterfaceGUID guid)
                 IUnityGraphicsD3D12v2* d3dv2 = static_cast<IUnityGraphicsD3D12v2*>(oldGetInterface(GetUnityInterfaceGUID<IUnityGraphicsD3D12v2>()));
                 s_pMyD3D11Device = CreateD3D11Device(d3dv2->GetDevice());
 
-                s_MyUnityGraphicsD3D11.GetDevice                = MyGetDevice;
-                s_MyUnityGraphicsD3D11.TextureFromRenderBuffer  = MyTextureFromRenderBuffer;
+                s_MyUnityGraphicsD3D11.GetDevice                = MyGetDevice; // 返回ID3D11Device*
+                s_MyUnityGraphicsD3D11.TextureFromRenderBuffer  = MyTextureFromRenderBuffer; // 可以直接返回nullptr
                 s_MyUnityGraphicsD3D11.TextureFromNativeTexture = MyTextureFromNativeTexture;
                 s_MyUnityGraphicsD3D11.RTVFromRenderBuffer      = MyRTVFromRenderBuffer;
                 s_MyUnityGraphicsD3D11.SRVFromNativeTexture     = MySRVFromNativeTexture;
             }
             return &s_MyUnityGraphicsD3D11;
         }
-        return oldGetInterface(guid);
-
-        //OutputDebugStringA("Replace D3D11Device ptr\n");
     }
     else if (GetUnityInterfaceGUID<IUnityGraphicsD3D12>() == guid)
     {
@@ -243,16 +253,8 @@ IUnityInterface* UNITY_INTERFACE_API MyGetInterface(UnityInterfaceGUID guid)
     {
         OutputDebugStringA("Replace D3D12Device v7 ptr\n");
     }
-    else if (GetUnityInterfaceGUID<IUnityGraphics>() == guid)
-    {
-        IUnityGraphics* pUnityGraphics = static_cast<IUnityGraphics*>(oldGetInterface(guid));
-        if (oldGetRenderer == nullptr)
-        {
-            oldGetRenderer = pUnityGraphics->GetRenderer;
-            pUnityGraphics->GetRenderer = MyGetRenderer;
-        }
-        return pUnityGraphics;
-    }
+
+    // 不关心的接口直接跳过
     return oldGetInterface(guid);
 }
 
@@ -293,23 +295,23 @@ void DLL_API UNITY_INTERFACE_API UnityPluginLoad(IUnityInterfaces* unityInterfac
     // 在图形设备已初始化的情况下不错过该事件
     OnGraphicsDeviceEvent(kUnityGfxDeviceEventInitialize);
 
-    g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12v5>(unityInterfaces);
-    if (g_pD3D12CommandQueue)
-    {
-      return;
-    }
+    //g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12v5>(unityInterfaces);
+    //if (g_pD3D12CommandQueue)
+    //{
+    //  return;
+    //}
 
-    g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12v4>(unityInterfaces);
-    if (g_pD3D12CommandQueue)
-    {
-      return;
-    }
+    //g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12v4>(unityInterfaces);
+    //if (g_pD3D12CommandQueue)
+    //{
+    //  return;
+    //}
 
-    g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12>(unityInterfaces);
-    if (g_pD3D12CommandQueue)
-    {
-      return;
-    }
+    //g_pD3D12CommandQueue = GetCommandQueue<IUnityGraphicsD3D12>(unityInterfaces);
+    //if (g_pD3D12CommandQueue)
+    //{
+    //  return;
+    //}
 
 
     if (pfuncUnityPluginLoad)
