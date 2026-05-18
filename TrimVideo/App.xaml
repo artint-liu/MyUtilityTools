@@ -1,0 +1,8 @@
+﻿<Application x:Class="TrimVideo.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Startup="App_OnStartup">
+    <Application.Resources>
+        <!-- Global resource dictionary -->
+    </Application.Resources>
+</Application>
