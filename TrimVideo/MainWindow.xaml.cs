@@ -51,6 +51,7 @@ namespace TrimVideo
             Drop     += MainWindow_Drop;
             DragOver += (_, e) => e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop)
                 ? DragDropEffects.Copy : DragDropEffects.None;
+            PreviewKeyDown += MainWindow_PreviewKeyDown;
         }
 
         /// <summary>
@@ -106,6 +107,19 @@ namespace TrimVideo
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             _player?.Close();
+        }
+
+        private void MainWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Space) return;
+            if (!_videoLoaded || _player == null) return;
+
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+                BtnPreviewSegment_Click(sender, e);
+            else
+                BtnPlayPause_Click(sender, e);
+
+            e.Handled = true;
         }
 
         #endregion
@@ -200,6 +214,7 @@ namespace TrimVideo
             SetStatus($"已加载：{Path.GetFileName(path)}");
             _lastKeyFrameSearchPos = -1;
             UpdateKeyFrameMarker(0);
+            RangeSlider.Focus();
             DebugLog.Write("OpenVideoAsync: done, _videoLoaded=true");
         }
 
@@ -211,6 +226,8 @@ namespace TrimVideo
         {
             // 已在 Dispatcher 线程，直接更新
             if (_isScrubbing) return;
+            // 暂停时由用户（鼠标/键盘）控制位置，不让异步解码回调覆盖
+            if (!_isPlaying) return;
             _isScrubbing = true;
             RangeSlider.Value   = positionSec;
             TxtCurrentTime.Text = FormatTime(positionSec);
@@ -283,6 +300,7 @@ namespace TrimVideo
                 if (start >= end - 0.05) start = 0;
 
                 DebugLog.Write($"BtnPlayPause_Click: invoking Play start={start:F3} end={end:F3} Position={_player.Position:F3} Duration={_player.Duration:F3}");
+                RangeSlider.ClearFocus();
                 _player.Play(startSec: start, endSec: end);
                 _isPlaying           = true;
                 BtnPlayPause.Content = "⏸ 暂停";
@@ -315,6 +333,8 @@ namespace TrimVideo
             _isPlaying                = true;
             BtnPlayPause.Content      = "⏸ 暂停";
             BtnPreviewSegment.Content = "⏹ 停止预览";
+
+            RangeSlider.ClearFocus();
 
             // 播放片段，结束时 PlaybackEnded 会触发
             _player.Play(startSec: lo, endSec: hi);

@@ -115,18 +115,25 @@ namespace TrimVideo
         // 颜色
         private static readonly Brush TrackBg = new SolidColorBrush(Color.FromRgb(60, 60, 60));
         private static readonly Brush SelectionBrush = new SolidColorBrush(Color.FromRgb(0, 120, 215));
-        private static readonly Brush ThumbBrush = new SolidColorBrush(Colors.White);
-        private static readonly Brush ThumbHoverBrush = new SolidColorBrush(Color.FromRgb(200, 230, 255));
         private static readonly Brush PlayheadBrush = new SolidColorBrush(Color.FromRgb(255, 200, 0));
         private static readonly Brush KeyFrameMarkerBrush = new SolidColorBrush(Color.FromRgb(0, 200, 255));
-        private static readonly Pen ThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(0, 90, 180)), 1.5);
+        // 入点（开始）标记 - 绿色左三角
+        private static readonly Brush LowerThumbBrush = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+        private static readonly Brush LowerThumbHoverBrush = new SolidColorBrush(Color.FromRgb(129, 199, 132));
+        private static readonly Pen LowerThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(46, 125, 50)), 1.5);
+        // 出点（结束）标记 - 红色右三角
+        private static readonly Brush UpperThumbBrush = new SolidColorBrush(Color.FromRgb(244, 67, 54));
+        private static readonly Brush UpperThumbHoverBrush = new SolidColorBrush(Color.FromRgb(229, 115, 115));
+        private static readonly Pen UpperThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(183, 28, 28)), 1.5);
 
         #endregion
 
-        #region Hit Testing State
+        #region Interaction State
 
         private enum DragTarget { None, Lower, Upper, Selection, Playhead }
+        private enum FocusTarget { None, Lower, Upper }
         private DragTarget _dragTarget = DragTarget.None;
+        private FocusTarget _focusTarget = FocusTarget.None;
         private double _dragStartX;
         private double _dragStartLower;
         private double _dragStartUpper;
@@ -210,13 +217,19 @@ namespace TrimVideo
                 }
             }
 
-            // 左 Thumb
-            var lBrush = _hoverTarget == DragTarget.Lower ? ThumbHoverBrush : ThumbBrush;
-            dc.DrawEllipse(lBrush, ThumbPen, new Point(lx, cy), ThumbRadius, ThumbRadius);
+            // 左 Thumb (入点/开始) - 绿色左三角 ◀
+            var lBrush = _hoverTarget == DragTarget.Lower ? LowerThumbHoverBrush : LowerThumbBrush;
+            DrawLeftTriangle(dc, lx, cy, ThumbRadius, lBrush, LowerThumbPen);
 
-            // 右 Thumb
-            var uBrush = _hoverTarget == DragTarget.Upper ? ThumbHoverBrush : ThumbBrush;
-            dc.DrawEllipse(uBrush, ThumbPen, new Point(ux, cy), ThumbRadius, ThumbRadius);
+            // 右 Thumb (出点/结束) - 红色右三角 ▶
+            var uBrush = _hoverTarget == DragTarget.Upper ? UpperThumbHoverBrush : UpperThumbBrush;
+            DrawRightTriangle(dc, ux, cy, ThumbRadius, uBrush, UpperThumbPen);
+
+            // 焦点指示器
+            if (_focusTarget == FocusTarget.Lower)
+                dc.DrawEllipse(null, new Pen(LowerThumbBrush, 2), new Point(lx, cy), ThumbRadius + 4, ThumbRadius + 4);
+            if (_focusTarget == FocusTarget.Upper)
+                dc.DrawEllipse(null, new Pen(UpperThumbBrush, 2), new Point(ux, cy), ThumbRadius + 4, ThumbRadius + 4);
 
             // 时间标签
             DrawTimeLabel(dc, lx, cy, LowerValue, true);
@@ -245,6 +258,32 @@ namespace TrimVideo
             return ts.Hours > 0
                 ? $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}"
                 : $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}";
+        }
+
+        /// <summary>绘制左三角（入点标记）：右边缘对齐 x，三角体向左延伸</summary>
+        private static void DrawLeftTriangle(DrawingContext dc, double x, double cy, double r, Brush fill, Pen pen)
+        {
+            var geo = new StreamGeometry();
+            using (var ctx = geo.Open())
+            {
+                ctx.BeginFigure(new Point(x, cy - r), true, true);
+                ctx.LineTo(new Point(x - r * 1.2, cy), true, false);
+                ctx.LineTo(new Point(x, cy + r), true, false);
+            }
+            dc.DrawGeometry(fill, pen, geo);
+        }
+
+        /// <summary>绘制右三角（出点标记）：左边缘对齐 x，三角体向右延伸</summary>
+        private static void DrawRightTriangle(DrawingContext dc, double x, double cy, double r, Brush fill, Pen pen)
+        {
+            var geo = new StreamGeometry();
+            using (var ctx = geo.Open())
+            {
+                ctx.BeginFigure(new Point(x, cy - r), true, true);
+                ctx.LineTo(new Point(x + r * 1.2, cy), true, false);
+                ctx.LineTo(new Point(x, cy + r), true, false);
+            }
+            dc.DrawGeometry(fill, pen, geo);
         }
 
         #endregion
@@ -299,6 +338,16 @@ namespace TrimVideo
             _dragStartX = x;
             _dragStartLower = LowerValue;
             _dragStartUpper = UpperValue;
+
+            // 拖动开始/结束图形时设置焦点
+            var prevFocus = _focusTarget;
+            if (_dragTarget == DragTarget.Lower)
+                _focusTarget = FocusTarget.Lower;
+            else if (_dragTarget == DragTarget.Upper)
+                _focusTarget = FocusTarget.Upper;
+            if (_focusTarget != prevFocus)
+                InvalidateVisual();
+
             CaptureMouse();
 
             // 点击空白区域移动播放头
@@ -353,43 +402,57 @@ namespace TrimVideo
 
         #endregion
 
-        #region Keyboard Interaction (帧级微调)
+        #region Keyboard Interaction (焦点微调)
 
         public double FrameStep { get; set; } = 1.0 / 30.0; // 默认 30fps
 
-        protected override void OnKeyDown(KeyEventArgs e)
+        /// <summary>清除开始/结束图形的焦点，后续方向键将微调播放光标</summary>
+        public void ClearFocus()
         {
-            base.OnKeyDown(e);
-            bool ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-            bool shift = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
-            double step = ctrl ? FrameStep * 10 : FrameStep;
+            if (_focusTarget != FocusTarget.None)
+            {
+                _focusTarget = FocusTarget.None;
+                InvalidateVisual();
+            }
+        }
 
-            // Alt 调整下边界，Shift 调整上边界，否则调整播放头
-            if (shift)
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            switch (e.Key)
             {
-                switch (e.Key)
-                {
-                    case Key.Left:  UpperValue = Math.Max(LowerValue, UpperValue - step); e.Handled = true; break;
-                    case Key.Right: UpperValue = Math.Min(Maximum, UpperValue + step); e.Handled = true; break;
-                }
+                case Key.Escape:
+                    ClearFocus();
+                    e.Handled = true;
+                    break;
+                case Key.Left:
+                    AdjustByStep(-FrameStep);
+                    e.Handled = true;
+                    break;
+                case Key.Right:
+                    AdjustByStep(FrameStep);
+                    e.Handled = true;
+                    break;
             }
-            else if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt))
+
+            if (!e.Handled)
+                base.OnPreviewKeyDown(e);
+        }
+
+        private void AdjustByStep(double step)
+        {
+            switch (_focusTarget)
             {
-                switch (e.Key)
-                {
-                    case Key.Left:  LowerValue = Math.Max(Minimum, LowerValue - step); e.Handled = true; break;
-                    case Key.Right: LowerValue = Math.Min(UpperValue, LowerValue + step); e.Handled = true; break;
-                }
-            }
-            else
-            {
-                switch (e.Key)
-                {
-                    case Key.Left:  Value = Math.Max(Minimum, Value - step); e.Handled = true; break;
-                    case Key.Right: Value = Math.Min(Maximum, Value + step); e.Handled = true; break;
-                    case Key.Home:  Value = Minimum; e.Handled = true; break;
-                    case Key.End:   Value = Maximum; e.Handled = true; break;
-                }
+                case FocusTarget.Lower:
+                    LowerValue = Math.Max(Minimum, Math.Min(LowerValue + step, UpperValue));
+                    Value = LowerValue;
+                    break;
+                case FocusTarget.Upper:
+                    UpperValue = Math.Max(LowerValue, Math.Min(UpperValue + step, Maximum));
+                    Value = UpperValue;
+                    break;
+                default:
+                    Value = Math.Max(Minimum, Math.Min(Value + step, Maximum));
+                    break;
             }
         }
 
