@@ -23,6 +23,7 @@ namespace TrimVideo
         private bool _isPreviewingSegment = false;
         private bool _videoLoaded        = false;
         private string? _initialFile;                // 命令行传入的文件
+        private double _lastKeyFrameSearchPos = -1;  // 上次搜索 I 帧的位置，避免重复搜索
 
         #endregion
 
@@ -197,6 +198,8 @@ namespace TrimVideo
             _videoLoaded = true;
             SetControlsEnabled(true);
             SetStatus($"已加载：{Path.GetFileName(path)}");
+            _lastKeyFrameSearchPos = -1;
+            UpdateKeyFrameMarker(0);
             DebugLog.Write("OpenVideoAsync: done, _videoLoaded=true");
         }
 
@@ -319,6 +322,11 @@ namespace TrimVideo
             if (TxtStartTime == null) return;
             TxtStartTime.Text = FormatTime(val);
             UpdateSegDuration();
+            UpdateKeyFrameMarker(val);
+
+            // 预览片段中调整起始点，实时更新播放边界
+            if (_isPreviewingSegment && _player != null)
+                _player.UpdatePlayBounds(startSec: val, endSec: null);
         }
 
         private void RangeSlider_UpperValueChanged(object? sender, double val)
@@ -326,6 +334,10 @@ namespace TrimVideo
             if (TxtEndTime == null) return;
             TxtEndTime.Text = FormatTime(val);
             UpdateSegDuration();
+
+            // 预览片段中调整结束点，实时更新播放边界
+            if (_isPreviewingSegment && _player != null)
+                _player.UpdatePlayBounds(startSec: null, endSec: val);
         }
 
         private void RangeSlider_ValueChanged(object? sender, double val)
@@ -433,6 +445,38 @@ namespace TrimVideo
         #endregion
 
         #region 辅助
+
+        private async void UpdateKeyFrameMarker(double lowerValue)
+        {
+            if (!_videoLoaded || _trimmer == null || _currentVideoPath == null)
+            {
+                RangeSlider.KeyFrameMarker = null;
+                return;
+            }
+
+            // 避免在同一位置重复搜索
+            if (Math.Abs(lowerValue - _lastKeyFrameSearchPos) < 0.05)
+                return;
+            _lastKeyFrameSearchPos = lowerValue;
+
+            double searchVal = lowerValue;
+            var result = await System.Threading.Tasks.Task.Run(
+                () => _trimmer.FindPrevKeyFrameTime(_currentVideoPath, searchVal));
+
+            // 搜索期间用户可能已移动，检查是否仍是同一位置
+            if (Math.Abs(RangeSlider.LowerValue - searchVal) > 0.5)
+                return;
+
+            if (result.HasValue && Math.Abs(result.Value - lowerValue) > 0.01)
+            {
+                RangeSlider.KeyFrameMarker = result.Value;
+            }
+            else
+            {
+                // I 帧与入点重合或未找到，不显示标记
+                RangeSlider.KeyFrameMarker = null;
+            }
+        }
 
         private void SetControlsEnabled(bool en)
         {

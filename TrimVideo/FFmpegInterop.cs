@@ -18,6 +18,7 @@ namespace TrimVideo
         internal const long AV_NOPTS_VALUE       = unchecked((long)0x8000000000000000L);
         internal const int AV_TIME_BASE          = 1000000;
         internal const int AVIO_FLAG_WRITE       = 2;
+        internal const int AV_PKT_FLAG_KEY       = 0x0001;
 
         // avformat — url 用 LPUTF8Str 支持中文路径
         [DllImport(AvFormat, CallingConvention = CallingConvention.Cdecl)]
@@ -187,6 +188,8 @@ namespace TrimVideo
         public static void SetDts(IntPtr p, long v)  => Marshal.WriteInt64(p, 16, v);
         public static void SetStreamIndex(IntPtr p, int v) => Marshal.WriteInt32(p, 36, v);
         public static void SetDuration(IntPtr p, long v) => Marshal.WriteInt64(p, 48, v);
+        public static int  GetFlags(IntPtr p) => Marshal.ReadInt32(p, 40);
+        public static bool IsKeyFrame(IntPtr p) => (Marshal.ReadInt32(p, 40) & 0x0001) != 0;
     }
 
     // ── DLL 预加载（必须按依赖顺序）────────────────────────────────────────

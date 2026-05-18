@@ -259,6 +259,15 @@ namespace TrimVideo
                 _isPlaying = true;
         }
 
+        /// <summary>
+        /// 更新播放边界（片段预览中调整端点时调用）。
+        /// </summary>
+        public void UpdatePlayBounds(double? startSec, double? endSec)
+        {
+            if (startSec.HasValue) _playStart = startSec.Value;
+            if (endSec.HasValue)   _playEnd   = endSec.Value;
+        }
+
         #endregion
 
         #region Seek

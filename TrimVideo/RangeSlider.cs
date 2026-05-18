@@ -40,6 +40,10 @@ namespace TrimVideo
             DependencyProperty.Register(nameof(Value), typeof(double), typeof(RangeSlider),
                 new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender, OnRangeChanged));
 
+        public static readonly DependencyProperty KeyFrameMarkerProperty =
+            DependencyProperty.Register(nameof(KeyFrameMarker), typeof(double?), typeof(RangeSlider),
+                new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
         public double Minimum
         {
             get => (double)GetValue(MinimumProperty);
@@ -70,6 +74,15 @@ namespace TrimVideo
             set => SetValue(ValueProperty, Math.Max(Minimum, Math.Min(value, Maximum)));
         }
 
+        /// <summary>
+        /// I 帧标记位置（秒），null 表示不显示。用于提示用户裁剪起始帧的实际对齐位置。
+        /// </summary>
+        public double? KeyFrameMarker
+        {
+            get => (double?)GetValue(KeyFrameMarkerProperty);
+            set => SetValue(KeyFrameMarkerProperty, value);
+        }
+
         #endregion
 
         #region Events
@@ -97,6 +110,7 @@ namespace TrimVideo
         private const double ThumbRadius = 8.0;
         private const double TrackHeight = 6.0;
         private const double PlayheadWidth = 3.0;
+        private const double KeyFrameMarkerWidth = 2.0;
 
         // 颜色
         private static readonly Brush TrackBg = new SolidColorBrush(Color.FromRgb(60, 60, 60));
@@ -104,6 +118,7 @@ namespace TrimVideo
         private static readonly Brush ThumbBrush = new SolidColorBrush(Colors.White);
         private static readonly Brush ThumbHoverBrush = new SolidColorBrush(Color.FromRgb(200, 230, 255));
         private static readonly Brush PlayheadBrush = new SolidColorBrush(Color.FromRgb(255, 200, 0));
+        private static readonly Brush KeyFrameMarkerBrush = new SolidColorBrush(Color.FromRgb(0, 200, 255));
         private static readonly Pen ThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(0, 90, 180)), 1.5);
 
         #endregion
@@ -171,6 +186,29 @@ namespace TrimVideo
             // 播放头
             dc.DrawRectangle(PlayheadBrush, null,
                 new Rect(px - PlayheadWidth / 2, cy - TrackHeight, PlayheadWidth, TrackHeight * 2 + 2));
+
+            // I 帧标记（如果存在且与入点不重合）
+            if (KeyFrameMarker.HasValue)
+            {
+                double kx = ValueToX(KeyFrameMarker.Value);
+                if (Math.Abs(kx - lx) > 3)
+                {
+                    // 竖线
+                    dc.DrawRectangle(KeyFrameMarkerBrush, null,
+                        new Rect(kx - KeyFrameMarkerWidth / 2, cy - TrackHeight - 2, KeyFrameMarkerWidth, TrackHeight * 2 + 6));
+                    // "I" 标签
+                    var label = new FormattedText(
+                        "I",
+                        System.Globalization.CultureInfo.CurrentCulture,
+                        FlowDirection.LeftToRight,
+                        new Typeface("Consolas"),
+                        9,
+                        KeyFrameMarkerBrush,
+                        VisualTreeHelper.GetDpi(this).PixelsPerDip);
+                    double ltx = Math.Max(0, Math.Min(kx - label.Width / 2, ActualWidth - label.Width));
+                    dc.DrawText(label, new Point(ltx, cy - TrackHeight - label.Height - 3));
+                }
+            }
 
             // 左 Thumb
             var lBrush = _hoverTarget == DragTarget.Lower ? ThumbHoverBrush : ThumbBrush;

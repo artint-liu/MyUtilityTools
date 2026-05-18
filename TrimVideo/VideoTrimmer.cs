@@ -36,7 +36,98 @@ namespace TrimVideo
             File.Exists(Path.Combine(_ffmpegDir, "avformat-62.dll"));
 
         // ─────────────────────────────────────────────────────────
-        //  获取视频信息
+        //  查找目标时间之前最近的 I 帧（关键帧）时间戳
+        // ─────────────────────────────────────────────────────────
+        public double? FindPrevKeyFrameTime(string filePath, double targetSeconds)
+        {
+            IntPtr fmtCtx  = IntPtr.Zero;
+            IntPtr nullDict = IntPtr.Zero;
+
+            try
+            {
+                if (FF.avformat_open_input(ref fmtCtx, filePath, IntPtr.Zero, ref nullDict) < 0)
+                    return null;
+                if (FF.avformat_find_stream_info(fmtCtx, IntPtr.Zero) < 0)
+                    return null;
+
+                // 找视频流
+                int nb = FmtCtx.NbStreams(fmtCtx);
+                int videoIdx = -1;
+                for (int i = 0; i < nb; i++)
+                {
+                    IntPtr stream = FmtCtx.Stream(fmtCtx, i);
+                    IntPtr par    = StreamCtx.CodecPar(stream);
+                    if (CodecParCtx.CodecType(par) == FF.AVMEDIA_TYPE_VIDEO)
+                    { videoIdx = i; break; }
+                }
+                if (videoIdx < 0) return null;
+
+                IntPtr vStream = FmtCtx.Stream(fmtCtx, videoIdx);
+                var tb = StreamCtx.TimeBase(vStream);
+
+                // 向前回退最多 30 秒来寻找 I 帧（大多数 GOP 不超过此范围）
+                double seekBack = Math.Min(targetSeconds, 30.0);
+                double seekTime = targetSeconds - seekBack;
+                if (seekTime > 0.1)
+                {
+                    long seekTs = (long)(seekTime * FF.AV_TIME_BASE);
+                    FF.avformat_seek_file(fmtCtx, -1, long.MinValue, seekTs, seekTs, 0);
+                }
+                else
+                {
+                    FF.avformat_seek_file(fmtCtx, -1, long.MinValue, 0, 0, 0);
+                }
+
+                IntPtr pkt = FF.av_packet_alloc();
+                double lastKeyFrameSec = 0;
+                bool found = false;
+
+                try
+                {
+                    while (true)
+                    {
+                        FF.av_packet_unref(pkt);
+                        int r = FF.av_read_frame(fmtCtx, pkt);
+                        if (r < 0) break;
+
+                        if (PktCtx.GetStreamIndex(pkt) != videoIdx)
+                            continue;
+
+                        long pts = PktCtx.GetPts(pkt);
+                        long dts = PktCtx.GetDts(pkt);
+                        long refTs = pts != FF.AV_NOPTS_VALUE ? pts : dts;
+                        double pktSec = (refTs != FF.AV_NOPTS_VALUE) ? refTs * tb.ToDouble() : -1;
+
+                        if (pktSec < 0) continue;
+
+                        // 超过目标时间则停止
+                        if (pktSec > targetSeconds + 0.5) break;
+
+                        // 检查是否为关键帧
+                        if (PktCtx.IsKeyFrame(pkt) && pktSec <= targetSeconds + 0.01)
+                        {
+                            lastKeyFrameSec = pktSec;
+                            found = true;
+                        }
+                    }
+                }
+                finally
+                {
+                    FF.av_packet_free(ref pkt);
+                }
+
+                return found ? lastKeyFrameSec : null;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                if (fmtCtx != IntPtr.Zero) FF.avformat_close_input(ref fmtCtx);
+            }
+        }
+
         // ─────────────────────────────────────────────────────────
         public VideoInfo? GetVideoInfo(string filePath)
         {
