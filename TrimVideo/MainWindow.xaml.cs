@@ -220,6 +220,25 @@ namespace TrimVideo
         private void OnPlaybackEnded()
         {
             DebugLog.Write("MainWindow.OnPlaybackEnded");
+
+            bool loop = ChkLoop.IsChecked == true;
+
+            if (loop && _isPreviewingSegment && _player != null)
+            {
+                // 循环预览片段：从入点重新播放
+                double lo = RangeSlider.LowerValue;
+                double hi = RangeSlider.UpperValue;
+                _player.Play(startSec: lo, endSec: hi);
+                return;
+            }
+
+            if (loop && _isPlaying && !_isPreviewingSegment && _player != null)
+            {
+                // 循环播放：从头重新播放
+                _player.Play(startSec: 0, endSec: _player.Duration);
+                return;
+            }
+
             _isPlaying          = false;
             _isPreviewingSegment = false;
             BtnPlayPause.Content     = "▶ 播放";

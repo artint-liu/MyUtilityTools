@@ -132,8 +132,11 @@
                         Content="▶ 播放" Click="BtnPlayPause_Click" Width="80" IsEnabled="False"/>
                 <Button x:Name="BtnStop" Grid.Column="1" Style="{StaticResource FlatButton}"
                         Content="⏹ 停止" Click="BtnStop_Click" Margin="6,0,0,0" Width="70" IsEnabled="False"/>
+                <CheckBox x:Name="ChkLoop" Grid.Column="2" Content="🔁 循环"
+                          Foreground="#CCC" FontSize="13" VerticalAlignment="Center"
+                          Margin="10,0,0,0" IsChecked="False"/>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="当前: "/>
                     <TextBlock x:Name="TxtCurrentTime" Foreground="White" FontFamily="Consolas"
                                FontSize="13" Text="00:00.00" MinWidth="65"/>
@@ -142,7 +145,7 @@
                                FontSize="13" Text="00:00.00" MinWidth="65"/>
                 </StackPanel>
 
-                <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="入点: "/>
                     <TextBlock x:Name="TxtStartTime" Foreground="#4CAF50" FontFamily="Consolas"
                                FontSize="13" Text="00:00.00" MinWidth="65"/>
@@ -154,11 +157,11 @@
                                FontSize="13" Text="00:00.00" MinWidth="65"/>
                 </StackPanel>
 
-                <Button x:Name="BtnPreviewSegment" Grid.Column="4" Style="{StaticResource FlatButton}"
+                <Button x:Name="BtnPreviewSegment" Grid.Column="5" Style="{StaticResource FlatButton}"
                         Content="▶ 预览片段" Click="BtnPreviewSegment_Click" Margin="0,0,6,0" IsEnabled="False"/>
-                <Button x:Name="BtnResetRange" Grid.Column="5" Style="{StaticResource FlatButton}"
+                <Button x:Name="BtnResetRange" Grid.Column="6" Style="{StaticResource FlatButton}"
                         Content="↩ 重置" Click="BtnResetRange_Click" Margin="0,0,6,0" IsEnabled="False"/>
-                <Button x:Name="BtnTrim" Grid.Column="6" Style="{StaticResource PrimaryButton}"
+                <Button x:Name="BtnTrim" Grid.Column="7" Style="{StaticResource PrimaryButton}"
                         Content="✂ 保存裁剪" Click="BtnTrim_Click" IsEnabled="False"/>
             </Grid>
         </Border>
