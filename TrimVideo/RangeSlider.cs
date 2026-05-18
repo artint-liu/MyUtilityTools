@@ -107,9 +107,11 @@ namespace TrimVideo
 
         #region Visual Constants
 
-        private const double ThumbRadius = 8.0;
+        private const double ThumbW = 10.0;       // 直角三角形的宽
+        private const double ThumbH = 10.0;       // 直角三角形的高
         private const double TrackHeight = 6.0;
         private const double PlayheadWidth = 3.0;
+        private const double PlayheadBarH = 12.0;  // 播放头竖条在轨道下方的高度
         private const double KeyFrameMarkerWidth = 2.0;
 
         // 颜色
@@ -117,11 +119,11 @@ namespace TrimVideo
         private static readonly Brush SelectionBrush = new SolidColorBrush(Color.FromRgb(0, 120, 215));
         private static readonly Brush PlayheadBrush = new SolidColorBrush(Color.FromRgb(255, 200, 0));
         private static readonly Brush KeyFrameMarkerBrush = new SolidColorBrush(Color.FromRgb(0, 200, 255));
-        // 入点（开始）标记 - 绿色左三角
+        // 入点（开始）标记 - 绿色 ◣ 直角三角
         private static readonly Brush LowerThumbBrush = new SolidColorBrush(Color.FromRgb(76, 175, 80));
         private static readonly Brush LowerThumbHoverBrush = new SolidColorBrush(Color.FromRgb(129, 199, 132));
         private static readonly Pen LowerThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(46, 125, 50)), 1.5);
-        // 出点（结束）标记 - 红色右三角
+        // 出点（结束）标记 - 红色 ◢ 直角三角
         private static readonly Brush UpperThumbBrush = new SolidColorBrush(Color.FromRgb(244, 67, 54));
         private static readonly Brush UpperThumbHoverBrush = new SolidColorBrush(Color.FromRgb(229, 115, 115));
         private static readonly Pen UpperThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(183, 28, 28)), 1.5);
@@ -144,15 +146,19 @@ namespace TrimVideo
         public RangeSlider()
         {
             Focusable = true;
-            Height = 32;
+            Height = 46;
         }
 
         #region Layout Helpers
 
-        private double TrackLeft => ThumbRadius + 2;
-        private double TrackRight => ActualWidth - ThumbRadius - 2;
+        private double TrackLeft => ThumbW + 2;
+        private double TrackRight => ActualWidth - ThumbW - 2;
         private double TrackWidth => TrackRight - TrackLeft;
-        private double TrackCenterY => ActualHeight / 2.0;
+
+        // 单轨道布局：轨道居中偏上，裁剪句柄在轨道上方，播放头在轨道下方
+        private double TrackCenterY => ActualHeight * 0.45;
+        private double TrackTop => TrackCenterY - TrackHeight / 2;
+        private double TrackBottom => TrackCenterY + TrackHeight / 2;
 
         private double ValueToX(double val)
         {
@@ -179,31 +185,25 @@ namespace TrimVideo
             double ux = ValueToX(UpperValue);
             double px = ValueToX(Value);
 
-            // 轨道背景
-            var trackRect = new Rect(TrackLeft, cy - TrackHeight / 2, TrackWidth, TrackHeight);
+            // ── 轨道背景 ──
+            var trackRect = new Rect(TrackLeft, TrackTop, TrackWidth, TrackHeight);
             dc.DrawRoundedRectangle(TrackBg, null, trackRect, 3, 3);
 
-            // 选中区域高亮
+            // ── 选中区域高亮 ──
             if (UpperValue > LowerValue)
             {
-                var selRect = new Rect(lx, cy - TrackHeight / 2, ux - lx, TrackHeight);
+                var selRect = new Rect(lx, TrackTop, ux - lx, TrackHeight);
                 dc.DrawRectangle(SelectionBrush, null, selRect);
             }
 
-            // 播放头
-            dc.DrawRectangle(PlayheadBrush, null,
-                new Rect(px - PlayheadWidth / 2, cy - TrackHeight, PlayheadWidth, TrackHeight * 2 + 2));
-
-            // I 帧标记（如果存在且与入点不重合）
+            // ── I 帧标记 ──
             if (KeyFrameMarker.HasValue)
             {
                 double kx = ValueToX(KeyFrameMarker.Value);
                 if (Math.Abs(kx - lx) > 3)
                 {
-                    // 竖线
                     dc.DrawRectangle(KeyFrameMarkerBrush, null,
-                        new Rect(kx - KeyFrameMarkerWidth / 2, cy - TrackHeight - 2, KeyFrameMarkerWidth, TrackHeight * 2 + 6));
-                    // "I" 标签
+                        new Rect(kx - KeyFrameMarkerWidth / 2, TrackTop - 2, KeyFrameMarkerWidth, TrackHeight + 4));
                     var label = new FormattedText(
                         "I",
                         System.Globalization.CultureInfo.CurrentCulture,
@@ -213,30 +213,71 @@ namespace TrimVideo
                         KeyFrameMarkerBrush,
                         VisualTreeHelper.GetDpi(this).PixelsPerDip);
                     double ltx = Math.Max(0, Math.Min(kx - label.Width / 2, ActualWidth - label.Width));
-                    dc.DrawText(label, new Point(ltx, cy - TrackHeight - label.Height - 3));
+                    dc.DrawText(label, new Point(ltx, TrackTop - ThumbH - label.Height - 2));
                 }
             }
 
-            // 左 Thumb (入点/开始) - 绿色左三角 ◀
+            // ── 入点句柄 ◣ (绿色直角三角，在轨道上方，向左展开) ──
             var lBrush = _hoverTarget == DragTarget.Lower ? LowerThumbHoverBrush : LowerThumbBrush;
-            DrawLeftTriangle(dc, lx, cy, ThumbRadius, lBrush, LowerThumbPen);
+            DrawLowerThumb(dc, lx, TrackTop, ThumbW, ThumbH, lBrush, LowerThumbPen);
 
-            // 右 Thumb (出点/结束) - 红色右三角 ▶
+            // ── 出点句柄 ◢ (红色直角三角，在轨道上方，向右展开) ──
             var uBrush = _hoverTarget == DragTarget.Upper ? UpperThumbHoverBrush : UpperThumbBrush;
-            DrawRightTriangle(dc, ux, cy, ThumbRadius, uBrush, UpperThumbPen);
+            DrawUpperThumb(dc, ux, TrackTop, ThumbW, ThumbH, uBrush, UpperThumbPen);
 
-            // 焦点指示器
+            // ── 焦点指示器 ──
             if (_focusTarget == FocusTarget.Lower)
-                dc.DrawEllipse(null, new Pen(LowerThumbBrush, 2), new Point(lx, cy), ThumbRadius + 4, ThumbRadius + 4);
+            {
+                var lRect = new Rect(lx - ThumbW, TrackTop - ThumbH, ThumbW, ThumbH);
+                dc.DrawRectangle(null, new Pen(LowerThumbBrush, 1.5) { DashStyle = DashStyles.Dash }, lRect);
+            }
             if (_focusTarget == FocusTarget.Upper)
-                dc.DrawEllipse(null, new Pen(UpperThumbBrush, 2), new Point(ux, cy), ThumbRadius + 4, ThumbRadius + 4);
+            {
+                var uRect = new Rect(ux, TrackTop - ThumbH, ThumbW, ThumbH);
+                dc.DrawRectangle(null, new Pen(UpperThumbBrush, 1.5) { DashStyle = DashStyles.Dash }, uRect);
+            }
 
-            // 时间标签
-            DrawTimeLabel(dc, lx, cy, LowerValue, true);
-            DrawTimeLabel(dc, ux, cy, UpperValue, false);
+            // ── 入点/出点时间标签（在直角上方） ──
+            DrawTimeLabel(dc, lx - ThumbW / 2, TrackTop - ThumbH, LowerValue, true);
+            DrawTimeLabel(dc, ux + ThumbW / 2, TrackTop - ThumbH, UpperValue, true);
+
+            // ── 播放头竖条（在轨道下方） ──
+            dc.DrawRectangle(PlayheadBrush, null,
+                new Rect(px - PlayheadWidth / 2, TrackTop, PlayheadWidth, PlayheadBarH));
+
+            // 播放头底部小圆点
+            dc.DrawEllipse(PlayheadBrush, null, new Point(px, TrackBottom + PlayheadBarH - 1), 4, 4);
         }
 
-        private void DrawTimeLabel(DrawingContext dc, double x, double cy, double seconds, bool above)
+        /// <summary>绘制入点句柄 ◤：直角在右上 (x, trackTop-h)，斜边贴轨道上沿，向左展开</summary>
+        private static void DrawLowerThumb(DrawingContext dc, double x, double trackTop, double w, double h, Brush fill, Pen pen)
+        {
+            var geo = new StreamGeometry();
+            using (var ctx = geo.Open())
+            {
+                // 直角在 (x, trackTop-h)，斜边从 (x, trackTop) 到 (x-w, trackTop-h)
+                ctx.BeginFigure(new Point(x, trackTop - h), true, true);
+                ctx.LineTo(new Point(x, trackTop), true, false);
+                ctx.LineTo(new Point(x - w, trackTop - h), true, false);
+            }
+            dc.DrawGeometry(fill, pen, geo);
+        }
+
+        /// <summary>绘制出点句柄 ◥：直角在左上 (x, trackTop-h)，斜边贴轨道上沿，向右展开</summary>
+        private static void DrawUpperThumb(DrawingContext dc, double x, double trackTop, double w, double h, Brush fill, Pen pen)
+        {
+            var geo = new StreamGeometry();
+            using (var ctx = geo.Open())
+            {
+                // 直角在 (x, trackTop-h)，斜边从 (x, trackTop) 到 (x+w, trackTop-h)
+                ctx.BeginFigure(new Point(x, trackTop - h), true, true);
+                ctx.LineTo(new Point(x, trackTop), true, false);
+                ctx.LineTo(new Point(x + w, trackTop - h), true, false);
+            }
+            dc.DrawGeometry(fill, pen, geo);
+        }
+
+        private void DrawTimeLabel(DrawingContext dc, double x, double refY, double seconds, bool above)
         {
             var text = new FormattedText(
                 FormatTime(seconds),
@@ -248,7 +289,7 @@ namespace TrimVideo
                 VisualTreeHelper.GetDpi(this).PixelsPerDip);
 
             double tx = Math.Max(0, Math.Min(x - text.Width / 2, ActualWidth - text.Width));
-            double ty = above ? cy - ThumbRadius - text.Height - 1 : cy + ThumbRadius + 1;
+            double ty = above ? refY - text.Height - 1 : refY + 1;
             dc.DrawText(text, new Point(tx, ty));
         }
 
@@ -260,32 +301,6 @@ namespace TrimVideo
                 : $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}";
         }
 
-        /// <summary>绘制左三角（入点标记）：右边缘对齐 x，三角体向左延伸</summary>
-        private static void DrawLeftTriangle(DrawingContext dc, double x, double cy, double r, Brush fill, Pen pen)
-        {
-            var geo = new StreamGeometry();
-            using (var ctx = geo.Open())
-            {
-                ctx.BeginFigure(new Point(x, cy - r), true, true);
-                ctx.LineTo(new Point(x - r * 1.2, cy), true, false);
-                ctx.LineTo(new Point(x, cy + r), true, false);
-            }
-            dc.DrawGeometry(fill, pen, geo);
-        }
-
-        /// <summary>绘制右三角（出点标记）：左边缘对齐 x，三角体向右延伸</summary>
-        private static void DrawRightTriangle(DrawingContext dc, double x, double cy, double r, Brush fill, Pen pen)
-        {
-            var geo = new StreamGeometry();
-            using (var ctx = geo.Open())
-            {
-                ctx.BeginFigure(new Point(x, cy - r), true, true);
-                ctx.LineTo(new Point(x + r * 1.2, cy), true, false);
-                ctx.LineTo(new Point(x, cy + r), true, false);
-            }
-            dc.DrawGeometry(fill, pen, geo);
-        }
-
         #endregion
 
         #region Mouse Interaction
@@ -293,13 +308,16 @@ namespace TrimVideo
         protected override void OnMouseEnter(MouseEventArgs e)
         {
             base.OnMouseEnter(e);
-            UpdateHover(e.GetPosition(this).X);
+            var pos = e.GetPosition(this);
+            UpdateHover(pos.X, pos.Y);
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            double x = e.GetPosition(this).X;
+            var pos = e.GetPosition(this);
+            double x = pos.X;
+            double y = pos.Y;
 
             if (_dragTarget != DragTarget.None)
             {
@@ -325,7 +343,7 @@ namespace TrimVideo
             }
             else
             {
-                UpdateHover(x);
+                UpdateHover(x, y);
             }
         }
 
@@ -333,8 +351,10 @@ namespace TrimVideo
         {
             base.OnMouseLeftButtonDown(e);
             Focus();
-            double x = e.GetPosition(this).X;
-            _dragTarget = HitTest(x);
+            var pos = e.GetPosition(this);
+            double x = pos.X;
+            double y = pos.Y;
+            _dragTarget = HitTest(x, y);
             _dragStartX = x;
             _dragStartLower = LowerValue;
             _dragStartUpper = UpperValue;
@@ -350,11 +370,10 @@ namespace TrimVideo
 
             CaptureMouse();
 
-            // 点击空白区域移动播放头
+            // 点击上方轨道空白区域不做操作；点击下方轨道移动播放头
             if (_dragTarget == DragTarget.None)
             {
-                _dragTarget = DragTarget.Playhead;
-                Value = Math.Max(Minimum, Math.Min(XToValue(x), Maximum));
+                // 上方轨道空白 - 不自动移动播放头
             }
         }
 
@@ -363,7 +382,8 @@ namespace TrimVideo
             base.OnMouseLeftButtonUp(e);
             _dragTarget = DragTarget.None;
             ReleaseMouseCapture();
-            UpdateHover(e.GetPosition(this).X);
+            var pos = e.GetPosition(this);
+            UpdateHover(pos.X, pos.Y);
         }
 
         protected override void OnMouseLeave(MouseEventArgs e)
@@ -373,23 +393,38 @@ namespace TrimVideo
             InvalidateVisual();
         }
 
-        private DragTarget HitTest(double x)
+        private DragTarget HitTest(double x, double y)
         {
             double lx = ValueToX(LowerValue);
             double ux = ValueToX(UpperValue);
             double px = ValueToX(Value);
 
-            if (Math.Abs(x - px) <= PlayheadWidth + 3) return DragTarget.Playhead;
-            if (Math.Abs(x - lx) <= ThumbRadius + 2) return DragTarget.Lower;
-            if (Math.Abs(x - ux) <= ThumbRadius + 2) return DragTarget.Upper;
-            if (x > lx && x < ux) return DragTarget.Selection;
-            return DragTarget.None;
+            // 轨道上方区域 → 裁剪句柄
+            if (y < TrackCenterY)
+            {
+                // 入点直角三角区域：x ∈ [lx-w, lx], y ∈ [trackTop-h, trackTop]
+                if (x >= lx - ThumbW - 2 && x <= lx + 2 && y >= TrackTop - ThumbH - 2)
+                    return DragTarget.Lower;
+                // 出点直角三角区域：x ∈ [ux, ux+w], y ∈ [trackTop-h, trackTop]
+                if (x >= ux - 2 && x <= ux + ThumbW + 2 && y >= TrackTop - ThumbH - 2)
+                    return DragTarget.Upper;
+                // 选中区域上方（允许拖动整个选区）
+                if (x > lx && x < ux && y >= TrackTop - ThumbH - 2)
+                    return DragTarget.Selection;
+                return DragTarget.None;
+            }
+            // 轨道及下方区域 → 播放头
+            else
+            {
+                if (Math.Abs(x - px) <= PlayheadWidth + 4) return DragTarget.Playhead;
+                return DragTarget.Playhead; // 下方任意位置点击可移动播放头
+            }
         }
 
-        private void UpdateHover(double x)
+        private void UpdateHover(double x, double y)
         {
             var prev = _hoverTarget;
-            _hoverTarget = HitTest(x);
+            _hoverTarget = HitTest(x, y);
             Cursor = _hoverTarget switch
             {
                 DragTarget.Lower or DragTarget.Upper => Cursors.SizeWE,

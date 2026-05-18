@@ -104,7 +104,7 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
                 <local:RangeSlider x:Name="RangeSlider"
-                                   Grid.Row="0" Height="40"
+                                   Grid.Row="0" Height="46"
                                    Minimum="0" Maximum="100"
                                    LowerValue="0" UpperValue="100" Value="0"
                                    LowerValueChanged="RangeSlider_LowerValueChanged"
