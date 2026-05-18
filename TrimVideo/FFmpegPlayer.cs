@@ -389,7 +389,11 @@ namespace TrimVideo
                         frameCount++;
 
                         if (frameCount <= 3 || frameCount % 60 == 0)
-                            DebugLog.Write($"DecodeLoop: frame#{frameCount} sec={frameSec:F3} _playEnd={_playEnd:F3}");
+                            DebugLog.Write($"DecodeLoop: frame#{frameCount} sec={frameSec:F3} _playStart={_playStart:F3} _playEnd={_playEnd:F3}");
+
+                        // Seek 会落到最近关键帧，可能早于 _playStart，跳过这些帧避免滑块回跳
+                        if (frameSec < _playStart - 0.001)
+                            continue;
 
                         if (_playEnd < double.MaxValue && frameSec >= _playEnd - frameDuration * 0.5)
                         {

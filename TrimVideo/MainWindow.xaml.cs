@@ -299,6 +299,15 @@ namespace TrimVideo
                 double end   = _player.Duration;
                 if (start >= end - 0.05) start = 0;
 
+                // 暂停期间 _positionSec 可能比滑块位置略前，同步滑块避免恢复时跳动
+                if (Math.Abs(RangeSlider.Value - start) > 0.002)
+                {
+                    _isScrubbing = true;
+                    RangeSlider.Value   = start;
+                    TxtCurrentTime.Text = FormatTime(start);
+                    _isScrubbing = false;
+                }
+
                 DebugLog.Write($"BtnPlayPause_Click: invoking Play start={start:F3} end={end:F3} Position={_player.Position:F3} Duration={_player.Duration:F3}");
                 RangeSlider.ClearFocus();
                 _player.Play(startSec: start, endSec: end);
@@ -336,8 +345,13 @@ namespace TrimVideo
 
             RangeSlider.ClearFocus();
 
-            // 播放片段，结束时 PlaybackEnded 会触发
-            _player.Play(startSec: lo, endSec: hi);
+            // 判断当前位置是否在裁剪区间内
+            double curPos = _player.Position;
+            double startSec = (curPos >= lo && curPos < hi) ? curPos : lo;
+
+            // 先停止当前播放，确保解码线程重新启动并 seek 到起点
+            _player.Stop();
+            _player.Play(startSec: startSec, endSec: hi);
 
             // 但 PlaybackEnded 只触发一次，需要循环 → 在 OnPlaybackEnded 中判断
             SetStatus($"片段预览: {FormatTime(lo)} → {FormatTime(hi)}");
