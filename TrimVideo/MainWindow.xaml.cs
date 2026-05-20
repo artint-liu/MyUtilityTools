@@ -156,12 +156,18 @@ namespace TrimVideo
             if (!File.Exists(path)) { SetStatus($"文件不存在：{path}", true); return; }
             if (_ffmpegDir == null) { SetStatus("FFmpeg 未就绪", true); return; }
 
-            // 关闭旧播放器
+            // 关闭旧播放器并重置所有状态
             _player?.Close();
             _player = null;
+            _isPlaying            = false;
+            _isScrubbing          = false;
+            _isPreviewingSegment  = false;
+            IconPlayPause.Data    = Geometry.Parse(PathPlay);
+            BtnPreviewSegment.Content = "▶ 预览片段";
             _videoLoaded = false;
             SetControlsEnabled(false);
             TxtNoFile.Visibility = Visibility.Collapsed;
+            RangeSlider.KeyFrameMarker = null;
             SetStatus("正在读取视频信息…");
 
             _currentVideoPath = path;
