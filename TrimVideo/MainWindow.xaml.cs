@@ -2,6 +2,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -16,6 +17,10 @@ namespace TrimVideo
         private VideoInfo?    _videoInfo;
         private string?       _currentVideoPath;
         private string?       _ffmpegDir;
+
+        // 图标路径数据
+        private const string PathPlay  = "M5,2 L5,18 L17,10 Z";
+        private const string PathPause = "M4,2 L4,18 L9,18 L9,2 Z M13,2 L13,18 L18,18 L18,2 Z";
 
         // UI 状态
         private bool _isPlaying          = false;
@@ -258,7 +263,7 @@ namespace TrimVideo
 
             _isPlaying          = false;
             _isPreviewingSegment = false;
-            BtnPlayPause.Content     = "▶ 播放";
+            IconPlayPause.Data       = Geometry.Parse(PathPlay);
             BtnPreviewSegment.Content = "▶ 预览片段";
         }
 
@@ -289,7 +294,7 @@ namespace TrimVideo
             {
                 _player.Pause();
                 _isPlaying           = false;
-                BtnPlayPause.Content = "▶ 播放";
+                IconPlayPause.Data = Geometry.Parse(PathPlay);
                 DebugLog.Write("BtnPlayPause_Click: Pause");
             }
             else
@@ -312,7 +317,7 @@ namespace TrimVideo
                 RangeSlider.ClearFocus();
                 _player.Play(startSec: start, endSec: end);
                 _isPlaying           = true;
-                BtnPlayPause.Content = "⏸ 暂停";
+                IconPlayPause.Data = Geometry.Parse(PathPause);
             }
         }
 
@@ -323,7 +328,11 @@ namespace TrimVideo
             _player.Stop();
             _player.SeekTo(0);
             _isPlaying           = false;
-            BtnPlayPause.Content = "▶ 播放";
+            IconPlayPause.Data = Geometry.Parse(PathPlay);
+            _isScrubbing          = true;
+            RangeSlider.Value     = 0;
+            TxtCurrentTime.Text   = FormatTime(0);
+            _isScrubbing          = false;
         }
 
         private void BtnPreviewSegment_Click(object sender, RoutedEventArgs e)
@@ -340,7 +349,7 @@ namespace TrimVideo
             double hi = RangeSlider.UpperValue;
             _isPreviewingSegment      = true;
             _isPlaying                = true;
-            BtnPlayPause.Content      = "⏸ 暂停";
+            IconPlayPause.Data        = Geometry.Parse(PathPause);
             BtnPreviewSegment.Content = "⏹ 停止预览";
 
             RangeSlider.ClearFocus();
@@ -362,7 +371,7 @@ namespace TrimVideo
             _player?.Stop();
             _isPreviewingSegment      = false;
             _isPlaying                = false;
-            BtnPlayPause.Content      = "▶ 播放";
+            IconPlayPause.Data        = Geometry.Parse(PathPlay);
             BtnPreviewSegment.Content = "▶ 预览片段";
         }
 
@@ -377,6 +386,17 @@ namespace TrimVideo
             UpdateSegDuration();
             UpdateKeyFrameMarker(val);
 
+            // 拖拽入点时，视频跳转到入点位置显示对应画面
+            if (!_isScrubbing && _videoLoaded && _player != null)
+            {
+                if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
+                _isScrubbing = true;
+                _player.SeekTo(val);
+                RangeSlider.Value = val;
+                TxtCurrentTime.Text = FormatTime(val);
+                _isScrubbing = false;
+            }
+
             // 预览片段中调整起始点，实时更新播放边界
             if (_isPreviewingSegment && _player != null)
                 _player.UpdatePlayBounds(startSec: val, endSec: null);
@@ -387,6 +407,17 @@ namespace TrimVideo
             if (TxtEndTime == null) return;
             TxtEndTime.Text = FormatTime(val);
             UpdateSegDuration();
+
+            // 拖拽出点时，视频跳转到出点位置显示对应画面
+            if (!_isScrubbing && _videoLoaded && _player != null)
+            {
+                if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
+                _isScrubbing = true;
+                _player.SeekTo(val);
+                RangeSlider.Value = val;
+                TxtCurrentTime.Text = FormatTime(val);
+                _isScrubbing = false;
+            }
 
             // 预览片段中调整结束点，实时更新播放边界
             if (_isPreviewingSegment && _player != null)

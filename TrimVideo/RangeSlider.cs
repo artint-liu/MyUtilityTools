@@ -127,6 +127,12 @@ namespace TrimVideo
         private static readonly Brush UpperThumbBrush = new SolidColorBrush(Color.FromRgb(244, 67, 54));
         private static readonly Brush UpperThumbHoverBrush = new SolidColorBrush(Color.FromRgb(229, 115, 115));
         private static readonly Pen UpperThumbPen = new Pen(new SolidColorBrush(Color.FromRgb(183, 28, 28)), 1.5);
+        // 焦点态 - 更亮的填充 + 白色发光描边
+        private static readonly Brush LowerThumbFocusBrush = new SolidColorBrush(Color.FromRgb(165, 214, 167));
+        private static readonly Pen LowerThumbFocusPen = new Pen(new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)), 2.0);
+        private static readonly Brush UpperThumbFocusBrush = new SolidColorBrush(Color.FromRgb(255, 138, 128));
+        private static readonly Pen UpperThumbFocusPen = new Pen(new SolidColorBrush(Color.FromArgb(200, 255, 255, 255)), 2.0);
+        private const double FocusScale = 1.3;
 
         #endregion
 
@@ -218,23 +224,25 @@ namespace TrimVideo
             }
 
             // ── 入点句柄 ◣ (绿色直角三角，在轨道上方，向左展开) ──
-            var lBrush = _hoverTarget == DragTarget.Lower ? LowerThumbHoverBrush : LowerThumbBrush;
-            DrawLowerThumb(dc, lx, TrackTop, ThumbW, ThumbH, lBrush, LowerThumbPen);
-
-            // ── 出点句柄 ◢ (红色直角三角，在轨道上方，向右展开) ──
-            var uBrush = _hoverTarget == DragTarget.Upper ? UpperThumbHoverBrush : UpperThumbBrush;
-            DrawUpperThumb(dc, ux, TrackTop, ThumbW, ThumbH, uBrush, UpperThumbPen);
-
-            // ── 焦点指示器 ──
             if (_focusTarget == FocusTarget.Lower)
             {
-                var lRect = new Rect(lx - ThumbW, TrackTop - ThumbH, ThumbW, ThumbH);
-                dc.DrawRectangle(null, new Pen(LowerThumbBrush, 1.5) { DashStyle = DashStyles.Dash }, lRect);
+                DrawLowerThumb(dc, lx, TrackTop, ThumbW * FocusScale, ThumbH * FocusScale, LowerThumbFocusBrush, LowerThumbFocusPen);
             }
+            else
+            {
+                var lBrush = _hoverTarget == DragTarget.Lower ? LowerThumbHoverBrush : LowerThumbBrush;
+                DrawLowerThumb(dc, lx, TrackTop, ThumbW, ThumbH, lBrush, LowerThumbPen);
+            }
+
+            // ── 出点句柄 ◢ (红色直角三角，在轨道上方，向右展开) ──
             if (_focusTarget == FocusTarget.Upper)
             {
-                var uRect = new Rect(ux, TrackTop - ThumbH, ThumbW, ThumbH);
-                dc.DrawRectangle(null, new Pen(UpperThumbBrush, 1.5) { DashStyle = DashStyles.Dash }, uRect);
+                DrawUpperThumb(dc, ux, TrackTop, ThumbW * FocusScale, ThumbH * FocusScale, UpperThumbFocusBrush, UpperThumbFocusPen);
+            }
+            else
+            {
+                var uBrush = _hoverTarget == DragTarget.Upper ? UpperThumbHoverBrush : UpperThumbBrush;
+                DrawUpperThumb(dc, ux, TrackTop, ThumbW, ThumbH, uBrush, UpperThumbPen);
             }
 
             // ── 入点/出点时间标签（在直角上方） ──
