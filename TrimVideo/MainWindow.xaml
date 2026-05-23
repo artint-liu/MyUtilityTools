@@ -109,7 +109,8 @@
                                    LowerValue="0" UpperValue="100" Value="0"
                                    LowerValueChanged="RangeSlider_LowerValueChanged"
                                    UpperValueChanged="RangeSlider_UpperValueChanged"
-                                   ValueChanged="RangeSlider_ValueChanged"/>
+                                   ValueChanged="RangeSlider_ValueChanged"
+                                   DragCompleted="RangeSlider_DragCompleted"/>
             </Grid>
         </Border>
 
@@ -181,22 +182,22 @@
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="当前: "/>
                     <TextBlock x:Name="TxtCurrentTime" Foreground="White" FontFamily="Consolas"
-                               FontSize="13" Text="00:00.00" MinWidth="65"/>
+                               FontSize="13" Text="00:00" MinWidth="65"/>
                     <TextBlock Style="{StaticResource Label}" Text="  |  总时长: "/>
                     <TextBlock x:Name="TxtTotalTime" Foreground="#CCC" FontFamily="Consolas"
-                               FontSize="13" Text="00:00.00" MinWidth="65"/>
+                               FontSize="13" Text="00:00" MinWidth="65"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="入点: "/>
                     <TextBlock x:Name="TxtStartTime" Foreground="#4CAF50" FontFamily="Consolas"
-                               FontSize="13" Text="00:00.00" MinWidth="65"/>
+                               FontSize="13" Text="00:00" MinWidth="65"/>
                     <TextBlock Style="{StaticResource Label}" Text="  出点: "/>
                     <TextBlock x:Name="TxtEndTime" Foreground="#F44336" FontFamily="Consolas"
-                               FontSize="13" Text="00:00.00" MinWidth="65"/>
+                               FontSize="13" Text="00:00" MinWidth="65"/>
                     <TextBlock Style="{StaticResource Label}" Text="  片段长: "/>
                     <TextBlock x:Name="TxtSegDuration" Foreground="#FFC107" FontFamily="Consolas"
-                               FontSize="13" Text="00:00.00" MinWidth="65"/>
+                               FontSize="13" Text="00:00" MinWidth="65"/>
                 </StackPanel>
 
                 <Button x:Name="BtnPreviewSegment" Grid.Column="5" Style="{StaticResource FlatButton}"

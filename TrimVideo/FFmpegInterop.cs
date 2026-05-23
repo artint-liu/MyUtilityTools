@@ -20,6 +20,14 @@ namespace TrimVideo
         internal const int AVIO_FLAG_WRITE       = 2;
         internal const int AV_PKT_FLAG_KEY       = 0x0001;
 
+        // 常用 Codec ID (FFmpeg 8.x)
+        internal const int AV_CODEC_ID_H264 = 27;
+        internal const int AV_CODEC_ID_MPEG4 = 28;
+        internal const int AV_CODEC_ID_MPEG2VIDEO = 2;
+        internal const int AV_CODEC_ID_HEVC = 173;
+        internal const int AV_CODEC_ID_VP9 = 167;
+        internal const int AV_CODEC_ID_AV1 = 164;
+
         // avformat — url 用 LPUTF8Str 支持中文路径
         [DllImport(AvFormat, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void avformat_network_init();
@@ -56,6 +64,8 @@ namespace TrimVideo
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr avcodec_find_decoder(int id);
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr avcodec_find_decoder_by_name([MarshalAs(UnmanagedType.LPStr)] string name);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr avcodec_alloc_context3(IntPtr codec);
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         internal static extern int avcodec_parameters_to_context(IntPtr codec, IntPtr par);
@@ -69,6 +79,8 @@ namespace TrimVideo
         internal static extern int avcodec_receive_frame(IntPtr avctx, IntPtr frame);
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void avcodec_flush_buffers(IntPtr avctx);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int av_hwframe_transfer_data(IntPtr dst, IntPtr src, int flags);
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr av_packet_alloc();
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]

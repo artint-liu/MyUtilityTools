@@ -30,6 +30,10 @@ namespace TrimVideo
         private string? _initialFile;                // 命令行传入的文件
         private double _lastKeyFrameSearchPos = -1;  // 上次搜索 I 帧的位置，避免重复搜索
 
+        // 拖拽播放头时的节流控制
+        private double _pendingSeekPosition = -1;
+        private bool _isSubscribedRendering = false;
+
         #endregion
 
         #region Init
@@ -171,7 +175,7 @@ namespace TrimVideo
             SetStatus("正在读取视频信息…");
 
             _currentVideoPath = path;
-            TxtFilePath.Text  = path;
+            TxtFilePath.Text  = Path.GetFileName(path);
 
             // 获取视频元数据
             _videoInfo = await System.Threading.Tasks.Task.Run(() => _trimmer?.GetVideoInfo(path));
@@ -218,7 +222,9 @@ namespace TrimVideo
             TxtEndTime.Text      = FormatTime(total);
             TxtSegDuration.Text  = FormatTime(total);
             TxtCurrentTime.Text  = FormatTime(0);
-            TxtVideoInfo.Text    = $"{_videoInfo.Width}x{_videoInfo.Height}  {_videoInfo.VideoCodec}  {fps:F2}fps  {FormatFileSize(_videoInfo.FileSizeBytes)}";
+            string decodeType = _player.IsHardwareDecoding ? "硬解码" : "软解码";
+            TxtVideoInfo.Text    = $"{_videoInfo.Width}x{_videoInfo.Height}  {_videoInfo.VideoCodec} ({decodeType})  {fps:F2}fps  {FormatFileSize(_videoInfo.FileSizeBytes)}";
+            TxtFilePath.Text     = $"{Path.GetFileName(path)} - {_videoInfo.VideoCodec} ({decodeType})";
 
             _videoLoaded = true;
             SetControlsEnabled(true);
@@ -235,14 +241,32 @@ namespace TrimVideo
 
         private void OnFrameDecoded(double positionSec)
         {
-            // 已在 Dispatcher 线程，直接更新
-            if (_isScrubbing) return;
-            // 暂停时由用户（鼠标/键盘）控制位置，不让异步解码回调覆盖
-            if (!_isPlaying) return;
+            DebugLog.Write($"[OnFrameDecoded] ENTER pos={positionSec:F3} _isScrubbing={_isScrubbing} _isPlaying={_isPlaying} IsDraggingPlayhead={RangeSlider.IsDraggingPlayhead}");
+            // 拖拽时允许处理回调（IsDraggingPlayhead=true时，即使_isScrubbing=true也不跳过）
+            if (_isScrubbing && !RangeSlider.IsDraggingPlayhead) { DebugLog.Write($"[OnFrameDecoded] EXIT _isScrubbing=true and not dragging"); return; }
+            // 暂停时（且非拖拽），不让异步解码回调覆盖用户控制的位置
+            if (!_isPlaying && !RangeSlider.IsDraggingPlayhead) { DebugLog.Write($"[OnFrameDecoded] EXIT not playing and not dragging"); return; }
+
+            // 拖拽播放头时，不更新滑块位置（由鼠标控制），只更新时间显示
+            // 但必须强制VideoImage重绘，否则画面不更新（UI线程被拖拽事件阻塞）
+            if (RangeSlider.IsDraggingPlayhead)
+            {
+                DebugLog.Write($"[OnFrameDecoded] Dragging - update time and force redraw pos={positionSec:F3} VI.Vis={VideoImage.Visibility} VI.Actual={VideoImage.ActualWidth}x{VideoImage.ActualHeight}");
+                TxtCurrentTime.Text = FormatTime(positionSec);
+                // 强制VideoImage重绘，确保WriteableBitmap的更新立即显示
+                VideoImage.InvalidateVisual();
+                // 强制处理渲染队列，让WPF立即渲染
+                Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                DebugLog.Write($"[OnFrameDecoded] EXIT dragging");
+                return;
+            }
+
+            DebugLog.Write($"[OnFrameDecoded] Normal update pos={positionSec:F3}");
             _isScrubbing = true;
             RangeSlider.Value   = positionSec;
             TxtCurrentTime.Text = FormatTime(positionSec);
             _isScrubbing = false;
+            DebugLog.Write($"[OnFrameDecoded] EXIT normal");
         }
 
         private void OnPlaybackEnded()
@@ -435,8 +459,47 @@ namespace TrimVideo
             if (TxtCurrentTime == null) return;
             TxtCurrentTime.Text = FormatTime(val);
 
-            // 拖动播放头时跳转
             if (!_isScrubbing && _videoLoaded && _player != null)
+            {
+                if (RangeSlider.IsDraggingPlayhead)
+                {
+                    // 拖拽播放头：只记录目标位置，由OnRendering中节流执行Seek
+                    DebugLog.Write($"[UI] ValueChanged drag val={val:F3}");
+                    _pendingSeekPosition = val;
+                    // 订阅Rendering事件（如果还没订阅）
+                    if (!_isSubscribedRendering)
+                    {
+                        _isSubscribedRendering = true;
+                        CompositionTarget.Rendering += OnRendering;
+                    }
+                }
+                else
+                {
+                    // 非拖拽：立即Seek
+                    DebugLog.Write($"[UI] ValueChanged non-drag val={val:F3}");
+                    bool wasPlaying = _isPlaying;
+                    if (wasPlaying) _player.Pause();
+
+                    _isScrubbing = true;
+                    _player.SeekTo(val);
+                    _isScrubbing = false;
+
+                    if (wasPlaying) _player.Resume();
+                }
+            }
+        }
+
+        private void RangeSlider_DragCompleted(object? sender, double val)
+        {
+            // 拖拽结束：取消订阅Rendering事件，立即Seek到最终位置
+            if (_isSubscribedRendering)
+            {
+                _isSubscribedRendering = false;
+                CompositionTarget.Rendering -= OnRendering;
+            }
+            _pendingSeekPosition = -1;
+
+            if (_videoLoaded && _player != null)
             {
                 bool wasPlaying = _isPlaying;
                 if (wasPlaying) _player.Pause();
@@ -447,6 +510,32 @@ namespace TrimVideo
 
                 if (wasPlaying) _player.Resume();
             }
+        }
+
+        private System.Diagnostics.Stopwatch _seekStopwatch = new System.Diagnostics.Stopwatch();
+        
+        private void OnRendering(object? sender, EventArgs e)
+        {
+            // 在每一帧渲染前检查是否需要Seek（节流：至少间隔50ms才执行一次）
+            double pos = _pendingSeekPosition;
+            if (pos < 0 || _player == null || !_videoLoaded) return;
+            
+            // 节流：距离上次Seek不足50ms则跳过
+            if (_seekStopwatch.IsRunning && _seekStopwatch.ElapsedMilliseconds < 50) return;
+            
+            _pendingSeekPosition = -1; // 重置，避免重复Seek
+            _seekStopwatch.Restart();
+            
+            DebugLog.Write($"[Rendering] SeekTo start pos={pos:F3}");
+            
+            bool wasPlaying = _player.IsPlaying;
+            if (wasPlaying) _player.Pause();
+            _isScrubbing = true;
+            _player.SeekTo(pos);
+            _isScrubbing = false;
+            if (wasPlaying) _player.Resume();
+            
+            DebugLog.Write($"[Rendering] SeekTo done pos={pos:F3}");
         }
 
         private void UpdateSegDuration()
@@ -598,8 +687,8 @@ namespace TrimVideo
             if (seconds < 0) seconds = 0;
             var ts = TimeSpan.FromSeconds(seconds);
             return ts.TotalHours >= 1
-                ? $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}"
-                : $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}";
+                ? $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}"
+                : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
         }
 
         private static string FormatTimeSafe(double seconds)

@@ -57,6 +57,15 @@ namespace TrimVideo
         public int VideoWidth { get; private set; }
         public int VideoHeight { get; private set; }
         public string? VideoCodecName { get; private set; }
+        public string DecoderName { get; private set; } = "";
+        public bool IsHardwareDecoding => DecoderName.Contains("_cuvid")
+            || DecoderName.Contains("_qsv")
+            || DecoderName.Contains("_dxva2")
+            || DecoderName.Contains("_d3d11va")
+            || DecoderName.Contains("_vaapi")
+            || DecoderName.Contains("_vdpau")
+            || DecoderName.Contains("_videotoolbox")
+            || DecoderName.Contains("_mediacodec");
 
         public double Position                             // 当前播放位置(秒)
         {
@@ -103,6 +112,8 @@ namespace TrimVideo
         // 解码线程
         private Thread? _decodeThread;
         private readonly object _seekLock = new();
+        private readonly object _convertLock = new();  // 保护 ConvertAndPresent 防止多线程并发
+        private int _seekVersion = 0;  // Seek版本号，用于取消旧的Seek操作
 
         // BGRA 帧缓冲
         private byte[]? _bgraBuffer;
@@ -166,16 +177,54 @@ namespace TrimVideo
                 if (VideoHeight <= 0) VideoHeight = 16;
             }
 
-            // 打开解码器
+            // 打开解码器 - 优先尝试硬件解码器
             int codecId = CodecParCtx.CodecId(codecPar);
-            IntPtr codec = FF.avcodec_find_decoder(codecId);
-            if (codec == IntPtr.Zero) { DebugLog.Write($"Open: decoder not found codecId={codecId}"); return false; }
+            
+            // 尝试打开硬件解码器
+            IntPtr codec = TryOpenHardwareDecoder(codecId);
+            bool useHardware = (codec != IntPtr.Zero);
+            
+            if (!useHardware)
+            {
+                // 硬件解码器不可用，回退到软件解码器
+                codec = FF.avcodec_find_decoder(codecId);
+                if (codec == IntPtr.Zero) { DebugLog.Write($"Open: decoder not found codecId={codecId}"); return false; }
+                DebugLog.Write($"Open: using software decoder (hardware not available)");
+            }
+
+            // 读取解码器名称（AVCodec.name 在偏移0处）
+            IntPtr namePtr = Marshal.ReadIntPtr(codec, 0);
+            DecoderName = Marshal.PtrToStringAnsi(namePtr) ?? "";
+            DebugLog.Write($"Open: decoder name = {DecoderName} (hardware={useHardware})");
 
             _codecCtx = FF.avcodec_alloc_context3(codec);
             FF.avcodec_parameters_to_context(_codecCtx, codecPar);
             IntPtr opts = IntPtr.Zero;
             int openRet = FF.avcodec_open2(_codecCtx, codec, ref opts);
-            if (openRet < 0) { DebugLog.Write($"Open: avcodec_open2 failed ret={openRet}"); return false; }
+            if (openRet < 0) 
+            { 
+                DebugLog.Write($"Open: avcodec_open2 failed ret={openRet}");
+                if (useHardware)
+                {
+                    // 硬件解码器打开失败，回退到软件解码器
+                    DebugLog.Write($"Open: hardware decoder failed, fallback to software decoder");
+                    codec = FF.avcodec_find_decoder(codecId);
+                    if (codec == IntPtr.Zero) { DebugLog.Write($"Open: software decoder not found codecId={codecId}"); return false; }
+                    
+                    namePtr = Marshal.ReadIntPtr(codec, 0);
+                    DecoderName = Marshal.PtrToStringAnsi(namePtr) ?? "";
+                    
+                    _codecCtx = FF.avcodec_alloc_context3(codec);
+                    FF.avcodec_parameters_to_context(_codecCtx, codecPar);
+                    opts = IntPtr.Zero;
+                    openRet = FF.avcodec_open2(_codecCtx, codec, ref opts);
+                    if (openRet < 0) { DebugLog.Write($"Open: software avcodec_open2 failed ret={openRet}"); return false; }
+                }
+                else
+                {
+                    return false;
+                }
+            }
 
             // 分配包/帧
             _pkt   = FF.av_packet_alloc();
@@ -188,6 +237,80 @@ namespace TrimVideo
             SeekTo(0);
 
             return true;
+        }
+
+        /// <summary>
+        /// 尝试打开硬件解码器，按优先级尝试不同的硬件加速方案
+        /// </summary>
+        private IntPtr TryOpenHardwareDecoder(int codecId)
+        {
+            // 根据 codec ID 获取可能的硬件解码器名称列表
+            var hardwareDecoderNames = GetHardwareDecoderNames(codecId);
+            if (hardwareDecoderNames == null || hardwareDecoderNames.Length == 0)
+            {
+                DebugLog.Write($"TryOpenHardwareDecoder: no hardware decoder names for codecId={codecId}");
+                return IntPtr.Zero;
+            }
+
+            foreach (var decoderName in hardwareDecoderNames)
+            {
+                DebugLog.Write($"TryOpenHardwareDecoder: trying decoder '{decoderName}'");
+                IntPtr codec = FF.avcodec_find_decoder_by_name(decoderName);
+                if (codec == IntPtr.Zero)
+                {
+                    DebugLog.Write($"TryOpenHardwareDecoder: decoder '{decoderName}' not found");
+                    continue;
+                }
+
+                // 尝试打开这个解码器
+                IntPtr codecCtx = FF.avcodec_alloc_context3(codec);
+                if (codecCtx == IntPtr.Zero)
+                {
+                    DebugLog.Write($"TryOpenHardwareDecoder: avcodec_alloc_context3 failed for '{decoderName}'");
+                    continue;
+                }
+
+                IntPtr opts = IntPtr.Zero;
+                int openRet = FF.avcodec_open2(codecCtx, codec, ref opts);
+                if (openRet < 0)
+                {
+                    DebugLog.Write($"TryOpenHardwareDecoder: avcodec_open2 failed for '{decoderName}' ret={openRet}");
+                    FF.avcodec_free_context(ref codecCtx);
+                    continue;
+                }
+
+                DebugLog.Write($"TryOpenHardwareDecoder: successfully opened hardware decoder '{decoderName}'");
+                // 注意：这里我们不释放 codecCtx，因为调用者需要使用它
+                // 但是我们需要设置 _codecCtx，这会在 Open 方法中处理
+                FF.avcodec_free_context(ref codecCtx); // 先释放，让 Open 方法重新创建
+                return codec; // 返回 codec 指针，让 Open 方法使用它
+            }
+
+            DebugLog.Write($"TryOpenHardwareDecoder: all hardware decoders failed for codecId={codecId}");
+            return IntPtr.Zero;
+        }
+
+        /// <summary>
+        /// 根据 codec ID 获取可能的硬件解码器名称列表（按优先级排序）
+        /// </summary>
+        private string[]? GetHardwareDecoderNames(int codecId)
+        {
+            switch (codecId)
+            {
+                case FF.AV_CODEC_ID_H264:
+                    return new[] { "h264_cuvid", "h264_qsv", "h264_dxva2" };
+                case FF.AV_CODEC_ID_HEVC:
+                    return new[] { "hevc_cuvid", "hevc_qsv", "hevc_dxva2" };
+                case FF.AV_CODEC_ID_VP9:
+                    return new[] { "vp9_cuvid", "vp9_qsv" };
+                case FF.AV_CODEC_ID_AV1:
+                    return new[] { "av1_cuvid", "av1_qsv" };
+                case FF.AV_CODEC_ID_MPEG4:
+                case FF.AV_CODEC_ID_MPEG2VIDEO:
+                default:
+                    DebugLog.Write($"GetHardwareDecoderNames: no hardware decoder for codecId={codecId}");
+                    return null;
+            }
         }
 
         public void Close()
@@ -280,15 +403,20 @@ namespace TrimVideo
             bool wasPlaying = _isPlaying;
             if (wasPlaying) Pause();
 
+            // 递增Seek版本号，用于取消旧的Seek操作
+            int myVersion = Interlocked.Increment(ref _seekVersion);
+
             lock (_seekLock)
             {
-                DoSeekAndDecode(seconds);
+                // 检查是否被取消（有新的Seek请求）
+                if (myVersion != _seekVersion) return;
+                DoSeekAndDecode(seconds, myVersion);
             }
 
             if (wasPlaying) Resume();
         }
 
-        private void DoSeekAndDecode(double seconds)
+        private void DoSeekAndDecode(double seconds, int seekVersion)
         {
             long ts = (long)(seconds * FF.AV_TIME_BASE);
             FF.avformat_seek_file(_fmtCtx, -1, long.MinValue, ts, ts, 0);
@@ -299,6 +427,9 @@ namespace TrimVideo
             int tries = 0;
             while (!got && tries++ < 300)
             {
+                // 检查是否被取消（有新的Seek请求）
+                if (seekVersion != _seekVersion) { DebugLog.Write($"DoSeekAndDecode({seconds:F3}) CANCELLED at tries={tries}"); return; }
+
                 FF.av_packet_unref(_pkt);
                 int r = FF.av_read_frame(_fmtCtx, _pkt);
                 if (r < 0) break;
@@ -307,6 +438,9 @@ namespace TrimVideo
                 FF.avcodec_send_packet(_codecCtx, _pkt);
                 while (FF.avcodec_receive_frame(_codecCtx, _frame) == 0)
                 {
+                    // 检查是否被取消
+                    if (seekVersion != _seekVersion) { DebugLog.Write($"DoSeekAndDecode({seconds:F3}) CANCELLED in receive_frame tries={tries}"); return; }
+
                     double frameSec = PtsToSeconds(FrameCtx.Pts(_frame));
                     if (frameSec >= seconds - 1.0 / FrameRate)
                     {
@@ -460,92 +594,148 @@ namespace TrimVideo
 
         private unsafe void ConvertAndPresent()
         {
-            int w = FrameCtx.Width(_frame);
-            int h = FrameCtx.Height(_frame);
-            int fmt = FrameCtx.Format(_frame);
-
-            if (w <= 0 || h <= 0) { DebugLog.Write($"ConvertAndPresent: invalid wh w={w} h={h} fmt={fmt}"); return; }
-
-            // 确保 swsCtx 与缓冲区匹配当前帧尺寸
-            bool swsNeedRebuild = (_swsCtx == IntPtr.Zero) || w != VideoWidth || h != VideoHeight;
-            if (swsNeedRebuild)
+            DebugLog.Write($"[ConvertAndPresent] ENTER _positionSec={_positionSec:F3}");
+            lock (_convertLock)
             {
-                DebugLog.Write($"ConvertAndPresent: rebuild sws w={w} h={h} fmt={fmt}");
-                if (_swsCtx != IntPtr.Zero) { FF.sws_freeContext(_swsCtx); _swsCtx = IntPtr.Zero; }
-                _swsCtx = FF.sws_getContext(w, h, fmt, w, h, FF.AV_PIX_FMT_BGRA,
-                    FF.SWS_FAST_BILINEAR, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
-                if (_swsCtx == IntPtr.Zero)
+                DebugLog.Write($"[ConvertAndPresent] LOCKED");
+                int w = FrameCtx.Width(_frame);
+                int h = FrameCtx.Height(_frame);
+                int fmt = FrameCtx.Format(_frame);
+
+                if (w <= 0 || h <= 0) { DebugLog.Write($"ConvertAndPresent: invalid wh w={w} h={h} fmt={fmt}"); return; }
+
+                // 检查是否是硬件帧（像素格式 >= 200 通常是硬件格式）
+                IntPtr frameToUse = _frame;
+                bool isHardwareFrame = fmt >= 200; // AV_PIX_FMT_HWACCEL_START
+                IntPtr transferredFrame = IntPtr.Zero;
+                
+                if (isHardwareFrame && IsHardwareDecoding)
                 {
-                    DebugLog.Write($"ConvertAndPresent: sws_getContext returned NULL for fmt={fmt}");
+                    DebugLog.Write($"ConvertAndPresent: hardware frame detected fmt={fmt}, transferring to CPU");
+                    // 创建一帧用于接收转移后的数据
+                    transferredFrame = FF.av_frame_alloc();
+                    if (transferredFrame == IntPtr.Zero)
+                    {
+                        DebugLog.Write($"ConvertAndPresent: av_frame_alloc failed for transfer");
+                        return;
+                    }
+                    
+                    // 将硬件帧转移到CPU
+                    int transferRet = FF.av_hwframe_transfer_data(transferredFrame, _frame, 0);
+                    if (transferRet < 0)
+                    {
+                        DebugLog.Write($"ConvertAndPresent: av_hwframe_transfer_data failed ret={transferRet}");
+                        FF.av_frame_free(ref transferredFrame);
+                        return;
+                    }
+                    
+                    frameToUse = transferredFrame;
+                    w = FrameCtx.Width(frameToUse);
+                    h = FrameCtx.Height(frameToUse);
+                    fmt = FrameCtx.Format(frameToUse);
+                    DebugLog.Write($"ConvertAndPresent: transferred frame w={w} h={h} fmt={fmt}");
                 }
-                VideoWidth  = w;
-                VideoHeight = h;
-                EnsureBitmapAndBuffer(w, h);
-            }
-            else if (_bgraBuffer == null || _bgraBuffer.Length != w * 4 * h)
-            {
-                EnsureBitmapAndBuffer(w, h);
-            }
 
-            if (_bgraBuffer == null || _swsCtx == IntPtr.Zero) { DebugLog.Write("ConvertAndPresent: buffer or sws null, skip"); return; }
-
-            fixed (byte* dstPtr = _bgraBuffer)
-            {
-                byte*[] dstPlanes  = { dstPtr };
-                int[]   dstStrides = { _bgraStride };
-
-                byte*[] srcPlanes = {
-                    (byte*)FrameCtx.Data(_frame, 0),
-                    (byte*)FrameCtx.Data(_frame, 1),
-                    (byte*)FrameCtx.Data(_frame, 2),
-                };
-                int[] srcStrides = {
-                    FrameCtx.LineSize(_frame, 0),
-                    FrameCtx.LineSize(_frame, 1),
-                    FrameCtx.LineSize(_frame, 2),
-                };
-
-                fixed (byte** dstPlanesPtr  = dstPlanes)
-                fixed (int*   dstStridesPtr = dstStrides)
-                fixed (byte** srcPlanesPtr  = srcPlanes)
-                fixed (int*   srcStridesPtr = srcStrides)
-                {
-                    FF.sws_scale(_swsCtx,
-                        srcPlanesPtr, srcStridesPtr, 0, h,
-                        dstPlanesPtr, dstStridesPtr);
-                }
-            }
-
-            // 复制到 UI 线程的 WriteableBitmap
-            byte[] buf = _bgraBuffer!;
-            double posSec = _positionSec;
-            int srcW = w, srcH = h;
-
-            _dispatcher.BeginInvoke(DispatcherPriority.Render, () =>
-            {
-                if (VideoFrame == null) { DebugLog.Write("Present: VideoFrame=null, skip"); return; }
-                int expected = VideoFrame.PixelWidth * VideoFrame.PixelHeight * 4;
-                if (buf.Length != expected)
-                {
-                    DebugLog.Write($"Present: size mismatch buf={buf.Length} expected={expected} VF={VideoFrame.PixelWidth}x{VideoFrame.PixelHeight} src={srcW}x{srcH}");
-                    return;
-                }
                 try
                 {
-                    VideoFrame.Lock();
-                    Marshal.Copy(buf, 0, VideoFrame.BackBuffer, buf.Length);
-                    VideoFrame.AddDirtyRect(new Int32Rect(0, 0, VideoFrame.PixelWidth, VideoFrame.PixelHeight));
-                }
-                catch (Exception ex)
-                {
-                    DebugLog.Write($"Present: EXCEPTION {ex.GetType().Name}: {ex.Message}");
+                    // 确保 swsCtx 与缓冲区匹配当前帧尺寸
+                    bool swsNeedRebuild = (_swsCtx == IntPtr.Zero) || w != VideoWidth || h != VideoHeight;
+                    if (swsNeedRebuild)
+                    {
+                        DebugLog.Write($"ConvertAndPresent: rebuild sws w={w} h={h} fmt={fmt}");
+                        if (_swsCtx != IntPtr.Zero) { FF.sws_freeContext(_swsCtx); _swsCtx = IntPtr.Zero; }
+                        _swsCtx = FF.sws_getContext(w, h, fmt, w, h, FF.AV_PIX_FMT_BGRA,
+                            FF.SWS_FAST_BILINEAR, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                        if (_swsCtx == IntPtr.Zero)
+                        {
+                            DebugLog.Write($"ConvertAndPresent: sws_getContext returned NULL for fmt={fmt}");
+                        }
+                        VideoWidth  = w;
+                        VideoHeight = h;
+                        EnsureBitmapAndBuffer(w, h);
+                    }
+                    else if (_bgraBuffer == null || _bgraBuffer.Length != w * 4 * h)
+                    {
+                        EnsureBitmapAndBuffer(w, h);
+                    }
+
+                    if (_bgraBuffer == null || _swsCtx == IntPtr.Zero) { DebugLog.Write("ConvertAndPresent: buffer or sws null, skip"); return; }
+
+                    fixed (byte* dstPtr = _bgraBuffer)
+                    {
+                        byte*[] dstPlanes  = { dstPtr };
+                        int[]   dstStrides = { _bgraStride };
+
+                        byte*[] srcPlanes = {
+                            (byte*)FrameCtx.Data(frameToUse, 0),
+                            (byte*)FrameCtx.Data(frameToUse, 1),
+                            (byte*)FrameCtx.Data(frameToUse, 2),
+                        };
+                        int[] srcStrides = {
+                            FrameCtx.LineSize(frameToUse, 0),
+                            FrameCtx.LineSize(frameToUse, 1),
+                            FrameCtx.LineSize(frameToUse, 2),
+                        };
+
+                        fixed (byte** dstPlanesPtr  = dstPlanes)
+                        fixed (int*   dstStridesPtr = dstStrides)
+                        fixed (byte** srcPlanesPtr  = srcPlanes)
+                        fixed (int*   srcStridesPtr = srcStrides)
+                        {
+                            FF.sws_scale(_swsCtx,
+                                srcPlanesPtr, srcStridesPtr, 0, h,
+                                dstPlanesPtr, dstStridesPtr);
+                        }
+                    }
+
+                    // 复制到 UI 线程的 WriteableBitmap
+                    byte[] buf = _bgraBuffer!;
+                    double posSec = _positionSec;
+                    int srcW = w, srcH = h;
+
+                    _dispatcher.BeginInvoke(DispatcherPriority.Send, () =>
+                    {
+                        DebugLog.Write($"[BeginInvoke] START posSec={posSec:F3}");
+                        if (VideoFrame == null) { DebugLog.Write("Present: VideoFrame=null, skip"); return; }
+                        int expected = VideoFrame.PixelWidth * VideoFrame.PixelHeight * 4;
+                        if (buf.Length != expected)
+                        {
+                            DebugLog.Write($"Present: size mismatch buf={buf.Length} expected={expected} VF={VideoFrame.PixelWidth}x{VideoFrame.PixelHeight} src={srcW}x{srcH}");
+                            return;
+                        }
+                        try
+                        {
+                            DebugLog.Write($"[BeginInvoke] Lock start");
+                            VideoFrame.Lock();
+                            DebugLog.Write($"[BeginInvoke] Marshal.Copy start buf.Length={buf.Length}");
+                            Marshal.Copy(buf, 0, VideoFrame.BackBuffer, buf.Length);
+                            DebugLog.Write($"[BeginInvoke] AddDirtyRect start");
+                            VideoFrame.AddDirtyRect(new Int32Rect(0, 0, VideoFrame.PixelWidth, VideoFrame.PixelHeight));
+                        }
+                        catch (Exception ex)
+                        {
+                            DebugLog.Write($"Present: EXCEPTION {ex.GetType().Name}: {ex.Message}");
+                        }
+                        finally
+                        {
+                            DebugLog.Write($"[BeginInvoke] Unlock");
+                            VideoFrame.Unlock();
+                        }
+                        DebugLog.Write($"[BeginInvoke] after Unlock, before FrameDecoded");
+                        FrameDecoded?.Invoke(posSec);
+                        DebugLog.Write($"[BeginInvoke] END posSec={posSec:F3}");
+                    });
                 }
                 finally
                 {
-                    VideoFrame.Unlock();
+                    // 清理转移后的帧
+                    if (transferredFrame != IntPtr.Zero)
+                    {
+                        FF.av_frame_free(ref transferredFrame);
+                    }
                 }
-                FrameDecoded?.Invoke(posSec);
-            });
+            }
+            DebugLog.Write($"[ConvertAndPresent] EXIT");
         }
 
         #endregion

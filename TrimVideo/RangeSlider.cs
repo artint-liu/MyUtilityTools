@@ -90,6 +90,7 @@ namespace TrimVideo
         public event EventHandler<double>? LowerValueChanged;
         public event EventHandler<double>? UpperValueChanged;
         public event EventHandler<double>? ValueChanged;
+        public event EventHandler<double>? DragCompleted;  // 拖拽完成时触发（鼠标释放）
 
         private static void OnRangeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
@@ -146,6 +147,9 @@ namespace TrimVideo
         private double _dragStartLower;
         private double _dragStartUpper;
         private DragTarget _hoverTarget = DragTarget.None;
+
+        /// <summary>是否正在拖拽播放头</summary>
+        public bool IsDraggingPlayhead { get; private set; }
 
         #endregion
 
@@ -320,6 +324,8 @@ namespace TrimVideo
             UpdateHover(pos.X, pos.Y);
         }
 
+        private int _dragMoveCount = 0;  // 拖拽移动计数，用于节流渲染让步
+
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
@@ -346,6 +352,12 @@ namespace TrimVideo
                         break;
                     case DragTarget.Playhead:
                         Value = Math.Max(Minimum, Math.Min(XToValue(x), Maximum));
+                        // 拖拽播放头时，定期让出控制权给渲染线程，确保画面更新
+                        _dragMoveCount++;
+                        if (_dragMoveCount % 3 == 0)
+                        {
+                            Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
+                        }
                         break;
                 }
             }
@@ -376,6 +388,10 @@ namespace TrimVideo
             if (_focusTarget != prevFocus)
                 InvalidateVisual();
 
+            // 如果是拖拽播放头，设置标志
+            if (_dragTarget == DragTarget.Playhead)
+                IsDraggingPlayhead = true;
+
             CaptureMouse();
 
             // 点击上方轨道空白区域不做操作；点击下方轨道移动播放头
@@ -388,6 +404,14 @@ namespace TrimVideo
         protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
         {
             base.OnMouseLeftButtonUp(e);
+            
+            // 如果是拖拽播放头，触发DragCompleted事件
+            if (_dragTarget == DragTarget.Playhead && IsDraggingPlayhead)
+            {
+                DragCompleted?.Invoke(this, Value);
+            }
+            
+            IsDraggingPlayhead = false;
             _dragTarget = DragTarget.None;
             ReleaseMouseCapture();
             var pos = e.GetPosition(this);
