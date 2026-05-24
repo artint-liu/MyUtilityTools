@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using NAudio.Wave;
 
 namespace TrimVideo
 {
@@ -21,19 +22,34 @@ namespace TrimVideo
         private static readonly object _sync = new();
         private static bool _started;
 
+        /// <summary>只输出包含这些关键字的日志（不区分大小写），为空则输出全部</summary>
+        private static readonly string[] FilterKeywords = new[] { "audio", "Audio", "swr", "wave", "Wave", "OpenAudio", "DecodeAudio", "StartAudio", "StopAudio", "ClearAudio", "SetupAudio" };
+
         public static string FilePath => LogPath;
 
         public static void Write(string msg)
         {
             try
             {
+                // 过滤：只输出音频相关日志
+                if (FilterKeywords != null && FilterKeywords.Length > 0)
+                {
+                    bool match = false;
+                    foreach (var kw in FilterKeywords)
+                    {
+                        if (msg.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                        { match = true; break; }
+                    }
+                    if (!match) return;
+                }
+
                 lock (_sync)
                 {
                     if (!_started)
                     {
                         _started = true;
                         File.WriteAllText(LogPath,
-                            $"==== TrimVideo debug log started {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===={Environment.NewLine}");
+                            $"==== TrimVideo debug log started {DateTime.Now:yyyy-MM-dd HH:mm:ss} (audio only) ===={Environment.NewLine}");
                     }
                     File.AppendAllText(LogPath,
                         $"[{DateTime.Now:HH:mm:ss.fff}] [T{Thread.CurrentThread.ManagedThreadId}] {msg}{Environment.NewLine}");
@@ -75,6 +91,27 @@ namespace TrimVideo
 
         public bool IsPlaying => _isPlaying;
 
+        /// <summary>音量（0.0 ~ 1.0），默认 1.0</summary>
+        public float Volume
+        {
+            get => _volume;
+            set
+            {
+                _volume = Math.Clamp(value, 0f, 1f);
+                if (_waveOut != null)
+                    _waveOut.Volume = _volume;
+            }
+        }
+
+        /// <summary>是否有音频流</summary>
+        public bool HasAudio => _audioStreamIdx >= 0;
+
+        /// <summary>音频采样率（Hz），无音频时为 0</summary>
+        public int AudioSampleRate => _audioStreamIdx >= 0 ? _audioSampleRate : 0;
+
+        /// <summary>音频声道数，无音频时为 0</summary>
+        public int AudioChannels => _audioStreamIdx >= 0 ? _audioChannels : 0;
+
         /// <summary>每帧解码完成，在 UI 线程上触发，参数为当前时间(秒)</summary>
         public event Action<double>? FrameDecoded;
 
@@ -99,6 +136,23 @@ namespace TrimVideo
 
         private int _videoStreamIdx = -1;
         private AVRational _videoTimeBase;
+
+        // 音频 FFmpeg 句柄
+        private IntPtr _audioCodecCtx = IntPtr.Zero;
+        private IntPtr _audioFrame    = IntPtr.Zero;
+        private IntPtr _swrCtx        = IntPtr.Zero;
+        private int _audioStreamIdx   = -1;
+        private AVRational _audioTimeBase;
+        private int _audioSampleRate;
+        private int _audioChannels;
+        private int _audioInputSampleFmt; // 原始采样格式
+
+        // 音频播放（NAudio）
+        private WaveOutEvent? _waveOut;
+        private BufferedWaveProvider? _waveProvider;
+        private float _volume = 1.0f;
+        private int _audioDecodedCount;
+        private bool _audioInitLogged;
 
         // 播放控制
         private volatile bool _isPlaying;
@@ -230,6 +284,18 @@ namespace TrimVideo
             _pkt   = FF.av_packet_alloc();
             _frame = FF.av_frame_alloc();
 
+            // ── 查找并打开音频流 ──
+            _audioStreamIdx = FF.av_find_best_stream(_fmtCtx, FF.AVMEDIA_TYPE_AUDIO, -1, -1, ref dummyDecoder, 0);
+            if (_audioStreamIdx >= 0)
+            {
+                try { OpenAudioStream(); }
+                catch (Exception ex) { DebugLog.Write($"Open: audio stream open failed: {ex.Message}"); _audioStreamIdx = -1; }
+            }
+            else
+            {
+                DebugLog.Write("Open: no audio stream found");
+            }
+
             // 准备 WriteableBitmap（UI 线程）
             EnsureBitmapAndBuffer(VideoWidth, VideoHeight);
 
@@ -313,6 +379,272 @@ namespace TrimVideo
             }
         }
 
+        #region 音频初始化与解码
+
+        /// <summary>打开音频流、创建解码器、初始化重采样和播放器</summary>
+        private void OpenAudioStream()
+        {
+            IntPtr aStream = FmtCtx.Stream(_fmtCtx, _audioStreamIdx);
+            _audioTimeBase = StreamCtx.TimeBase(aStream);
+            IntPtr aCodecPar = StreamCtx.CodecPar(aStream);
+
+            int audioCodecId = CodecParCtx.CodecId(aCodecPar);
+            IntPtr audioCodec = FF.avcodec_find_decoder(audioCodecId);
+            if (audioCodec == IntPtr.Zero) { DebugLog.Write($"OpenAudio: decoder not found codecId={audioCodecId}"); _audioStreamIdx = -1; return; }
+
+            _audioCodecCtx = FF.avcodec_alloc_context3(audioCodec);
+            FF.avcodec_parameters_to_context(_audioCodecCtx, aCodecPar);
+            IntPtr opts = IntPtr.Zero;
+            int openRet = FF.avcodec_open2(_audioCodecCtx, audioCodec, ref opts);
+            if (openRet < 0) { DebugLog.Write($"OpenAudio: avcodec_open2 failed ret={openRet}"); FF.avcodec_free_context(ref _audioCodecCtx); _audioStreamIdx = -1; return; }
+
+            // 读取音频参数
+            _audioInputSampleFmt = CodecParCtx.Format(aCodecPar);
+            if (_audioInputSampleFmt < 0)
+            {
+                // 格式未知时默认用 FLTP（最常见），等第一帧解码后自动修正
+                DebugLog.Write($"OpenAudio: sample format unknown ({_audioInputSampleFmt}), defaulting to FLTP(9)");
+                _audioInputSampleFmt = 9; // AV_SAMPLE_FMT_FLTP
+            }
+            long srVal;
+            FF.av_opt_get_int(_audioCodecCtx, "sample_rate", 0, out srVal);
+            _audioSampleRate = (int)srVal;
+            if (_audioSampleRate <= 0) _audioSampleRate = 44100;
+
+            long chVal;
+            int chRet = FF.av_opt_get_int(_audioCodecCtx, "channels", 0, out chVal);
+            _audioChannels = (chRet >= 0 && chVal > 0) ? (int)chVal : 2;
+
+            DebugLog.Write($"OpenAudio: ok, sr={_audioSampleRate} ch={_audioChannels} fmt={_audioInputSampleFmt} tb={_audioTimeBase.num}/{_audioTimeBase.den}");
+
+            // 分配音频帧
+            _audioFrame = FF.av_frame_alloc();
+
+            // 初始化 NAudio 播放器（输出 S16, 相同采样率, 相同声道数）
+            var wf = new WaveFormat(_audioSampleRate, 16, _audioChannels);
+            DebugLog.Write($"OpenAudio: WaveFormat: {wf}");
+
+            _waveProvider = new BufferedWaveProvider(wf)
+            {
+                BufferDuration = TimeSpan.FromSeconds(3),
+                DiscardOnBufferOverflow = true,
+                ReadFully = true  // 缓冲为空时返回静音，保持播放连续
+            };
+
+            _waveOut = new WaveOutEvent { DesiredLatency = 100 };
+            _waveOut.Init(_waveProvider);
+            _waveOut.Volume = _volume;
+            DebugLog.Write($"OpenAudio: WaveOutEvent initialized, Volume={_volume}");
+
+            // 初始化 swresample（将解码格式转换为 S16 packed）
+            SetupAudioResampler();
+        }
+
+        /// <summary>设置 swresample 上下文</summary>
+        private void SetupAudioResampler()
+        {
+            if (_swrCtx != IntPtr.Zero) { FF.swr_free(ref _swrCtx); }
+
+            long chMask = GetChLayoutMask(_audioChannels);
+            var inLayout = AVChannelLayout.FromMask(_audioChannels, (ulong)chMask);
+            var outLayout = AVChannelLayout.FromMask(_audioChannels, (ulong)chMask);
+
+            DebugLog.Write($"SetupAudioResampler: inCh={_audioChannels} mask=0x{chMask:X} inSr={_audioSampleRate} inFmt={_audioInputSampleFmt}");
+
+            // 优先使用 swr_alloc_set_opts2（FFmpeg 5.1+，接受 AVChannelLayout 结构体）
+            IntPtr ctx = IntPtr.Zero;
+            bool ok = false;
+            try
+            {
+                int ret2 = FF.swr_alloc_set_opts2(ref ctx, ref outLayout, FF.AV_SAMPLE_FMT_S16, _audioSampleRate,
+                    ref inLayout, _audioInputSampleFmt, _audioSampleRate, 0, IntPtr.Zero);
+                if (ret2 >= 0 && ctx != IntPtr.Zero)
+                {
+                    _swrCtx = ctx;
+                    int initRet = FF.swr_init(_swrCtx);
+                    if (initRet >= 0)
+                    {
+                        DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts2 + swr_init OK");
+                        ok = true;
+                    }
+                    else
+                    {
+                        DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts2 OK but swr_init FAILED ret={initRet}");
+                        FF.swr_free(ref _swrCtx);
+                    }
+                }
+                else
+                {
+                    DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts2 FAILED ret={ret2} ctx={ctx}");
+                    if (ctx != IntPtr.Zero) FF.swr_free(ref ctx);
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts2 exception: {ex.Message}");
+                if (ctx != IntPtr.Zero) FF.swr_free(ref ctx);
+            }
+
+            if (ok) return;
+
+            // Fallback: swr_alloc_set_opts（旧版 API，接受 int64 channel layout mask）
+            DebugLog.Write("SetupAudioResampler: falling back to swr_alloc_set_opts...");
+            try
+            {
+                IntPtr ctx2 = FF.swr_alloc_set_opts(IntPtr.Zero,
+                    chMask, FF.AV_SAMPLE_FMT_S16, _audioSampleRate,
+                    chMask, _audioInputSampleFmt, _audioSampleRate,
+                    0, IntPtr.Zero);
+                if (ctx2 != IntPtr.Zero)
+                {
+                    int initRet = FF.swr_init(ctx2);
+                    if (initRet >= 0)
+                    {
+                        _swrCtx = ctx2;
+                        DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts fallback OK");
+                        return;
+                    }
+                    else
+                    {
+                        DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts fallback swr_init FAILED ret={initRet}");
+                        FF.swr_free(ref ctx2);
+                    }
+                }
+                else
+                {
+                    DebugLog.Write("SetupAudioResampler: swr_alloc_set_opts returned NULL (function not available?)");
+                }
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Write($"SetupAudioResampler: swr_alloc_set_opts exception: {ex.Message}");
+            }
+
+            DebugLog.Write("SetupAudioResampler: ALL methods failed, audio will not work");
+        }
+
+        /// <summary>根据声道数获取 FFmpeg channel layout mask</summary>
+        private static long GetChLayoutMask(int channels) => channels switch
+        {
+            1 => FF.AV_CH_LAYOUT_MONO,
+            2 => FF.AV_CH_LAYOUT_STEREO,
+            3 => FF.AV_CH_LAYOUT_2POINT1,
+            6 => FF.AV_CH_LAYOUT_5POINT1,
+            _ => FF.AV_CH_LAYOUT_STEREO
+        };
+
+        /// <summary>解码音频帧并送入播放缓冲区</summary>
+        private unsafe void DecodeAudioFrame()
+        {
+            if (_swrCtx == IntPtr.Zero)
+            {
+                if (!_audioInitLogged) { DebugLog.Write("DecodeAudioFrame: _swrCtx is NULL, skipping all audio"); _audioInitLogged = true; }
+                return;
+            }
+            if (_waveProvider == null) return;
+
+            // 检查实际解码帧的格式是否与 resampler 初始化时不同，若不同则重建
+            int actualFmt = FrameCtx.Format(_audioFrame);
+            if (actualFmt != _audioInputSampleFmt && actualFmt >= 0)
+            {
+                DebugLog.Write($"DecodeAudioFrame: frame format changed! expected={_audioInputSampleFmt} actual={actualFmt}, rebuilding resampler");
+                _audioInputSampleFmt = actualFmt;
+                SetupAudioResampler();
+                if (_swrCtx == IntPtr.Zero) return;
+            }
+
+            int nbSamples = FrameCtx.NbSamples(_audioFrame);
+            if (nbSamples <= 0) return;
+
+            // 限制音频缓冲不超过 1 秒，避免解码过快导致内存增长
+            if (_waveProvider.BufferedDuration > TimeSpan.FromSeconds(1))
+                return;
+
+            // 输出缓冲区：S16 packed = nbSamples * channels * 2 bytes，额外空间给重采样
+            int outBufSize = (nbSamples + 256) * _audioChannels * 2;
+            byte[] outBuf = new byte[outBufSize];
+
+            // 准备输入平面指针
+            // FFmpeg sample format enum: U8=0,S16=1,S32=2,FLT=3,DBL=4,S64=5, U8P=6,S16P=7,S32P=8,FLTP=9,DBLP=10,S64P=11
+            bool isPlanar = _audioInputSampleFmt >= 6; // planar 格式从 AV_SAMPLE_FMT_U8P=6 开始
+            int inPlanes = isPlanar ? _audioChannels : 1;
+            IntPtr[] inDataArr = new IntPtr[inPlanes];
+            for (int i = 0; i < inPlanes; i++)
+                inDataArr[i] = FrameCtx.Data(_audioFrame, i);
+
+            fixed (byte* outBufPtr = outBuf)
+            {
+                IntPtr outPlanePtr = (IntPtr)outBufPtr;
+
+                fixed (IntPtr* inDataPtr = inDataArr)
+                {
+                    int outSamples = FF.swr_convert(_swrCtx,
+                        (byte**)&outPlanePtr, nbSamples + 256,
+                        (byte**)inDataPtr, nbSamples);
+
+                    if (outSamples > 0)
+                    {
+                        int bytesToCopy = outSamples * _audioChannels * 2;
+                        _waveProvider.AddSamples(outBuf, 0, bytesToCopy);
+                        _audioDecodedCount++;
+                        if (_audioDecodedCount <= 5 || _audioDecodedCount % 100 == 0)
+                            DebugLog.Write($"DecodeAudioFrame: #{_audioDecodedCount} outSamples={outSamples} bytes={bytesToCopy} bufferedMs={_waveProvider.BufferedDuration.TotalMilliseconds:F0}");
+                    }
+                    else if (outSamples == 0)
+                    {
+                        DebugLog.Write($"DecodeAudioFrame: swr_convert returned 0, inFmt={_audioInputSampleFmt} isPlanar={isPlanar} inPlanes={inPlanes} nbSamples={nbSamples}");
+                    }
+                    else
+                    {
+                        DebugLog.Write($"DecodeAudioFrame: swr_convert FAILED ret={outSamples}");
+                    }
+                }
+            }
+        }
+
+        /// <summary>清除音频播放缓冲区</summary>
+        private void ClearAudioBuffer()
+        {
+            _waveProvider?.ClearBuffer();
+        }
+
+        /// <summary>开始音频播放</summary>
+        private void StartAudioPlayback()
+        {
+            if (_waveOut != null && _waveOut.PlaybackState != PlaybackState.Playing)
+            {
+                try
+                {
+                    _waveOut.Play();
+                    DebugLog.Write($"StartAudioPlayback: OK, state={_waveOut.PlaybackState}");
+                }
+                catch (Exception ex) { DebugLog.Write($"StartAudioPlayback: FAILED {ex.GetType().Name}: {ex.Message}"); }
+            }
+        }
+
+        /// <summary>暂停音频播放</summary>
+        private void PauseAudioPlayback()
+        {
+            if (_waveOut != null && _waveOut.PlaybackState == PlaybackState.Playing)
+            {
+                try { _waveOut.Pause(); }
+                catch (Exception ex) { DebugLog.Write($"PauseAudioPlayback: {ex.Message}"); }
+            }
+        }
+
+        /// <summary>停止音频播放并清空缓冲</summary>
+        private void StopAudioPlayback()
+        {
+            if (_waveOut != null)
+            {
+                try { _waveOut.Stop(); }
+                catch (Exception ex) { DebugLog.Write($"StopAudioPlayback: {ex.Message}"); }
+            }
+            ClearAudioBuffer();
+        }
+
+        #endregion
+
         public void Close()
         {
             Stop();
@@ -323,6 +655,18 @@ namespace TrimVideo
 
         private void FreeFFmpeg()
         {
+            // 释放音频资源
+            StopAudioPlayback();
+            _waveOut?.Dispose();
+            _waveOut = null;
+            _waveProvider = null;
+
+            if (_swrCtx != IntPtr.Zero) { FF.swr_free(ref _swrCtx); }
+            if (_audioFrame != IntPtr.Zero) { FF.av_frame_free(ref _audioFrame); }
+            if (_audioCodecCtx != IntPtr.Zero) { FF.avcodec_free_context(ref _audioCodecCtx); }
+            _audioStreamIdx = -1;
+
+            // 释放视频资源
             if (_swsCtx != IntPtr.Zero) { FF.sws_freeContext(_swsCtx); _swsCtx = IntPtr.Zero; }
             if (_frame  != IntPtr.Zero) { FF.av_frame_free(ref _frame); }
             if (_pkt    != IntPtr.Zero) { FF.av_packet_free(ref _pkt); }
@@ -346,6 +690,7 @@ namespace TrimVideo
                 if (startSec >= 0) _playStart = startSec;
                 if (endSec   >= 0) _playEnd   = endSec;
                 _isPlaying = true;
+                StartAudioPlayback();
                 DebugLog.Write($"Play: resume existing thread start={_playStart:F3} end={_playEnd:F3}");
                 return;
             }
@@ -370,16 +715,25 @@ namespace TrimVideo
         {
             _isPlaying     = false;
             _stopRequested = true;
+            StopAudioPlayback();
             _decodeThread?.Join(800);
         }
 
-        public void Pause() => _isPlaying = false;
+        public void Pause()
+        {
+            _isPlaying = false;
+            PauseAudioPlayback();
+        }
+
         public void Resume()
         {
             if (_decodeThread == null || !_decodeThread.IsAlive)
                 Play(_positionSec, _playEnd);
             else
+            {
                 _isPlaying = true;
+                StartAudioPlayback();
+            }
         }
 
         /// <summary>
@@ -421,6 +775,9 @@ namespace TrimVideo
             long ts = (long)(seconds * FF.AV_TIME_BASE);
             FF.avformat_seek_file(_fmtCtx, -1, long.MinValue, ts, ts, 0);
             FF.avcodec_flush_buffers(_codecCtx);
+            if (_audioCodecCtx != IntPtr.Zero)
+                FF.avcodec_flush_buffers(_audioCodecCtx);
+            ClearAudioBuffer();
 
             // 读到第一个完整视频帧
             bool got = false;
@@ -433,7 +790,12 @@ namespace TrimVideo
                 FF.av_packet_unref(_pkt);
                 int r = FF.av_read_frame(_fmtCtx, _pkt);
                 if (r < 0) break;
-                if (PktCtx.GetStreamIndex(_pkt) != _videoStreamIdx) continue;
+
+                int streamIdx = PktCtx.GetStreamIndex(_pkt);
+                if (streamIdx == _audioStreamIdx)
+                    continue; // seek 期间跳过音频包
+                if (streamIdx != _videoStreamIdx)
+                    continue;
 
                 FF.avcodec_send_packet(_codecCtx, _pkt);
                 while (FF.avcodec_receive_frame(_codecCtx, _frame) == 0)
@@ -469,12 +831,16 @@ namespace TrimVideo
                     long ts = (long)(_playStart * FF.AV_TIME_BASE);
                     FF.avformat_seek_file(_fmtCtx, -1, long.MinValue, ts, ts, 0);
                     FF.avcodec_flush_buffers(_codecCtx);
+                    if (_audioCodecCtx != IntPtr.Zero)
+                        FF.avcodec_flush_buffers(_audioCodecCtx);
+                    ClearAudioBuffer();
                 }
 
                 var frameTimer = System.Diagnostics.Stopwatch.StartNew();
                 double frameDuration = FrameRate > 0 ? 1.0 / FrameRate : 1.0 / 25.0;
                 double nextFrameTime = 0;
                 int frameCount = 0;
+                double lastVideoPts = -1; // 用于音画同步
 
                 while (!_stopRequested)
                 {
@@ -484,16 +850,20 @@ namespace TrimVideo
                     if (_stopRequested) break;
 
                     int r;
-                    bool isVideoPkt;
+                    int streamIdx;
                     lock (_seekLock)
                     {
                         FF.av_packet_unref(_pkt);
                         r = FF.av_read_frame(_fmtCtx, _pkt);
-                        isVideoPkt = (r >= 0) && (PktCtx.GetStreamIndex(_pkt) == _videoStreamIdx);
+                        streamIdx = (r >= 0) ? PktCtx.GetStreamIndex(_pkt) : -1;
 
-                        if (r >= 0 && isVideoPkt)
+                        if (r >= 0 && streamIdx == _videoStreamIdx)
                         {
                             FF.avcodec_send_packet(_codecCtx, _pkt);
+                        }
+                        else if (r >= 0 && streamIdx == _audioStreamIdx && _audioCodecCtx != IntPtr.Zero)
+                        {
+                            FF.avcodec_send_packet(_audioCodecCtx, _pkt);
                         }
                     }
 
@@ -502,51 +872,102 @@ namespace TrimVideo
                         // EOF
                         DebugLog.Write($"DecodeLoop: EOF (av_read_frame={r}), frames={frameCount}");
                         _isPlaying = false;
+                        StopAudioPlayback();
                         _dispatcher.BeginInvoke(() => PlaybackEnded?.Invoke());
                         break;
                     }
 
-                    if (!isVideoPkt) continue;
-
-                    // 在 lock 外做解码 receive + 渲染（耗时操作不阻塞 SeekTo）
-                    while (true)
+                    if (streamIdx == _videoStreamIdx)
                     {
-                        int recvRet;
-                        lock (_seekLock)
+                        // 在 lock 外做解码 receive + 渲染（耗时操作不阻塞 SeekTo）
+                        while (true)
                         {
-                            recvRet = FF.avcodec_receive_frame(_codecCtx, _frame);
+                            int recvRet;
+                            lock (_seekLock)
+                            {
+                                recvRet = FF.avcodec_receive_frame(_codecCtx, _frame);
+                            }
+                            if (recvRet != 0) break;
+
+                            double frameSec = PtsToSeconds(FrameCtx.Pts(_frame));
+                            _positionSec = frameSec;
+                            lastVideoPts = frameSec;
+                            frameCount++;
+
+                            if (frameCount <= 3 || frameCount % 60 == 0)
+                                DebugLog.Write($"DecodeLoop: frame#{frameCount} sec={frameSec:F3} _playStart={_playStart:F3} _playEnd={_playEnd:F3}");
+
+                            // Seek 会落到最近关键帧，可能早于 _playStart，跳过这些帧避免滑块回跳
+                            if (frameSec < _playStart - 0.001)
+                                continue;
+
+                            if (_playEnd < double.MaxValue && frameSec >= _playEnd - frameDuration * 0.5)
+                            {
+                                DebugLog.Write($"DecodeLoop: reached end frameSec={frameSec:F3}");
+                                _isPlaying = false;
+                                StopAudioPlayback();
+                                _dispatcher.BeginInvoke(() => PlaybackEnded?.Invoke());
+                                return;
+                            }
+
+                            // 帧率限速
+                            double elapsed = frameTimer.Elapsed.TotalSeconds;
+                            double wait = nextFrameTime - elapsed;
+                            if (wait > 0.002) Thread.Sleep((int)(wait * 1000));
+                            nextFrameTime = frameTimer.Elapsed.TotalSeconds + frameDuration;
+
+                            ConvertAndPresent();
+
+                            if (_stopRequested) return;
                         }
-                        if (recvRet != 0) break;
-
-                        double frameSec = PtsToSeconds(FrameCtx.Pts(_frame));
-                        _positionSec = frameSec;
-                        frameCount++;
-
-                        if (frameCount <= 3 || frameCount % 60 == 0)
-                            DebugLog.Write($"DecodeLoop: frame#{frameCount} sec={frameSec:F3} _playStart={_playStart:F3} _playEnd={_playEnd:F3}");
-
-                        // Seek 会落到最近关键帧，可能早于 _playStart，跳过这些帧避免滑块回跳
-                        if (frameSec < _playStart - 0.001)
-                            continue;
-
-                        if (_playEnd < double.MaxValue && frameSec >= _playEnd - frameDuration * 0.5)
-                        {
-                            DebugLog.Write($"DecodeLoop: reached end frameSec={frameSec:F3}");
-                            _isPlaying = false;
-                            _dispatcher.BeginInvoke(() => PlaybackEnded?.Invoke());
-                            return;
-                        }
-
-                        // 帧率限速
-                        double elapsed = frameTimer.Elapsed.TotalSeconds;
-                        double wait = nextFrameTime - elapsed;
-                        if (wait > 0.002) Thread.Sleep((int)(wait * 1000));
-                        nextFrameTime = frameTimer.Elapsed.TotalSeconds + frameDuration;
-
-                        ConvertAndPresent();
-
-                        if (_stopRequested) return;
                     }
+                    else if (streamIdx == _audioStreamIdx && _audioCodecCtx != IntPtr.Zero)
+                    {
+                        // 解码音频帧
+                        int audioFrameCount = 0;
+                        while (true)
+                        {
+                            int recvRet;
+                            lock (_seekLock)
+                            {
+                                recvRet = FF.avcodec_receive_frame(_audioCodecCtx, _audioFrame);
+                            }
+                            if (recvRet != 0) break;
+
+                            audioFrameCount++;
+                            long rawPts = FrameCtx.Pts(_audioFrame);
+                            double audioPts = AudioPtsToSeconds(rawPts);
+
+                            // 音画同步：只在 seek 后丢弃严重过时的音频帧（落后视频 >2 秒）
+                            // 不丢弃"领先"的帧——音频解码天生快于视频，BufferedDuration 上限已控制内存
+                            if (lastVideoPts >= 0)
+                            {
+                                double diff = audioPts - lastVideoPts;
+                                if (diff < -2.0)
+                                {
+                                    DebugLog.Write($"DecodeLoop: audio frame DROPPED (stale) audioPts={audioPts:F3} videoPts={lastVideoPts:F3} diff={diff:F3}");
+                                    FF.av_frame_unref(_audioFrame);
+                                    continue;
+                                }
+                            }
+
+                            int nbSamples = FrameCtx.NbSamples(_audioFrame);
+                            int frameFmt = FrameCtx.Format(_audioFrame);
+                            if (audioFrameCount <= 3)
+                                DebugLog.Write($"DecodeLoop: audio frame#{audioFrameCount} pts={audioPts:F3} nbSamples={nbSamples} fmt={frameFmt}");
+
+                            DecodeAudioFrame();
+                            FF.av_frame_unref(_audioFrame);
+
+                            // 首次有音频数据时启动播放
+                            if (_waveOut != null && _waveOut.PlaybackState != PlaybackState.Playing && _isPlaying)
+                            {
+                                DebugLog.Write($"DecodeLoop: starting audio playback, bufferedMs={_waveProvider?.BufferedDuration.TotalMilliseconds:F0}");
+                                StartAudioPlayback();
+                            }
+                        }
+                    }
+                    // 其他流（字幕等）直接跳过
                 }
             }
             catch (Exception ex)
@@ -746,6 +1167,12 @@ namespace TrimVideo
         {
             if (pts == FF.AV_NOPTS_VALUE) return _positionSec;
             return pts * _videoTimeBase.ToDouble();
+        }
+
+        private double AudioPtsToSeconds(long pts)
+        {
+            if (pts == FF.AV_NOPTS_VALUE) return _positionSec;
+            return pts * _audioTimeBase.ToDouble();
         }
 
         #endregion

@@ -10,11 +10,20 @@ namespace TrimVideo
         internal const string AvCodec     = "avcodec-62";
         internal const string AvUtil      = "avutil-60";
         internal const string SwScale     = "swscale-9";
+        internal const string SwResample  = "swresample-6";
 
         internal const int AV_PIX_FMT_BGRA      = 28;
         internal const int AVMEDIA_TYPE_VIDEO    = 0;
         internal const int AVMEDIA_TYPE_AUDIO    = 1;
         internal const int SWS_FAST_BILINEAR     = 1;
+
+        // 音频相关常量
+        internal const int AV_SAMPLE_FMT_S16     = 1;    // signed 16-bit, packed
+        internal const long AV_CH_LAYOUT_MONO    = 0x4;  // FC
+        internal const long AV_CH_LAYOUT_STEREO  = 0x3;  // FL+FR
+        internal const long AV_CH_LAYOUT_2POINT1 = 0xB;  // FL+FR+LFE
+        internal const long AV_CH_LAYOUT_SURROUND= 0x7;  // FL+FR+FC
+        internal const long AV_CH_LAYOUT_5POINT1 = 0x3F; // FL+FR+FC+LFE+BL+BR
         internal const long AV_NOPTS_VALUE       = unchecked((long)0x8000000000000000L);
         internal const int AV_TIME_BASE          = 1000000;
         internal const int AVIO_FLAG_WRITE       = 2;
@@ -103,6 +112,10 @@ namespace TrimVideo
         internal static extern void av_log_set_level(int level);
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
         internal static extern long av_rescale_q(long a, AVRational bq, AVRational cq);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int av_opt_get_int(IntPtr obj, [MarshalAs(UnmanagedType.LPStr)] string name, int search_flags, out long out_val);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int av_opt_set_int(IntPtr obj, [MarshalAs(UnmanagedType.LPStr)] string name, long val, int search_flags);
 
         // swscale
         [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
@@ -111,6 +124,24 @@ namespace TrimVideo
         internal static extern unsafe int sws_scale(IntPtr c, byte** srcSlice, int* srcStride, int srcSliceY, int srcSliceH, byte** dst, int* dstStride);
         [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void sws_freeContext(IntPtr swsContext);
+
+        // swresample
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr swr_alloc();
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int swr_init(IntPtr s);
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern unsafe int swr_convert(IntPtr s, byte** out_data, int out_count, byte** in_data, int in_count);
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void swr_free(ref IntPtr s);
+
+        /// <summary>swr_alloc_set_opts2 — FFmpeg 5.1+ 推荐的 swresample 初始化方式，接受 AVChannelLayout 结构体</summary>
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int swr_alloc_set_opts2(ref IntPtr ps, ref AVChannelLayout out_ch_layout, int out_sample_fmt, int out_sample_rate, ref AVChannelLayout in_ch_layout, int in_sample_fmt, int in_sample_rate, int log_offset, IntPtr log_ctx);
+
+        /// <summary>swr_alloc_set_opts — 旧版 API（已废弃但仍可能在 FFmpeg 7.x 中可用），作为 fallback</summary>
+        [DllImport(SwResample, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr swr_alloc_set_opts(IntPtr s, long out_ch_layout, int out_sample_fmt, int out_sample_rate, long in_ch_layout, int in_sample_fmt, int in_sample_rate, int log_offset, IntPtr log_ctx);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -120,6 +151,22 @@ namespace TrimVideo
         public int den;
         public double ToDouble() => den != 0 ? (double)num / den : 0;
         public static readonly AVRational AV_TIME_BASE_Q = new AVRational { num = 1, den = 1000000 };
+    }
+
+    /// <summary>
+    /// AVChannelLayout — FFmpeg 5.1+ 新的声道布局结构体
+    /// order: 0=UNSPEC, 1=NATIVE(用mask), 2=CUSTOM(用map), 3=AMBI
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AVChannelLayout
+    {
+        public int Order;       // AV_CHANNEL_ORDER_NATIVE = 1
+        public int NbChannels;
+        public ulong Mask;      // union u.mask (和 u.map 指针共享 8 字节)
+        public IntPtr Opaque;
+
+        public static AVChannelLayout FromMask(int nbChannels, ulong mask)
+            => new AVChannelLayout { Order = 1, NbChannels = nbChannels, Mask = mask, Opaque = IntPtr.Zero };
     }
 
     // ── 字段偏移（已通过运行时诊断确认，FFmpeg 8.1.1 x64）─────────────────────────
@@ -157,9 +204,10 @@ namespace TrimVideo
     /// <summary>AVCodecParameters 字段偏移（FFmpeg 8.1.1 x64 实测）</summary>
     internal static class CodecParCtx
     {
-        // codec_type @ 0,  codec_id @ 4,  width @ 72,  height @ 76
+        // codec_type @ 0,  codec_id @ 4,  format @ 28,  width @ 72,  height @ 76
         public static int CodecType(IntPtr p) => Marshal.ReadInt32(p, 0);
         public static int CodecId(IntPtr p)   => Marshal.ReadInt32(p, 4);
+        public static int Format(IntPtr p)    => Marshal.ReadInt32(p, 28);
         public static int Width(IntPtr p)     => Marshal.ReadInt32(p, 72);
         public static int Height(IntPtr p)    => Marshal.ReadInt32(p, 76);
     }
@@ -185,6 +233,7 @@ namespace TrimVideo
         public static int    LineSize(IntPtr f, int plane) => Marshal.ReadInt32(f, 64 + plane * 4);
         public static int    Width(IntPtr f)  => Marshal.ReadInt32(f, 104);
         public static int    Height(IntPtr f) => Marshal.ReadInt32(f, 108);
+        public static int    NbSamples(IntPtr f) => Marshal.ReadInt32(f, 112);
         public static int    Format(IntPtr f) => Marshal.ReadInt32(f, 116);
         public static long   Pts(IntPtr f)    => Marshal.ReadInt64(f, 136);
     }

@@ -125,6 +125,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <Button x:Name="BtnPlayPause" Grid.Column="0" Style="{StaticResource FlatButton}"
@@ -179,7 +180,17 @@
                     </ToggleButton.Style>
                 </ToggleButton>
 
+                <!-- 音量控制 -->
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource Label}" Text="🔊" FontSize="14" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <Slider x:Name="VolumeSlider" Width="90" Minimum="0" Maximum="100" Value="100"
+                            VerticalAlignment="Center"
+                            ToolTip="音量控制"
+                            AutoToolTipPlacement="TopLeft" AutoToolTipPrecision="0"
+                            ValueChanged="VolumeSlider_ValueChanged"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="16,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="当前: "/>
                     <TextBlock x:Name="TxtCurrentTime" Foreground="White" FontFamily="Consolas"
                                FontSize="13" Text="00:00" MinWidth="65"/>
@@ -188,7 +199,7 @@
                                FontSize="13" Text="00:00" MinWidth="65"/>
                 </StackPanel>
 
-                <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
                     <TextBlock Style="{StaticResource Label}" Text="入点: "/>
                     <TextBlock x:Name="TxtStartTime" Foreground="#4CAF50" FontFamily="Consolas"
                                FontSize="13" Text="00:00" MinWidth="65"/>
@@ -200,11 +211,11 @@
                                FontSize="13" Text="00:00" MinWidth="65"/>
                 </StackPanel>
 
-                <Button x:Name="BtnPreviewSegment" Grid.Column="5" Style="{StaticResource FlatButton}"
+                <Button x:Name="BtnPreviewSegment" Grid.Column="6" Style="{StaticResource FlatButton}"
                         Content="▶ 预览片段" Click="BtnPreviewSegment_Click" Margin="0,0,6,0" IsEnabled="False"/>
-                <Button x:Name="BtnResetRange" Grid.Column="6" Style="{StaticResource FlatButton}"
+                <Button x:Name="BtnResetRange" Grid.Column="7" Style="{StaticResource FlatButton}"
                         Content="↩ 重置" Click="BtnResetRange_Click" Margin="0,0,6,0" IsEnabled="False"/>
-                <Button x:Name="BtnTrim" Grid.Column="7" Style="{StaticResource PrimaryButton}"
+                <Button x:Name="BtnTrim" Grid.Column="8" Style="{StaticResource PrimaryButton}"
                         Content="✂ 保存裁剪" Click="BtnTrim_Click" IsEnabled="False"/>
             </Grid>
         </Border>

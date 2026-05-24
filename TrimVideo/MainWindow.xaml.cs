@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -42,7 +42,8 @@ namespace TrimVideo
         {
             InitializeComponent();
 
-            DebugLog.Write($"MainWindow ctor; log file = {DebugLog.FilePath}");
+
+
 
             _ffmpegDir = FindFfmpegDir();
             if (_ffmpegDir != null)
@@ -156,7 +157,6 @@ namespace TrimVideo
 
         private async System.Threading.Tasks.Task OpenVideoAsync(string path)
         {
-            DebugLog.Write($"OpenVideoAsync: {path}");
             if (!File.Exists(path)) { SetStatus($"文件不存在：{path}", true); return; }
             if (_ffmpegDir == null) { SetStatus("FFmpeg 未就绪", true); return; }
 
@@ -181,19 +181,18 @@ namespace TrimVideo
             _videoInfo = await System.Threading.Tasks.Task.Run(() => _trimmer?.GetVideoInfo(path));
             if (_videoInfo == null)
             {
-                DebugLog.Write("OpenVideoAsync: GetVideoInfo returned null");
                 SetStatus("无法读取视频信息", true);
                 TxtNoFile.Visibility = Visibility.Visible;
                 return;
             }
-            DebugLog.Write($"OpenVideoAsync: VideoInfo dur={_videoInfo.Duration:F3} fps={_videoInfo.FrameRate:F2} {_videoInfo.Width}x{_videoInfo.Height}");
+
+
 
             // 初始化播放器
             var player = new FFmpegPlayer(Dispatcher);
             bool ok = await System.Threading.Tasks.Task.Run(() => player.Open(path, _ffmpegDir));
             if (!ok)
             {
-                DebugLog.Write("OpenVideoAsync: player.Open returned false");
                 player.Dispose();
                 SetStatus("无法打开视频", true);
                 return;
@@ -204,9 +203,11 @@ namespace TrimVideo
             _player.PlaybackEnded  += OnPlaybackEnded;
             _player.VideoFrameChanged += OnVideoFrameChanged;
 
+            // 绑定音量
+            _player.Volume = (float)(VolumeSlider.Value / 100.0);
+
             // 绑定 WriteableBitmap 到 Image
             VideoImage.Source = _player.VideoFrame;
-            DebugLog.Write($"OpenVideoAsync: VideoImage.Source bound, VF={(_player.VideoFrame==null?"null":_player.VideoFrame.PixelWidth+"x"+_player.VideoFrame.PixelHeight)}");
 
             // 更新 UI
             double total = _videoInfo.Duration;
@@ -223,8 +224,12 @@ namespace TrimVideo
             TxtSegDuration.Text  = FormatTime(total);
             TxtCurrentTime.Text  = FormatTime(0);
             string decodeType = _player.IsHardwareDecoding ? "硬解码" : "软解码";
-            TxtVideoInfo.Text    = $"{_videoInfo.Width}x{_videoInfo.Height}  {_videoInfo.VideoCodec} ({decodeType})  {fps:F2}fps  {FormatFileSize(_videoInfo.FileSizeBytes)}";
-            TxtFilePath.Text     = $"{Path.GetFileName(path)} - {_videoInfo.VideoCodec} ({decodeType})";
+            string audioInfo = _player.HasAudio ? $"  {_videoInfo.AudioCodec}" : "  无音频";
+            TxtVideoInfo.Text    = $"{_videoInfo.Width}x{_videoInfo.Height}  {_videoInfo.VideoCodec} ({decodeType}){audioInfo}  {fps:F2}fps  {FormatFileSize(_videoInfo.FileSizeBytes)}";
+            string audioPart = _player.HasAudio
+                ? $"{_videoInfo.AudioCodec} {_player.AudioSampleRate / 1000.0:0.#}kHz {_player.AudioChannels}ch"
+                : "无音频";
+            TxtFilePath.Text     = $"{Path.GetFileName(path)} - {_videoInfo.VideoCodec} ({decodeType}) / {audioPart}";
 
             _videoLoaded = true;
             SetControlsEnabled(true);
@@ -232,7 +237,16 @@ namespace TrimVideo
             _lastKeyFrameSearchPos = -1;
             UpdateKeyFrameMarker(0);
             RangeSlider.Focus();
-            DebugLog.Write("OpenVideoAsync: done, _videoLoaded=true");
+        }
+
+        #endregion
+
+        #region 音量控制
+
+        private void VolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_player != null)
+                _player.Volume = (float)(e.NewValue / 100.0);
         }
 
         #endregion
@@ -241,37 +255,29 @@ namespace TrimVideo
 
         private void OnFrameDecoded(double positionSec)
         {
-            DebugLog.Write($"[OnFrameDecoded] ENTER pos={positionSec:F3} _isScrubbing={_isScrubbing} _isPlaying={_isPlaying} IsDraggingPlayhead={RangeSlider.IsDraggingPlayhead}");
             // 拖拽时允许处理回调（IsDraggingPlayhead=true时，即使_isScrubbing=true也不跳过）
-            if (_isScrubbing && !RangeSlider.IsDraggingPlayhead) { DebugLog.Write($"[OnFrameDecoded] EXIT _isScrubbing=true and not dragging"); return; }
             // 暂停时（且非拖拽），不让异步解码回调覆盖用户控制的位置
-            if (!_isPlaying && !RangeSlider.IsDraggingPlayhead) { DebugLog.Write($"[OnFrameDecoded] EXIT not playing and not dragging"); return; }
 
             // 拖拽播放头时，不更新滑块位置（由鼠标控制），只更新时间显示
             // 但必须强制VideoImage重绘，否则画面不更新（UI线程被拖拽事件阻塞）
             if (RangeSlider.IsDraggingPlayhead)
             {
-                DebugLog.Write($"[OnFrameDecoded] Dragging - update time and force redraw pos={positionSec:F3} VI.Vis={VideoImage.Visibility} VI.Actual={VideoImage.ActualWidth}x{VideoImage.ActualHeight}");
                 TxtCurrentTime.Text = FormatTime(positionSec);
                 // 强制VideoImage重绘，确保WriteableBitmap的更新立即显示
                 VideoImage.InvalidateVisual();
                 // 强制处理渲染队列，让WPF立即渲染
                 Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
-                DebugLog.Write($"[OnFrameDecoded] EXIT dragging");
                 return;
             }
 
-            DebugLog.Write($"[OnFrameDecoded] Normal update pos={positionSec:F3}");
             _isScrubbing = true;
             RangeSlider.Value   = positionSec;
             TxtCurrentTime.Text = FormatTime(positionSec);
             _isScrubbing = false;
-            DebugLog.Write($"[OnFrameDecoded] EXIT normal");
         }
 
         private void OnPlaybackEnded()
         {
-            DebugLog.Write("MainWindow.OnPlaybackEnded");
 
             bool loop = ChkLoop.IsChecked == true;
 
@@ -300,7 +306,6 @@ namespace TrimVideo
         private void OnVideoFrameChanged()
         {
             // VideoFrame 因尺寸变化被重建，需要重新绑定到 Image
-            DebugLog.Write("MainWindow.OnVideoFrameChanged: rebind VideoImage.Source");
             if (_player != null)
                 VideoImage.Source = _player.VideoFrame;
         }
@@ -311,8 +316,6 @@ namespace TrimVideo
 
         private void BtnPlayPause_Click(object sender, RoutedEventArgs e)
         {
-            DebugLog.Write($"BtnPlayPause_Click: _videoLoaded={_videoLoaded} _player={(_player==null?"null":"ok")} _isPlaying={_isPlaying} _isPreviewingSegment={_isPreviewingSegment}");
-            if (!_videoLoaded || _player == null) { DebugLog.Write("BtnPlayPause_Click: ignored (not loaded)"); return; }
 
             if (_isPreviewingSegment)
             {
@@ -325,7 +328,6 @@ namespace TrimVideo
                 _player.Pause();
                 _isPlaying           = false;
                 IconPlayPause.Data = Geometry.Parse(PathPlay);
-                DebugLog.Write("BtnPlayPause_Click: Pause");
             }
             else
             {
@@ -343,7 +345,6 @@ namespace TrimVideo
                     _isScrubbing = false;
                 }
 
-                DebugLog.Write($"BtnPlayPause_Click: invoking Play start={start:F3} end={end:F3} Position={_player.Position:F3} Duration={_player.Duration:F3}");
                 RangeSlider.ClearFocus();
                 _player.Play(startSec: start, endSec: end);
                 _isPlaying           = true;
@@ -464,7 +465,6 @@ namespace TrimVideo
                 if (RangeSlider.IsDraggingPlayhead)
                 {
                     // 拖拽播放头：只记录目标位置，由OnRendering中节流执行Seek
-                    DebugLog.Write($"[UI] ValueChanged drag val={val:F3}");
                     _pendingSeekPosition = val;
                     // 订阅Rendering事件（如果还没订阅）
                     if (!_isSubscribedRendering)
@@ -476,7 +476,6 @@ namespace TrimVideo
                 else
                 {
                     // 非拖拽：立即Seek
-                    DebugLog.Write($"[UI] ValueChanged non-drag val={val:F3}");
                     bool wasPlaying = _isPlaying;
                     if (wasPlaying) _player.Pause();
 
@@ -526,7 +525,6 @@ namespace TrimVideo
             _pendingSeekPosition = -1; // 重置，避免重复Seek
             _seekStopwatch.Restart();
             
-            DebugLog.Write($"[Rendering] SeekTo start pos={pos:F3}");
             
             bool wasPlaying = _player.IsPlaying;
             if (wasPlaying) _player.Pause();
@@ -535,7 +533,6 @@ namespace TrimVideo
             _isScrubbing = false;
             if (wasPlaying) _player.Resume();
             
-            DebugLog.Write($"[Rendering] SeekTo done pos={pos:F3}");
         }
 
         private void UpdateSegDuration()
