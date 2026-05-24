@@ -388,17 +388,14 @@ namespace TrimVideo
             if (_focusTarget != prevFocus)
                 InvalidateVisual();
 
-            // 如果是拖拽播放头，设置标志
+            // 如果是拖拽播放头，设置标志并立即更新播放头位置
             if (_dragTarget == DragTarget.Playhead)
+            {
                 IsDraggingPlayhead = true;
+                Value = Math.Max(Minimum, Math.Min(XToValue(x), Maximum));
+            }
 
             CaptureMouse();
-
-            // 点击上方轨道空白区域不做操作；点击下方轨道移动播放头
-            if (_dragTarget == DragTarget.None)
-            {
-                // 上方轨道空白 - 不自动移动播放头
-            }
         }
 
         protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)

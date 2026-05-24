@@ -28,6 +28,7 @@ namespace TrimVideo
         internal const int AV_TIME_BASE          = 1000000;
         internal const int AVIO_FLAG_WRITE       = 2;
         internal const int AV_PKT_FLAG_KEY       = 0x0001;
+        internal const int AVSEEK_FLAG_BACKWARD  = 1;     // seek to the closest keyframe before ts
 
         // 常用 Codec ID (FFmpeg 8.x)
         internal const int AV_CODEC_ID_H264 = 27;

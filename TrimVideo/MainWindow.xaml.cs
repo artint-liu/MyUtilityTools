@@ -255,25 +255,28 @@ namespace TrimVideo
 
         private void OnFrameDecoded(double positionSec)
         {
-            // 拖拽时允许处理回调（IsDraggingPlayhead=true时，即使_isScrubbing=true也不跳过）
-            // 暂停时（且非拖拽），不让异步解码回调覆盖用户控制的位置
-
             // 拖拽播放头时，不更新滑块位置（由鼠标控制），只更新时间显示
             // 但必须强制VideoImage重绘，否则画面不更新（UI线程被拖拽事件阻塞）
             if (RangeSlider.IsDraggingPlayhead)
             {
                 TxtCurrentTime.Text = FormatTime(positionSec);
-                // 强制VideoImage重绘，确保WriteableBitmap的更新立即显示
                 VideoImage.InvalidateVisual();
-                // 强制处理渲染队列，让WPF立即渲染
                 Dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render);
                 return;
             }
 
-            _isScrubbing = true;
-            RangeSlider.Value   = positionSec;
+            // 播放中：更新滑块位置以跟踪播放进度
+            // 暂停时：不更新滑块，避免过期的异步解码回调覆盖用户设置的位置
+            if (_isPlaying)
+            {
+                _isScrubbing = true;
+                RangeSlider.Value   = positionSec;
+                _isScrubbing = false;
+            }
+            // 暂停时不更新滑块位置——用户设定的位置应保持不变，
+            // 实际解码帧可能与目标略有偏差，但不应回弹滑块
+
             TxtCurrentTime.Text = FormatTime(positionSec);
-            _isScrubbing = false;
         }
 
         private void OnPlaybackEnded()
@@ -331,19 +334,10 @@ namespace TrimVideo
             }
             else
             {
-                // 若播放头已到末尾，从头开始
-                double start = _player.Position;
+                // 从滑块位置开始播放（而非 _player.Position，后者可能与目标有偏差）
+                double start = RangeSlider.Value;
                 double end   = _player.Duration;
                 if (start >= end - 0.05) start = 0;
-
-                // 暂停期间 _positionSec 可能比滑块位置略前，同步滑块避免恢复时跳动
-                if (Math.Abs(RangeSlider.Value - start) > 0.002)
-                {
-                    _isScrubbing = true;
-                    RangeSlider.Value   = start;
-                    TxtCurrentTime.Text = FormatTime(start);
-                    _isScrubbing = false;
-                }
 
                 RangeSlider.ClearFocus();
                 _player.Play(startSec: start, endSec: end);
@@ -417,7 +411,6 @@ namespace TrimVideo
             UpdateSegDuration();
             UpdateKeyFrameMarker(val);
 
-            // 拖拽入点时，视频跳转到入点位置显示对应画面
             if (!_isScrubbing && _videoLoaded && _player != null)
             {
                 if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
@@ -428,7 +421,6 @@ namespace TrimVideo
                 _isScrubbing = false;
             }
 
-            // 预览片段中调整起始点，实时更新播放边界
             if (_isPreviewingSegment && _player != null)
                 _player.UpdatePlayBounds(startSec: val, endSec: null);
         }
@@ -439,7 +431,6 @@ namespace TrimVideo
             TxtEndTime.Text = FormatTime(val);
             UpdateSegDuration();
 
-            // 拖拽出点时，视频跳转到出点位置显示对应画面
             if (!_isScrubbing && _videoLoaded && _player != null)
             {
                 if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
@@ -450,7 +441,6 @@ namespace TrimVideo
                 _isScrubbing = false;
             }
 
-            // 预览片段中调整结束点，实时更新播放边界
             if (_isPreviewingSegment && _player != null)
                 _player.UpdatePlayBounds(startSec: null, endSec: val);
         }
@@ -464,9 +454,7 @@ namespace TrimVideo
             {
                 if (RangeSlider.IsDraggingPlayhead)
                 {
-                    // 拖拽播放头：只记录目标位置，由OnRendering中节流执行Seek
                     _pendingSeekPosition = val;
-                    // 订阅Rendering事件（如果还没订阅）
                     if (!_isSubscribedRendering)
                     {
                         _isSubscribedRendering = true;
@@ -475,22 +463,15 @@ namespace TrimVideo
                 }
                 else
                 {
-                    // 非拖拽：立即Seek
-                    bool wasPlaying = _isPlaying;
-                    if (wasPlaying) _player.Pause();
-
                     _isScrubbing = true;
                     _player.SeekTo(val);
                     _isScrubbing = false;
-
-                    if (wasPlaying) _player.Resume();
                 }
             }
         }
 
         private void RangeSlider_DragCompleted(object? sender, double val)
         {
-            // 拖拽结束：取消订阅Rendering事件，立即Seek到最终位置
             if (_isSubscribedRendering)
             {
                 _isSubscribedRendering = false;
@@ -500,14 +481,9 @@ namespace TrimVideo
 
             if (_videoLoaded && _player != null)
             {
-                bool wasPlaying = _isPlaying;
-                if (wasPlaying) _player.Pause();
-
                 _isScrubbing = true;
                 _player.SeekTo(val);
                 _isScrubbing = false;
-
-                if (wasPlaying) _player.Resume();
             }
         }
 
@@ -515,24 +491,17 @@ namespace TrimVideo
         
         private void OnRendering(object? sender, EventArgs e)
         {
-            // 在每一帧渲染前检查是否需要Seek（节流：至少间隔50ms才执行一次）
             double pos = _pendingSeekPosition;
             if (pos < 0 || _player == null || !_videoLoaded) return;
             
-            // 节流：距离上次Seek不足50ms则跳过
             if (_seekStopwatch.IsRunning && _seekStopwatch.ElapsedMilliseconds < 50) return;
             
-            _pendingSeekPosition = -1; // 重置，避免重复Seek
+            _pendingSeekPosition = -1;
             _seekStopwatch.Restart();
             
-            
-            bool wasPlaying = _player.IsPlaying;
-            if (wasPlaying) _player.Pause();
             _isScrubbing = true;
             _player.SeekTo(pos);
             _isScrubbing = false;
-            if (wasPlaying) _player.Resume();
-            
         }
 
         private void UpdateSegDuration()
