@@ -412,8 +412,10 @@ namespace TrimVideo
             RangeSlider.ClearFocus();
 
             // 判断当前位置是否在裁剪区间内
+            // 注意：移动结束位置时播放头会 Seek 到 hi，此时 curPos ≈ hi，
+            // 若从该处开始播放几乎立刻到达片段终点，故对接近 hi 的位置做特殊处理
             double curPos = _player.Position;
-            double startSec = (curPos >= lo && curPos < hi) ? curPos : lo;
+            double startSec = (curPos >= lo && curPos < hi - 0.5) ? curPos : lo;
 
             // 先停止当前播放，确保解码线程重新启动并 seek 到起点
             _player.Stop();
