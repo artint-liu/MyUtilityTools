@@ -444,6 +444,9 @@ namespace TrimVideo
             UpdateSegDuration();
             UpdateKeyFrameMarker(val);
 
+            if (_isPreviewingSegment)
+                StopPreview();
+
             if (!_isScrubbing && _videoLoaded && _player != null)
             {
                 if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
@@ -453,9 +456,6 @@ namespace TrimVideo
                 TxtCurrentTime.Text = FormatTime(val);
                 _isScrubbing = false;
             }
-
-            if (_isPreviewingSegment && _player != null)
-                _player.UpdatePlayBounds(startSec: val, endSec: null);
         }
 
         private void RangeSlider_UpperValueChanged(object? sender, double val)
@@ -464,6 +464,9 @@ namespace TrimVideo
             TxtEndTime.Text = FormatTime(val);
             UpdateSegDuration();
 
+            if (_isPreviewingSegment)
+                StopPreview();
+
             if (!_isScrubbing && _videoLoaded && _player != null)
             {
                 if (_isPlaying) { _player.Pause(); _isPlaying = false; IconPlayPause.Data = Geometry.Parse(PathPlay); }
@@ -473,9 +476,6 @@ namespace TrimVideo
                 TxtCurrentTime.Text = FormatTime(val);
                 _isScrubbing = false;
             }
-
-            if (_isPreviewingSegment && _player != null)
-                _player.UpdatePlayBounds(startSec: null, endSec: val);
         }
 
         private void RangeSlider_ValueChanged(object? sender, double val)
@@ -485,6 +485,9 @@ namespace TrimVideo
 
             if (!_isScrubbing && _videoLoaded && _player != null)
             {
+                if (_isPreviewingSegment)
+                    StopPreview();
+
                 if (RangeSlider.IsDraggingPlayhead)
                 {
                     _pendingSeekPosition = val;
