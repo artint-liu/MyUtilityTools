@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -27,12 +27,17 @@ namespace TrimVideo
         private bool _isScrubbing        = false;   // 防止播放头<->Seek 循环
         private bool _isPreviewingSegment = false;
         private bool _videoLoaded        = false;
+        private bool _fakePaused         = false;  // "假"暂停：暂停播放但不改变按钮状态，松开鼠标后恢复播放
         private string? _initialFile;                // 命令行传入的文件
         private double _lastKeyFrameSearchPos = -1;  // 上次搜索 I 帧的位置，避免重复搜索
 
         // 拖拽播放头时的节流控制
         private double _pendingSeekPosition = -1;
         private bool _isSubscribedRendering = false;
+
+        // 播放中点击跳转：防止 seek 完成前旧帧回弹滑块
+        private double _seekTargetTime = -1;
+        private readonly System.Diagnostics.Stopwatch _seekTargetStopwatch = new();
 
         #endregion
 
@@ -166,6 +171,7 @@ namespace TrimVideo
             _isPlaying            = false;
             _isScrubbing          = false;
             _isPreviewingSegment  = false;
+            _fakePaused           = false;
             IconPlayPause.Data    = Geometry.Parse(PathPlay);
             BtnPreviewSegment.Content = "▶ 预览片段";
             _videoLoaded = false;
@@ -257,7 +263,7 @@ namespace TrimVideo
         {
             // 拖拽播放头时，不更新滑块位置（由鼠标控制），只更新时间显示
             // 但必须强制VideoImage重绘，否则画面不更新（UI线程被拖拽事件阻塞）
-            if (RangeSlider.IsDraggingPlayhead)
+            if (RangeSlider.IsDraggingPlayhead || _fakePaused)
             {
                 TxtCurrentTime.Text = FormatTime(positionSec);
                 VideoImage.InvalidateVisual();
@@ -269,9 +275,23 @@ namespace TrimVideo
             // 暂停时：不更新滑块，避免过期的异步解码回调覆盖用户设置的位置
             if (_isPlaying)
             {
-                _isScrubbing = true;
-                RangeSlider.Value   = positionSec;
-                _isScrubbing = false;
+                // 如果正在等待 seek 完成，跳过滑块更新以防止旧帧回弹
+                // 只在解码位置到达或超过目标时才认为 seek 完成，防止滑块向后跳动
+                if (_seekTargetTime >= 0)
+                {
+                    if (positionSec >= _seekTargetTime - 0.1
+                        || _seekTargetStopwatch.ElapsedMilliseconds > 2000)
+                    {
+                        _seekTargetTime = -1;  // seek 完成（或超时），恢复正常更新
+                    }
+                    // 否则：仍在等待 seek 完成，不更新滑块位置
+                }
+                else
+                {
+                    _isScrubbing = true;
+                    RangeSlider.Value = positionSec;
+                    _isScrubbing = false;
+                }
             }
             // 暂停时不更新滑块位置——用户设定的位置应保持不变，
             // 实际解码帧可能与目标略有偏差，但不应回弹滑块
@@ -302,6 +322,7 @@ namespace TrimVideo
 
             _isPlaying          = false;
             _isPreviewingSegment = false;
+            _fakePaused          = false;
             IconPlayPause.Data       = Geometry.Parse(PathPlay);
             BtnPreviewSegment.Content = "▶ 预览片段";
         }
@@ -319,6 +340,16 @@ namespace TrimVideo
 
         private void BtnPlayPause_Click(object sender, RoutedEventArgs e)
         {
+            // 如果处于"假"暂停状态，先恢复真实暂停
+            if (_fakePaused)
+            {
+                _fakePaused = false;
+                // 不恢复播放，直接变为真实暂停状态
+                _player.Pause();
+                _isPlaying = false;
+                IconPlayPause.Data = Geometry.Parse(PathPlay);
+                return;
+            }
 
             if (_isPreviewingSegment)
             {
@@ -353,6 +384,7 @@ namespace TrimVideo
             _player.Stop();
             _player.SeekTo(0);
             _isPlaying           = false;
+            _fakePaused          = false;
             IconPlayPause.Data = Geometry.Parse(PathPlay);
             _isScrubbing          = true;
             RangeSlider.Value     = 0;
@@ -396,6 +428,7 @@ namespace TrimVideo
             _player?.Stop();
             _isPreviewingSegment      = false;
             _isPlaying                = false;
+            _fakePaused               = false;
             IconPlayPause.Data        = Geometry.Parse(PathPlay);
             BtnPreviewSegment.Content = "▶ 预览片段";
         }
@@ -470,6 +503,16 @@ namespace TrimVideo
             }
         }
 
+        private void RangeSlider_DragStarted(object? sender, double val)
+        {
+            if (_videoLoaded && _player != null && _isPlaying && !_fakePaused)
+            {
+                // 进入"假"暂停：暂停播放器但不修改按钮状态
+                _player.Pause();
+                _fakePaused = true;
+            }
+        }
+
         private void RangeSlider_DragCompleted(object? sender, double val)
         {
             if (_isSubscribedRendering)
@@ -481,9 +524,26 @@ namespace TrimVideo
 
             if (_videoLoaded && _player != null)
             {
+                if (_isPlaying)
+                {
+                    _seekTargetTime = val;
+                    _seekTargetStopwatch.Restart();
+                }
                 _isScrubbing = true;
                 _player.SeekTo(val);
                 _isScrubbing = false;
+            }
+
+            // 退出"假"暂停：从当前帧恢复播放
+            if (_fakePaused && _videoLoaded && _player != null)
+            {
+                _fakePaused = false;
+                // 使用 Play 而非 Resume，让解码线程从目标位置 async seek，
+                // 避免从同步 SeekTo 落后的关键帧位置继续导致滑块回弹
+                double start = val;
+                double end = _player.Duration;
+                if (start >= end - 0.05) start = 0;
+                _player.Play(startSec: start, endSec: end);
             }
         }
 

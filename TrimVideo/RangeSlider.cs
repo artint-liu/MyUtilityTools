@@ -90,6 +90,7 @@ namespace TrimVideo
         public event EventHandler<double>? LowerValueChanged;
         public event EventHandler<double>? UpperValueChanged;
         public event EventHandler<double>? ValueChanged;
+        public event EventHandler<double>? DragStarted;    // 拖拽开始时触发（鼠标按下）
         public event EventHandler<double>? DragCompleted;  // 拖拽完成时触发（鼠标释放）
 
         private static void OnRangeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -393,6 +394,7 @@ namespace TrimVideo
             {
                 IsDraggingPlayhead = true;
                 Value = Math.Max(Minimum, Math.Min(XToValue(x), Maximum));
+                DragStarted?.Invoke(this, Value);
             }
 
             CaptureMouse();

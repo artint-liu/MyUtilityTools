@@ -111,6 +111,7 @@
                                    LowerValueChanged="RangeSlider_LowerValueChanged"
                                    UpperValueChanged="RangeSlider_UpperValueChanged"
                                    ValueChanged="RangeSlider_ValueChanged"
+                                   DragStarted="RangeSlider_DragStarted"
                                    DragCompleted="RangeSlider_DragCompleted"/>
             </Grid>
         </Border>
