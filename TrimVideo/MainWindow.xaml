@@ -7,6 +7,7 @@
         Width="1100" Height="720"
         Background="#1E1E1E"
         WindowStartupLocation="CenterScreen"
+        Icon="pack://application:,,,/trimvideo.ico"
         Closing="Window_Closing">
 
     <Window.Resources>
