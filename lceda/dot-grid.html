@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>圆点阵列</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            cursor: default;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(22, 33, 62, 0.95);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            z-index: 1000;
+        }
+
+        .control-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .control-row label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #a0aec0;
+            min-width: 60px;
+        }
+
+        .control-row .value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #63b3ed;
+            min-width: 48px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #2d3748, #4a5568);
+            outline: none;
+            transition: background 0.2s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #63b3ed, #4299e1);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(66, 153, 225, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 12px rgba(66, 153, 225, 0.6);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #63b3ed, #4299e1);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(66, 153, 225, 0.4);
+        }
+
+        .info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #718096;
+            padding-top: 4px;
+            border-top: 1px solid #2d3748;
+        }
+
+        .info span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .info .num {
+            color: #a0aec0;
+            font-weight: 600;
+        }
+
+        .dot-size-control {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .dot-size-control label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #a0aec0;
+            min-width: 60px;
+        }
+
+        .dot-size-control .value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #63b3ed;
+            min-width: 36px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .dot-size-control input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #2d3748, #4a5568);
+            outline: none;
+        }
+
+        .dot-size-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f6ad55, #ed8936);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(237, 137, 54, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .dot-size-control input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 12px rgba(237, 137, 54, 0.6);
+        }
+
+        .dot-size-control input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f6ad55, #ed8936);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(237, 137, 54, 0.4);
+        }
+
+        .ring-control {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .ring-control label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #a0aec0;
+            min-width: 60px;
+        }
+
+        .ring-control .value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #68d391;
+            min-width: 36px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .ring-control input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #2d3748, #4a5568);
+            outline: none;
+        }
+
+        .ring-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #68d391, #48bb78);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(72, 187, 120, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .ring-control input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 12px rgba(72, 187, 120, 0.6);
+        }
+
+        .ring-control input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #68d391, #48bb78);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(72, 187, 120, 0.4);
+        }
+
+        .shape-toggle {
+            display: flex;
+            gap: 0;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #2d3748;
+        }
+
+        .shape-toggle button {
+            padding: 8px 20px;
+            border: none;
+            background: #1a202c;
+            color: #718096;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .shape-toggle button.active {
+            background: linear-gradient(135deg, #4299e1, #3182ce);
+            color: #fff;
+        }
+
+        .shape-toggle button:hover:not(.active) {
+            background: #2d3748;
+            color: #a0aec0;
+        }
+
+        .triangle-control {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .triangle-control label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #a0aec0;
+            min-width: 60px;
+        }
+
+        .triangle-control .value {
+            font-size: 15px;
+            font-weight: 600;
+            color: #f6ad55;
+            min-width: 36px;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .triangle-control input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #2d3748, #4a5568);
+            outline: none;
+        }
+
+        .triangle-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f6ad55, #ed8936);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(237, 137, 54, 0.4);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .triangle-control input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 12px rgba(237, 137, 54, 0.6);
+        }
+
+        .triangle-control input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f6ad55, #ed8936);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 8px rgba(237, 137, 54, 0.4);
+        }
+
+        .num-input {
+            width: 56px;
+            padding: 3px 4px;
+            background: #2d3748;
+            color: #63b3ed;
+            border: 1px solid #4a5568;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            outline: none;
+            transition: border-color 0.2s;
+            margin-left: 8px;
+        }
+
+        .num-input:focus {
+            border-color: #63b3ed;
+            box-shadow: 0 0 0 2px rgba(99, 179, 237, 0.2);
+        }
+
+        .num-input::-webkit-inner-spin-button,
+        .num-input::-webkit-outer-spin-button {
+            opacity: 1;
+        }
+
+        .export-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .export-btn:hover {
+            background: linear-gradient(135deg, #764ba2, #667eea);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.6);
+            transform: translateY(-1px);
+        }
+
+        .export-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="dotCanvas"></canvas>
+
+<div class="controls">
+    <div class="control-row" style="justify-content:center">
+        <div class="shape-toggle">
+            <button id="btnCircle" class="active">双圆</button>
+            <button id="btnTriangle">等边三角形</button>
+        </div>
+    </div>
+
+    <div class="control-row">
+        <label for="spacing">间距</label>
+        <input type="range" id="spacing" min="20" max="120" value="50" step="1" />
+        <input type="number" id="spacingInput" min="20" max="120" value="50" step="1" class="num-input" />
+    </div>
+
+    <div class="control-row dot-size-control">
+        <label for="dotSize">圆点</label>
+        <input type="range" id="dotSize" min="2" max="16" value="5" step="0.5" />
+        <input type="number" id="dotSizeInput" min="2" max="16" value="5" step="0.5" class="num-input" />
+    </div>
+
+    <div id="circleControls">
+        <div class="control-row ring-control">
+            <label for="innerRing">内环</label>
+            <input type="range" id="innerRing" min="0" max="280" value="60" step="1" />
+            <input type="number" id="innerRingInput" min="0" max="280" value="60" step="1" class="num-input" />
+        </div>
+
+        <div class="control-row ring-control">
+            <label for="outerRing">外环</label>
+            <input type="range" id="outerRing" min="0" max="340" value="200" step="1" />
+            <input type="number" id="outerRingInput" min="0" max="340" value="200" step="1" class="num-input" />
+        </div>
+    </div>
+
+    <div id="triangleControls" style="display:none">
+        <div class="control-row triangle-control">
+            <label for="triSide">边长</label>
+            <input type="range" id="triSide" min="40" max="560" value="280" step="1" />
+            <input type="number" id="triSideInput" min="40" max="560" value="280" step="1" class="num-input" />
+        </div>
+    </div>
+
+    <div class="info">
+        <span id="areaLabel">区域圆点: <span class="num" id="ringDotCount" style="color:#68d391">0</span></span>
+        <span>圆点总数: <span class="num" id="dotCount">0</span></span>
+    </div>
+
+    <button id="btnExport" class="export-btn">导出坐标</button>
+</div>
+
+<script>
+    const canvas = document.getElementById('dotCanvas');
+    const ctx = canvas.getContext('2d');
+    const spacingSlider = document.getElementById('spacing');
+    const spacingInput = document.getElementById('spacingInput');
+    const dotSizeSlider = document.getElementById('dotSize');
+    const dotSizeInput = document.getElementById('dotSizeInput');
+    const innerRingSlider = document.getElementById('innerRing');
+    const innerRingInput = document.getElementById('innerRingInput');
+    const outerRingSlider = document.getElementById('outerRing');
+    const outerRingInput = document.getElementById('outerRingInput');
+    const triSideSlider = document.getElementById('triSide');
+    const triSideInput = document.getElementById('triSideInput');
+    const dotCountEl = document.getElementById('dotCount');
+    const ringDotCountEl = document.getElementById('ringDotCount');
+    const areaLabelEl = document.getElementById('areaLabel');
+    const circleControls = document.getElementById('circleControls');
+    const triangleControls = document.getElementById('triangleControls');
+    const btnCircle = document.getElementById('btnCircle');
+    const btnTriangle = document.getElementById('btnTriangle');
+    const btnExport = document.getElementById('btnExport');
+
+    let currentShape = 'circle'; // 'circle' | 'triangle'
+    let areaPoints = []; // 存储区域内点的坐标
+
+    // 动态设置 canvas 尺寸
+    let displayW, displayH;
+    
+    function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        displayW = window.innerWidth;
+        displayH = window.innerHeight;
+        
+        canvas.width = displayW * dpr;
+        canvas.height = displayH * dpr;
+        canvas.style.width = displayW + 'px';
+        canvas.style.height = displayH + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    
+    resizeCanvas();
+
+    // 判断点是否在等边三角形内
+    function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+        const d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+        const d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+        const d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+        const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+        const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+        return !(hasNeg && hasPos);
+    }
+
+    function drawCircleMode(spacing, radius, innerR, outerR, w, h) {
+        ctx.clearRect(0, 0, w, h);
+        const rowH = spacing * Math.sqrt(3) / 2;
+        const hexW = spacing;
+        const cx = w / 2;
+        const cy = h / 2;
+        const rMin = Math.min(innerR, outerR);
+        const rMax = Math.max(innerR, outerR);
+
+        const rowsUp = Math.ceil(cy / rowH) + 1;
+        const rowsDown = Math.ceil((h - cy) / rowH) + 1;
+        const colsLeft = Math.ceil(cx / hexW) + 1;
+        const colsRight = Math.ceil((w - cx) / hexW) + 1;
+
+        let totalCount = 0;
+        let ringCount = 0;
+        areaPoints = []; // 清空并重新收集区域内点的坐标
+
+        for (let ri = -rowsUp; ri <= rowsDown; ri++) {
+            const rowOffset = (Math.abs(ri) % 2 === 1) ? hexW * 0.5 : 0;
+            const y = cy + ri * rowH;
+
+            for (let ci = -colsLeft; ci <= colsRight; ci++) {
+                const x = cx + ci * hexW + rowOffset;
+
+                if (x < -radius * 2 || x > w + radius * 2 ||
+                    y < -radius * 2 || y > h + radius * 2) continue;
+
+                const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+                const inRing = dist >= rMin && dist <= rMax;
+
+                if (inRing) {
+                    ringCount++;
+                    areaPoints.push({ x, y }); // 收集区域内点的坐标
+                }
+                totalCount++;
+
+                const dotColor = inRing ? '#63b3ed' : 'rgba(99, 179, 237, 0.3)';
+                const glowColor = inRing ? 'rgba(99, 179, 237, 0.3)' : 'rgba(99, 179, 237, 0.08)';
+                const highlightAlpha = inRing ? 0.35 : 0.1;
+
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 2);
+                gradient.addColorStop(0, glowColor);
+                gradient.addColorStop(1, 'rgba(99, 179, 237, 0)');
+                ctx.beginPath();
+                ctx.arc(x, y, radius * 2, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = dotColor;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(x - radius * 0.25, y - radius * 0.25, radius * 0.35, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${highlightAlpha})`;
+                ctx.fill();
+            }
+        }
+
+        // 绘制圆环
+        if (rMin > 0) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, rMin, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(104, 211, 145, 0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        if (rMax > 0) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, rMax, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(104, 211, 145, 0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        dotCountEl.textContent = totalCount;
+        ringDotCountEl.textContent = ringCount;
+        areaLabelEl.innerHTML = '区域圆点: <span class="num" id="ringDotCount" style="color:#68d391">' + ringCount + '</span>';
+    }
+
+    function drawTriangleMode(spacing, radius, side, w, h) {
+        ctx.clearRect(0, 0, w, h);
+        const rowH = spacing * Math.sqrt(3) / 2;
+        const hexW = spacing;
+        const cx = w / 2;
+        const cy = h / 2;
+
+        // 等边三角形顶点：顶点在上，底边在下，重心在 (cx, cy)
+        const triH = side * Math.sqrt(3) / 2;
+        // 重心到顶点的距离 = 2/3 * triH，到底边的距离 = 1/3 * triH
+        const ax = cx;
+        const ay = cy - triH * 2 / 3;  // 顶部顶点
+        const bx = cx - side / 2;
+        const by = cy + triH / 3;       // 左下顶点
+        const topRight_x = cx + side / 2;
+        const topRight_y = cy + triH / 3; // 右下顶点
+
+        const rowsUp = Math.ceil(cy / rowH) + 1;
+        const rowsDown = Math.ceil((h - cy) / rowH) + 1;
+        const colsLeft = Math.ceil(cx / hexW) + 1;
+        const colsRight = Math.ceil((w - cx) / hexW) + 1;
+
+        let totalCount = 0;
+        let triCount = 0;
+        areaPoints = []; // 清空并重新收集区域内点的坐标
+
+        for (let ri = -rowsUp; ri <= rowsDown; ri++) {
+            const rowOffset = (Math.abs(ri) % 2 === 1) ? hexW * 0.5 : 0;
+            const y = cy + ri * rowH;
+
+            for (let ci = -colsLeft; ci <= colsRight; ci++) {
+                const x = cx + ci * hexW + rowOffset;
+
+                if (x < -radius * 2 || x > w + radius * 2 ||
+                    y < -radius * 2 || y > h + radius * 2) continue;
+
+                const inTri = pointInTriangle(x, y, ax, ay, bx, by, topRight_x, topRight_y);
+
+                if (inTri) {
+                    triCount++;
+                    areaPoints.push({ x, y }); // 收集区域内点的坐标
+                }
+                totalCount++;
+
+                const dotColor = inTri ? '#f6ad55' : 'rgba(99, 179, 237, 0.3)';
+                const glowColor = inTri ? 'rgba(246, 173, 85, 0.3)' : 'rgba(99, 179, 237, 0.08)';
+                const highlightAlpha = inTri ? 0.35 : 0.1;
+
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 2);
+                gradient.addColorStop(0, glowColor);
+                gradient.addColorStop(1, 'rgba(99, 179, 237, 0)');
+                ctx.beginPath();
+                ctx.arc(x, y, radius * 2, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fillStyle = dotColor;
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.arc(x - radius * 0.25, y - radius * 0.25, radius * 0.35, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${highlightAlpha})`;
+                ctx.fill();
+            }
+        }
+
+        // 绘制三角形边框
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(topRight_x, topRight_y);
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(246, 173, 85, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        dotCountEl.textContent = totalCount;
+        ringDotCountEl.textContent = triCount;
+        areaLabelEl.innerHTML = '三角形内圆点: <span class="num" id="ringDotCount" style="color:#f6ad55">' + triCount + '</span>';
+    }
+
+    function update() {
+        resizeCanvas();
+        
+        const spacing = parseFloat(spacingSlider.value);
+        const dotSize = parseFloat(dotSizeSlider.value);
+        const innerR = parseFloat(innerRingSlider.value);
+        const outerR = parseFloat(outerRingSlider.value);
+        const triSide = parseFloat(triSideSlider.value);
+        
+        // 更新输入框的值
+        spacingInput.value = spacing;
+        dotSizeInput.value = dotSize;
+        innerRingInput.value = innerR;
+        outerRingInput.value = outerR;
+        triSideInput.value = triSide;
+
+        if (currentShape === 'circle') {
+            drawCircleMode(spacing, dotSize, innerR, outerR, displayW, displayH);
+        } else {
+            drawTriangleMode(spacing, dotSize, triSide, displayW, displayH);
+        }
+        
+        // 保存设置到 localStorage
+        saveSettings();
+    }
+
+    // 导出坐标到文件
+    function exportCoordinates() {
+        if (areaPoints.length === 0) {
+            alert('区域内没有圆点可以导出！');
+            return;
+        }
+
+        // 询问导出格式
+        const format = prompt('选择导出格式：\n1 - JSON\n2 - CSV\n\n请输入 1 或 2：', '1');
+        
+        if (format === null) return; // 用户取消了
+
+        let content, filename, mimeType;
+
+        if (format === '1') {
+            // JSON 格式 - 坐标保留3位小数
+            const data = {
+                shape: currentShape,
+                pointCount: areaPoints.length,
+                points: areaPoints.map(p => ({
+                    x: Math.round(p.x * 1000) / 1000,
+                    y: Math.round(p.y * 1000) / 1000
+                }))
+            };
+            content = JSON.stringify(data, null, 2);
+            filename = 'dotgrid_coordinates.json';
+            mimeType = 'application/json';
+        } else if (format === '2') {
+            // CSV 格式 - 坐标保留3位小数
+            let csv = 'x,y\n';
+            areaPoints.forEach(p => {
+                csv += `${p.x.toFixed(3)},${p.y.toFixed(3)}\n`;
+            });
+            content = csv;
+            filename = 'dotgrid_coordinates.csv';
+            mimeType = 'text/csv';
+        } else {
+            alert('无效的选择！');
+            return;
+        }
+
+        // 创建下载链接
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // 保存设置到 localStorage
+    function saveSettings() {
+        const settings = {
+            spacing: spacingSlider.value,
+            dotSize: dotSizeSlider.value,
+            innerRing: innerRingSlider.value,
+            outerRing: outerRingSlider.value,
+            triSide: triSideSlider.value,
+            currentShape: currentShape
+        };
+        try {
+            localStorage.setItem('doggridSettings', JSON.stringify(settings));
+        } catch (e) {
+            // localStorage 不可用时忽略
+        }
+    }
+
+    // 从 localStorage 加载设置
+    function loadSettings() {
+        try {
+            const saved = localStorage.getItem('doggridSettings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                
+                // 应用保存的值到滑块
+                if (settings.spacing !== undefined) spacingSlider.value = settings.spacing;
+                if (settings.dotSize !== undefined) dotSizeSlider.value = settings.dotSize;
+                if (settings.innerRing !== undefined) innerRingSlider.value = settings.innerRing;
+                if (settings.outerRing !== undefined) outerRingSlider.value = settings.outerRing;
+                if (settings.triSide !== undefined) triSideSlider.value = settings.triSide;
+                
+                // 恢复形状选择状态（不触发 update）
+                if (settings.currentShape !== undefined) {
+                    currentShape = settings.currentShape;
+                    btnCircle.classList.toggle('active', currentShape === 'circle');
+                    btnTriangle.classList.toggle('active', currentShape === 'triangle');
+                    circleControls.style.display = currentShape === 'circle' ? '' : 'none';
+                    triangleControls.style.display = currentShape === 'triangle' ? '' : 'none';
+                }
+                
+                return true;
+            }
+        } catch (e) {
+            // 解析失败时忽略，使用默认值
+        }
+        return false;
+    }
+
+    // 输入框变化时的处理函数
+    function onInputChange(slider, input) {
+        const val = parseFloat(input.value);
+        if (!isNaN(val) && val >= parseFloat(input.min) && val <= parseFloat(input.max)) {
+            slider.value = val;
+            update();
+        } else if (input.value === '' || input.value === '-') {
+            // 用户正在输入，暂时不处理
+        } else {
+            // 输入无效，重置为滑块当前值
+            input.value = slider.value;
+        }
+    }
+
+    function switchShape(shape) {
+        currentShape = shape;
+        btnCircle.classList.toggle('active', shape === 'circle');
+        btnTriangle.classList.toggle('active', shape === 'triangle');
+        circleControls.style.display = shape === 'circle' ? '' : 'none';
+        triangleControls.style.display = shape === 'triangle' ? '' : 'none';
+        update();
+    }
+
+    btnCircle.addEventListener('click', () => switchShape('circle'));
+    btnTriangle.addEventListener('click', () => switchShape('triangle'));
+
+    spacingSlider.addEventListener('input', update);
+    dotSizeSlider.addEventListener('input', update);
+    innerRingSlider.addEventListener('input', update);
+    outerRingSlider.addEventListener('input', update);
+    triSideSlider.addEventListener('input', update);
+
+    // 输入框事件监听器
+    spacingInput.addEventListener('input', () => onInputChange(spacingSlider, spacingInput));
+    dotSizeInput.addEventListener('input', () => onInputChange(dotSizeSlider, dotSizeInput));
+    innerRingInput.addEventListener('input', () => onInputChange(innerRingSlider, innerRingInput));
+    outerRingInput.addEventListener('input', () => onInputChange(outerRingSlider, outerRingInput));
+    triSideInput.addEventListener('input', () => onInputChange(triSideSlider, triSideInput));
+
+    // 输入框失去焦点或按回车时也更新
+    spacingInput.addEventListener('change', () => onInputChange(spacingSlider, spacingInput));
+    dotSizeInput.addEventListener('change', () => onInputChange(dotSizeSlider, dotSizeInput));
+    innerRingInput.addEventListener('change', () => onInputChange(innerRingSlider, innerRingInput));
+    outerRingInput.addEventListener('change', () => onInputChange(outerRingSlider, outerRingInput));
+    triSideInput.addEventListener('change', () => onInputChange(triSideSlider, triSideInput));
+
+    // 加载保存的设置（如果有的话）
+    loadSettings();
+
+    // 初始绘制
+    update();
+
+    // 窗口尺寸变化时保持清晰（仅当显示尺寸改变时）
+    window.addEventListener('resize', () => {
+        update();
+    });
+
+    // 导出按钮点击事件
+    btnExport.addEventListener('click', exportCoordinates);
+</script>
+
+</body>
+</html>
