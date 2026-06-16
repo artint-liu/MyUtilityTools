@@ -64,16 +64,51 @@ Write-Host ""
 if (Test-Path "eext-batch-led-place.eext") { Remove-Item "eext-batch-led-place.eext" -Force }
 if (Test-Path "eext-batch-led-place.zip")  { Remove-Item "eext-batch-led-place.zip" -Force }
 
-# 7. Create ZIP package
+# 7. Create ZIP package (using .NET ZipFile to ensure forward-slash paths)
 Write-Host "[Step 5] Packaging .eext file..." -ForegroundColor Yellow
 Write-Host "  Included files:" -ForegroundColor Gray
 Write-Host "    extension.json" -ForegroundColor Gray
-Write-Host "    dist\" -ForegroundColor Gray
-Write-Host "    images\" -ForegroundColor Gray
+Write-Host "    dist/" -ForegroundColor Gray
+Write-Host "    images/" -ForegroundColor Gray
+Write-Host "    README.md" -ForegroundColor Gray
 Write-Host ""
 
-Compress-Archive -Path "extension.json", "dist", "images", "README.md" `
-    -DestinationPath "eext-batch-led-place.zip" -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$zipPath = Join-Path $ProjectDir "eext-batch-led-place.zip"
+$zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
+
+$filesToPack = @(
+    "extension.json",
+    "README.md"
+)
+
+$dirsToPack = @(
+    "dist",
+    "images"
+)
+
+foreach ($f in $filesToPack) {
+    $srcPath = Join-Path $ProjectDir $f
+    # Use forward slash for ZIP entry name
+    $entryName = $f -replace '\\', '/'
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $srcPath, $entryName, 'Optimal') | Out-Null
+    Write-Host "  Added: $entryName" -ForegroundColor DarkGray
+}
+
+foreach ($d in $dirsToPack) {
+    $dirPath = Join-Path $ProjectDir $d
+    $items = Get-ChildItem -Path $dirPath -File -Recurse
+    foreach ($item in $items) {
+        $relativePath = $item.FullName.Substring($ProjectDir.Length + 1)
+        # Use forward slash for ZIP entry name
+        $entryName = $relativePath -replace '\\', '/'
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $item.FullName, $entryName, 'Optimal') | Out-Null
+        Write-Host "  Added: $entryName" -ForegroundColor DarkGray
+    }
+}
+
+$zip.Dispose()
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] Archive creation failed" -ForegroundColor Red

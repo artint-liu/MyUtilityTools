@@ -23,6 +23,24 @@ interface ComponentPosition {
   layer?: string;      // 层："Top" / "Bottom"（大小写不敏感）
 }
 
+console.log('[BatchPlace] ========== 模块已加载 ==========');
+
+/** 单位转换：CSV坐标值 → EDA API内部单位(mil)的缩放因子 */
+const UNIT_SCALE_MIL = 1;        // 1 mil = 1 mil（API直接接受mil）
+const UNIT_SCALE_MM = 39.37;     // 1 mm  = 39.37 mil
+
+/**
+ * 将解析后的坐标按单位缩放为EDA API内部单位
+ * EDA API内部单位: mil (1mil = 1, 1mm = 39.37)
+ */
+function convertPositions(positions: ComponentPosition[], scale: number): ComponentPosition[] {
+  return positions.map(p => ({
+    ...p,
+    x: Math.round(p.x * scale * 100) / 100,
+    y: Math.round(p.y * scale * 100) / 100,
+  }));
+}
+
 // ============================================================
 // CSV 解析
 // ============================================================
@@ -266,22 +284,54 @@ function formatResultMessage(result: { total: number; success: number; failed: n
  * 当扩展被加载时自动调用
  */
 export function activate(status?: string, arg?: string): void {
-  console.log('[BatchPlace] 扩展已激活');
+  console.log('[BatchPlace] ========== activate 被调用 ==========', status, arg);
 }
 
 /**
- * 从CSV文件导入并设置元件坐标
- * 对应 headerMenus 中 registerFn: "importFromCSV"
+ * 关于本扩展
+ * 对应 headerMenus home 中 registerFn: "about"
  */
-export async function importFromCSV(): Promise<void> {
+export function about(): void {
+  console.log('[BatchPlace] ========== about 被调用 ==========');
+  eda.sys_Dialog.showInformationMessage(
+    '批量设置PCB器件位置 v1.1.0\n\n从 CSV 文件导入器件坐标，批量设置 PCB 中器件的位置、旋转角度和所在层。\n\n开发者: stdliu',
+    '批量设置元件位置'
+  );
+}
+
+/**
+ * 从CSV文件导入并设置元件坐标（内部公共实现）
+ * @param unitScale  坐标缩放因子（mil=10, mm=393.7）
+ * @param unitName   单位名称，用于提示信息
+ */
+async function importFromCSVWithUnit(unitScale: number, unitName: string): Promise<void> {
+  console.log(`[BatchPlace] ========== importFromCSV (${unitName}) 被调用 ==========`);
+
+  const fileNameHint = `(${unitName})`;
   try {
-    console.log('[BatchPlace] 开始从CSV文件导入元件坐标...');
 
     // 弹出文件选择对话框，让用户选择CSV文件
-    const file = await eda.sys_FileSystem.openReadFileDialog('.csv', false);
+    let file: any;
+    try {
+      file = await eda.sys_FileSystem.openReadFileDialog('.csv', false);
+    } catch (permErr: any) {
+      const errMsg = String(permErr?.message || permErr || '');
+      if (errMsg.includes('Permission') || errMsg.includes('permission') || errMsg.includes('权限') || errMsg.includes('denied')) {
+        eda.sys_Dialog.showInformationMessage(
+          '无法访问文件系统，扩展的"外部交互权限"未启用。\n\n请在 扩展管理器 中找到本扩展，启用"外部交互权限"后重试。',
+          '权限不足'
+        );
+      } else {
+        throw permErr;
+      }
+      return;
+    }
 
     if (!file) {
-      console.log('[BatchPlace] 用户取消了文件选择');
+      eda.sys_Dialog.showInformationMessage(
+        '未选择文件，或扩展的"外部交互权限"未启用导致文件对话框无法打开。\n\n如需使用本功能，请在 扩展管理器 中找到本扩展，启用"外部交互权限"后重试。',
+        '提示'
+      );
       return;
     }
 
@@ -296,14 +346,17 @@ export async function importFromCSV(): Promise<void> {
     }
 
     // 解析CSV
-    const positions = parseCSV(csvText);
+    let positions = parseCSV(csvText);
 
     if (positions.length === 0) {
       eda.sys_Dialog.showInformationMessage('CSV文件中没有有效的器件数据，请检查文件格式。\n\n要求表头：Designator,Mid X,Mid Y,Rotation,Layer', '导入失败');
       return;
     }
 
-    console.log(`[BatchPlace] 解析到 ${positions.length} 个器件`);
+    console.log(`[BatchPlace] 解析到 ${positions.length} 个器件，单位: ${unitName}，缩放因子: ${unitScale}`);
+
+    // 按单位转换坐标为EDA内部单位
+    positions = convertPositions(positions, unitScale);
 
     // 按 Designator 排序
     positions.sort((a, b) => {
@@ -316,7 +369,7 @@ export async function importFromCSV(): Promise<void> {
     });
 
     // 打印前几条预览
-    console.log('[BatchPlace] 数据预览 (前5条):');
+    console.log('[BatchPlace] 数据预览 (前5条, 已转换为EDA内部单位):');
     for (const p of positions.slice(0, 5)) {
       console.log(`  ${p.designator}: x=${p.x}, y=${p.y}, rotation=${p.rotation}°${p.layer ? `, layer=${p.layer}` : ''}`);
     }
@@ -329,7 +382,7 @@ export async function importFromCSV(): Promise<void> {
     console.log(`[BatchPlace] ${msg}`);
 
     // 弹窗显示结果
-    eda.sys_Dialog.showInformationMessage(msg, '批量设置元件坐标 - 执行结果');
+    eda.sys_Dialog.showInformationMessage(msg, `批量设置元件坐标 ${fileNameHint} - 执行结果`);
 
   } catch (err: any) {
     const errMsg = `CSV 导入失败: ${err?.message || String(err)}`;
@@ -339,12 +392,28 @@ export async function importFromCSV(): Promise<void> {
 }
 
 /**
+ * 从CSV文件导入并设置元件坐标（CSV中坐标单位为mil）
+ * 对应 headerMenus 中 registerFn: "importFromCSVMil"
+ */
+export async function importFromCSVMil(): Promise<void> {
+  await importFromCSVWithUnit(UNIT_SCALE_MIL, 'mil');
+}
+
+/**
+ * 从CSV文件导入并设置元件坐标（CSV中坐标单位为mm）
+ * 对应 headerMenus 中 registerFn: "importFromCSVMM"
+ */
+export async function importFromCSVMM(): Promise<void> {
+  await importFromCSVWithUnit(UNIT_SCALE_MM, 'mm');
+}
+
+/**
  * 导出当前PCB中所有元件的坐标为CSV文本
  * 对应 headerMenus 中 registerFn: "exportToCSV"
  */
 export async function exportToCSV(): Promise<void> {
+  console.log('[BatchPlace] ========== exportToCSV 被调用 ==========');
   try {
-    console.log('[BatchPlace] 开始导出当前元件坐标...');
 
     const allComponents = await fetchAllComponents();
     console.log(`[BatchPlace] PCB中共 ${allComponents.size} 个器件`);
@@ -377,7 +446,20 @@ export async function exportToCSV(): Promise<void> {
     // 将CSV内容保存为文件供用户下载
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const file = new File([blob], 'component-positions.csv', { type: 'text/csv' });
-    await eda.sys_FileSystem.saveFile(file, 'component-positions.csv');
+    try {
+      await eda.sys_FileSystem.saveFile(file, 'component-positions.csv');
+    } catch (permErr: any) {
+      const errMsg = String(permErr?.message || permErr || '');
+      if (errMsg.includes('Permission') || errMsg.includes('permission') || errMsg.includes('权限') || errMsg.includes('denied')) {
+        eda.sys_Dialog.showInformationMessage(
+          '无法保存文件，扩展的"外部交互权限"未启用。\n\n请在 扩展管理器 中找到本扩展，启用"外部交互权限"后重试。',
+          '权限不足'
+        );
+      } else {
+        throw permErr;
+      }
+      return;
+    }
 
     const msg = `已导出 ${sortedDesignators.length} 个器件的坐标数据\n文件: component-positions.csv`;
     console.log(`[BatchPlace] ${msg}`);

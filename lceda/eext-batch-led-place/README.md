@@ -4,12 +4,12 @@
 
 ## 功能特性
 
-- ✅ **从 CSV 文件导入坐标** — 支持立创EDA导出的坐标格式
-- ✅ 批量设置器件的 X/Y 坐标、旋转角度、所在层（顶层/底层）
-- ✅ 保留内置布局模式：矩阵排列、圆形排列
-- ✅ 试运行模式（dry-run）：仅预览不修改
-- ✅ 导出当前器件位置为 CSV
-- ✅ 按 Designator 过滤（如只处理 LED 器件）
+- 从 CSV 文件导入坐标，支持立创EDA导出的坐标格式
+- 批量设置器件的 X/Y 坐标、旋转角度、所在层（顶层/底层）
+- 保留内置布局模式：矩阵排列、圆形排列
+- 试运行模式（dry-run）：仅预览不修改
+- 导出当前器件位置为 CSV
+- 按 Designator 过滤器件
 
 ## CSV 文件格式
 
@@ -52,9 +52,9 @@ U1,50000,50000,0,顶层
 |------|------|
 | `batch-place.from-csv` | **从 CSV 导入坐标并设置**（核心命令） |
 | `batch-place.from-csv-dry-run` | 从 CSV 导入 — 试运行（不修改PCB） |
-| `batch-place.matrix` | 12×12 矩阵排列 LED |
-| `batch-place.matrix-snake` | 蛇形矩阵排列 LED |
-| `batch-place.circular` | 圆形排列 LED |
+| `batch-place.matrix` | 12×12 矩阵排列器件 |
+| `batch-place.matrix-snake` | 蛇形矩阵排列器件 |
+| `batch-place.circular` | 圆形排列器件 |
 | `batch-place.query` | 查询当前器件位置 |
 | `batch-place.export-csv` | 导出当前器件位置为 CSV |
 
@@ -69,14 +69,14 @@ node batch-place.js query-csv component-positions.csv
 # 导入 CSV 并生成 JSON（供EDA扩展 custom 命令使用）
 node batch-place.js import component-positions.csv
 
-# 只导入 LED 器件
+# 只导入匹配的器件（如 LED）
 node batch-place.js import component-positions.csv --filter=LED
 
 # 导入并指定输出文件
-node batch-place.js import component-positions.csv --output=my-leds.json
+node batch-place.js import component-positions.csv --output=positions.json
 
 # 将 JSON 坐标导出为 CSV
-node batch-place.js export led-positions.json
+node batch-place.js export positions.json
 
 # 生成矩阵布局 CSV
 node batch-place.js matrix --rows=12 --cols=12 --spacing-x=5 --spacing-y=5
@@ -106,8 +106,8 @@ eext-batch-led-place/
 ├── src/
 │   └── index.ts                   # 扩展主代码（EDA API 调用）
 ├── component-positions.csv        # ← 坐标 CSV 文件（用户编辑此文件）
-├── custom-led-positions.json      # 旧版 JSON 坐标（兼容）
-├── generate-led-positions.js      # 独立命令行工具（已升级为 batch-place.js）
+├── custom-positions.json         # 旧版 JSON 坐标（兼容）
+├── generate-positions.js        # 独立命令行工具（已升级为 batch-place.js）
 ├── batch-place.js                 # 独立命令行工具（推荐）
 └── README.md
 ```

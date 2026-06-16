@@ -335,7 +335,7 @@
         }
 
         .num-input {
-            width: 56px;
+            width: 80px;
             padding: 3px 4px;
             background: #2d3748;
             color: #63b3ed;
@@ -358,6 +358,14 @@
         .num-input::-webkit-inner-spin-button,
         .num-input::-webkit-outer-spin-button {
             opacity: 1;
+        }
+
+        .control-row input[type="checkbox"]:checked + span {
+            background: #4299e1;
+        }
+        .control-row input[type="checkbox"]:checked + span + span {
+            transform: translateX(18px);
+            background: #fff;
         }
 
         .export-btn {
@@ -400,36 +408,59 @@
 
     <div class="control-row">
         <label for="spacing">间距</label>
-        <input type="range" id="spacing" min="20" max="120" value="50" step="1" />
-        <input type="number" id="spacingInput" min="20" max="120" value="50" step="1" class="num-input" />
+        <input type="range" id="spacing" min="1" max="50" value="13.229" step="0.001" />
+        <input type="number" id="spacingInput" min="1" max="50" value="13.229" step="0.001" class="num-input" />
+        <span style="font-size:12px;color:#718096">mm</span>
     </div>
 
     <div class="control-row dot-size-control">
         <label for="dotSize">圆点</label>
-        <input type="range" id="dotSize" min="2" max="16" value="5" step="0.5" />
-        <input type="number" id="dotSizeInput" min="2" max="16" value="5" step="0.5" class="num-input" />
+        <input type="range" id="dotSize" min="0.1" max="10" value="1.323" step="0.001" />
+        <input type="number" id="dotSizeInput" min="0.1" max="10" value="1.323" step="0.001" class="num-input" />
+        <span style="font-size:12px;color:#718096">mm</span>
     </div>
 
     <div id="circleControls">
         <div class="control-row ring-control">
-            <label for="innerRing">内环</label>
-            <input type="range" id="innerRing" min="0" max="280" value="60" step="1" />
-            <input type="number" id="innerRingInput" min="0" max="280" value="60" step="1" class="num-input" />
+            <label for="innerRing">内环（半径）</label>
+            <input type="range" id="innerRing" min="0" max="100" value="15.875" step="0.001" />
+            <input type="number" id="innerRingInput" min="0" max="100" value="15.875" step="0.001" class="num-input" />
+            <span style="font-size:12px;color:#718096">mm</span>
         </div>
 
         <div class="control-row ring-control">
-            <label for="outerRing">外环</label>
-            <input type="range" id="outerRing" min="0" max="340" value="200" step="1" />
-            <input type="number" id="outerRingInput" min="0" max="340" value="200" step="1" class="num-input" />
+            <label for="outerRing">外环（半径）</label>
+            <input type="range" id="outerRing" min="0" max="120" value="52.917" step="0.001" />
+            <input type="number" id="outerRingInput" min="0" max="120" value="52.917" step="0.001" class="num-input" />
+            <span style="font-size:12px;color:#718096">mm</span>
         </div>
     </div>
 
     <div id="triangleControls" style="display:none">
         <div class="control-row triangle-control">
             <label for="triSide">边长</label>
-            <input type="range" id="triSide" min="40" max="560" value="280" step="1" />
-            <input type="number" id="triSideInput" min="40" max="560" value="280" step="1" class="num-input" />
+            <input type="range" id="triSide" min="1" max="200" value="74.083" step="0.001" />
+            <input type="number" id="triSideInput" min="1" max="200" value="74.083" step="0.001" class="num-input" />
+            <span style="font-size:12px;color:#718096">mm</span>
         </div>
+    </div>
+
+    <div class="control-row" style="align-items:center;gap:10px">
+        <label style="font-size:14px;font-weight:500;color:#a0aec0;min-width:60px">比例</label>
+        <span style="font-size:12px;color:#718096;white-space:nowrap">1px =</span>
+        <input type="number" id="pxToMm" value="0.264583" step="0.001" min="0.001" max="10"
+               style="width:72px;padding:4px 6px;background:#2d3748;color:#63b3ed;border:1px solid #4a5568;border-radius:6px;font-size:13px;font-weight:600;text-align:center;outline:none" />
+        <span style="font-size:12px;color:#718096">mm</span>
+    </div>
+
+    <div class="control-row" style="align-items:center;gap:10px">
+        <label style="font-size:14px;font-weight:500;color:#a0aec0;min-width:60px">序号</label>
+        <label style="position:relative;display:inline-block;width:40px;height:22px;cursor:pointer">
+            <input type="checkbox" id="showIndex" style="opacity:0;width:0;height:0" />
+            <span style="position:absolute;inset:0;background:#2d3748;border-radius:11px;transition:0.3s"></span>
+            <span style="position:absolute;left:3px;top:3px;width:16px;height:16px;background:#718096;border-radius:50%;transition:0.3s"></span>
+        </label>
+        <span id="indexHint" style="font-size:12px;color:#718096">关闭</span>
     </div>
 
     <div class="info">
@@ -461,9 +492,13 @@
     const btnCircle = document.getElementById('btnCircle');
     const btnTriangle = document.getElementById('btnTriangle');
     const btnExport = document.getElementById('btnExport');
+    const showIndexCheckbox = document.getElementById('showIndex');
+    const indexHintEl = document.getElementById('indexHint');
+    const pxToMmInput = document.getElementById('pxToMm');
 
     let currentShape = 'circle'; // 'circle' | 'triangle'
     let areaPoints = []; // 存储区域内点的坐标
+    const BASE_SCALE = 0.264583; // 基准比例值
 
     // 动态设置 canvas 尺寸
     let displayW, displayH;
@@ -492,12 +527,17 @@
         return !(hasNeg && hasPos);
     }
 
-    function drawCircleMode(spacing, radius, innerR, outerR, w, h) {
+    function drawCircleMode(spacing, radius, innerR, outerR, w, h, scale) {
         ctx.clearRect(0, 0, w, h);
-        const rowH = spacing * Math.sqrt(3) / 2;
-        const hexW = spacing;
+        ctx.save();
         const cx = w / 2;
         const cy = h / 2;
+        ctx.translate(cx, cy);
+        ctx.scale(scale, scale);
+        ctx.translate(-cx, -cy);
+
+        const rowH = spacing * Math.sqrt(3) / 2;
+        const hexW = spacing;
         const rMin = Math.min(innerR, outerR);
         const rMax = Math.max(innerR, outerR);
 
@@ -508,7 +548,7 @@
 
         let totalCount = 0;
         let ringCount = 0;
-        areaPoints = []; // 清空并重新收集区域内点的坐标
+        areaPoints = [];
 
         for (let ri = -rowsUp; ri <= rowsDown; ri++) {
             const rowOffset = (Math.abs(ri) % 2 === 1) ? hexW * 0.5 : 0;
@@ -525,7 +565,7 @@
 
                 if (inRing) {
                     ringCount++;
-                    areaPoints.push({ x, y }); // 收集区域内点的坐标
+                    areaPoints.push({ x, y });
                 }
                 totalCount++;
 
@@ -558,28 +598,54 @@
             ctx.beginPath();
             ctx.arc(cx, cy, rMin, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(104, 211, 145, 0.6)';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1.5 / scale;
             ctx.stroke();
         }
         if (rMax > 0) {
             ctx.beginPath();
             ctx.arc(cx, cy, rMax, 0, Math.PI * 2);
             ctx.strokeStyle = 'rgba(104, 211, 145, 0.6)';
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1.5 / scale;
             ctx.stroke();
         }
+
+        // 绘制序号（在缩放上下文中，先排序）
+        if (showIndexCheckbox.checked && areaPoints.length > 0) {
+            const sorted = [...areaPoints].sort((a, b) => a.y - b.y || a.x - b.x);
+            const fontSize = Math.max(7, Math.min(11, spacing * 0.25)) / scale;
+            ctx.font = `bold ${fontSize}px 'Segoe UI', system-ui, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const offsetY = -radius - 2 / scale;
+            sorted.forEach((p, i) => {
+                const idx = i + 1;
+                // 阴影
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillText(idx, p.x + 0.5 / scale, p.y + offsetY + 0.5 / scale);
+                // 文字
+                ctx.fillStyle = '#fff';
+                ctx.fillText(idx, p.x, p.y + offsetY);
+            });
+        }
+
+        ctx.restore();
 
         dotCountEl.textContent = totalCount;
         ringDotCountEl.textContent = ringCount;
         areaLabelEl.innerHTML = '区域圆点: <span class="num" id="ringDotCount" style="color:#68d391">' + ringCount + '</span>';
     }
 
-    function drawTriangleMode(spacing, radius, side, w, h) {
+    function drawTriangleMode(spacing, radius, side, w, h, scale) {
         ctx.clearRect(0, 0, w, h);
-        const rowH = spacing * Math.sqrt(3) / 2;
-        const hexW = spacing;
+        ctx.save();
         const cx = w / 2;
         const cy = h / 2;
+        ctx.translate(cx, cy);
+        ctx.scale(scale, scale);
+        ctx.translate(-cx, -cy);
+
+        const rowH = spacing * Math.sqrt(3) / 2;
+        const hexW = spacing;
 
         // 等边三角形顶点：顶点在上，底边在下，重心在 (cx, cy)
         const triH = side * Math.sqrt(3) / 2;
@@ -598,7 +664,7 @@
 
         let totalCount = 0;
         let triCount = 0;
-        areaPoints = []; // 清空并重新收集区域内点的坐标
+        areaPoints = [];
 
         for (let ri = -rowsUp; ri <= rowsDown; ri++) {
             const rowOffset = (Math.abs(ri) % 2 === 1) ? hexW * 0.5 : 0;
@@ -614,7 +680,7 @@
 
                 if (inTri) {
                     triCount++;
-                    areaPoints.push({ x, y }); // 收集区域内点的坐标
+                    areaPoints.push({ x, y });
                 }
                 totalCount++;
 
@@ -649,8 +715,27 @@
         ctx.lineTo(topRight_x, topRight_y);
         ctx.closePath();
         ctx.strokeStyle = 'rgba(246, 173, 85, 0.7)';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2 / scale;
         ctx.stroke();
+
+        // 绘制序号
+        if (showIndexCheckbox.checked && areaPoints.length > 0) {
+            const sorted = [...areaPoints].sort((a, b) => a.y - b.y || a.x - b.x);
+            const fontSize = Math.max(7, Math.min(11, spacing * 0.25)) / scale;
+            ctx.font = `bold ${fontSize}px 'Segoe UI', system-ui, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const offsetY = -radius - 2 / scale;
+            sorted.forEach((p, i) => {
+                const idx = i + 1;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillText(idx, p.x + 0.5 / scale, p.y + offsetY + 0.5 / scale);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(idx, p.x, p.y + offsetY);
+            });
+        }
+
+        ctx.restore();
 
         dotCountEl.textContent = totalCount;
         ringDotCountEl.textContent = triCount;
@@ -660,76 +745,74 @@
     function update() {
         resizeCanvas();
         
-        const spacing = parseFloat(spacingSlider.value);
-        const dotSize = parseFloat(dotSizeSlider.value);
-        const innerR = parseFloat(innerRingSlider.value);
-        const outerR = parseFloat(outerRingSlider.value);
-        const triSide = parseFloat(triSideSlider.value);
+        // 读取mm值并转换为px用于绘制（通过BASE_SCALE）
+        const spacingMm = parseFloat(spacingSlider.value);
+        const dotSizeMm = parseFloat(dotSizeSlider.value);
+        const innerRMm = parseFloat(innerRingSlider.value);
+        const outerRMm = parseFloat(outerRingSlider.value);
+        const triSideMm = parseFloat(triSideSlider.value);
         
-        // 更新输入框的值
-        spacingInput.value = spacing;
-        dotSizeInput.value = dotSize;
-        innerRingInput.value = innerR;
-        outerRingInput.value = outerR;
-        triSideInput.value = triSide;
+        const spacing = spacingMm / BASE_SCALE;
+        const dotSize = dotSizeMm / BASE_SCALE;
+        const innerR = innerRMm / BASE_SCALE;
+        const outerR = outerRMm / BASE_SCALE;
+        const triSide = triSideMm / BASE_SCALE;
+        
+        // 根据比例计算画布缩放
+        const pxToMm = parseFloat(pxToMmInput.value) || BASE_SCALE;
+        const scale = BASE_SCALE / pxToMm;
+        
+        // 更新输入框的值（保留3位小数，正在编辑的输入框跳过避免光标跳动）
+        const focusedInput = document.activeElement;
+        if (focusedInput !== spacingInput) spacingInput.value = spacingMm.toFixed(3);
+        if (focusedInput !== dotSizeInput) dotSizeInput.value = dotSizeMm.toFixed(3);
+        if (focusedInput !== innerRingInput) innerRingInput.value = innerRMm.toFixed(3);
+        if (focusedInput !== outerRingInput) outerRingInput.value = outerRMm.toFixed(3);
+        if (focusedInput !== triSideInput) triSideInput.value = triSideMm.toFixed(3);
 
         if (currentShape === 'circle') {
-            drawCircleMode(spacing, dotSize, innerR, outerR, displayW, displayH);
+            drawCircleMode(spacing, dotSize, innerR, outerR, displayW, displayH, scale);
         } else {
-            drawTriangleMode(spacing, dotSize, triSide, displayW, displayH);
+            drawTriangleMode(spacing, dotSize, triSide, displayW, displayH, scale);
         }
         
         // 保存设置到 localStorage
         saveSettings();
     }
 
-    // 导出坐标到文件
+    // 导出坐标到CSV文件
     function exportCoordinates() {
         if (areaPoints.length === 0) {
             alert('区域内没有圆点可以导出！');
             return;
         }
 
-        // 询问导出格式
-        const format = prompt('选择导出格式：\n1 - JSON\n2 - CSV\n\n请输入 1 或 2：', '1');
-        
-        if (format === null) return; // 用户取消了
+        const cx = displayW / 2;
+        const cy = displayH / 2;
 
-        let content, filename, mimeType;
+        // 按从左到右、从上到下排序，与显示序号一致
+        const sorted = [...areaPoints].sort((a, b) => a.y - b.y || a.x - b.x);
 
-        if (format === '1') {
-            // JSON 格式 - 坐标保留3位小数
-            const data = {
-                shape: currentShape,
-                pointCount: areaPoints.length,
-                points: areaPoints.map(p => ({
-                    x: Math.round(p.x * 1000) / 1000,
-                    y: Math.round(p.y * 1000) / 1000
-                }))
-            };
-            content = JSON.stringify(data, null, 2);
-            filename = 'dotgrid_coordinates.json';
-            mimeType = 'application/json';
-        } else if (format === '2') {
-            // CSV 格式 - 坐标保留3位小数
-            let csv = 'x,y\n';
-            areaPoints.forEach(p => {
-                csv += `${p.x.toFixed(3)},${p.y.toFixed(3)}\n`;
-            });
-            content = csv;
-            filename = 'dotgrid_coordinates.csv';
-            mimeType = 'text/csv';
-        } else {
-            alert('无效的选择！');
-            return;
-        }
+        // CSV格式：Designator,Mid X,Mid Y,Rotation,Layer
+        // 坐标为相对于中心的mm值，使用BASE_SCALE转换（不受缩放影响）
+        let csv = 'Designator,Mid X,Mid Y,Rotation,Layer\n';
+        sorted.forEach((p, i) => {
+            const designator = 'LED' + (i + 1);
+            const midX = ((p.x - cx) * BASE_SCALE).toFixed(3);
+            const midY = ((p.y - cy) * BASE_SCALE).toFixed(3);
+            // 计算指向中心的旋转角度（角度值）
+            const angleRad = Math.atan2(cy - p.y, cx - p.x);
+            let angleDeg = angleRad * 180 / Math.PI;
+            if (angleDeg < 0) angleDeg += 360;
+            const rotation = angleDeg.toFixed(1);
+            csv += `${designator},${midX},${midY},${rotation},Top\n`;
+        });
 
-        // 创建下载链接
-        const blob = new Blob([content], { type: mimeType });
+        const blob = new Blob([csv], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        a.download = 'dotgrid_coordinates.csv';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -739,12 +822,15 @@
     // 保存设置到 localStorage
     function saveSettings() {
         const settings = {
+            _version: 2, // mm版
             spacing: spacingSlider.value,
             dotSize: dotSizeSlider.value,
             innerRing: innerRingSlider.value,
             outerRing: outerRingSlider.value,
             triSide: triSideSlider.value,
-            currentShape: currentShape
+            currentShape: currentShape,
+            pxToMm: pxToMmInput.value,
+            showIndex: showIndexCheckbox.checked
         };
         try {
             localStorage.setItem('doggridSettings', JSON.stringify(settings));
@@ -760,6 +846,23 @@
             if (saved) {
                 const settings = JSON.parse(saved);
                 
+                // 旧版（px值）不兼容，跳过数值恢复
+                if (!settings._version || settings._version < 2) {
+                    // 仅恢复形状和开关状态
+                    if (settings.currentShape !== undefined) {
+                        currentShape = settings.currentShape;
+                        btnCircle.classList.toggle('active', currentShape === 'circle');
+                        btnTriangle.classList.toggle('active', currentShape === 'triangle');
+                        circleControls.style.display = currentShape === 'circle' ? '' : 'none';
+                        triangleControls.style.display = currentShape === 'triangle' ? '' : 'none';
+                    }
+                    if (settings.showIndex !== undefined) {
+                        showIndexCheckbox.checked = settings.showIndex;
+                        indexHintEl.textContent = settings.showIndex ? '开启' : '关闭';
+                    }
+                    return true;
+                }
+                
                 // 应用保存的值到滑块
                 if (settings.spacing !== undefined) spacingSlider.value = settings.spacing;
                 if (settings.dotSize !== undefined) dotSizeSlider.value = settings.dotSize;
@@ -774,6 +877,13 @@
                     btnTriangle.classList.toggle('active', currentShape === 'triangle');
                     circleControls.style.display = currentShape === 'circle' ? '' : 'none';
                     triangleControls.style.display = currentShape === 'triangle' ? '' : 'none';
+                }
+
+                // 恢复比例和序号设置
+                if (settings.pxToMm !== undefined) pxToMmInput.value = settings.pxToMm;
+                if (settings.showIndex !== undefined) {
+                    showIndexCheckbox.checked = settings.showIndex;
+                    indexHintEl.textContent = settings.showIndex ? '开启' : '关闭';
                 }
                 
                 return true;
@@ -794,8 +904,20 @@
             // 用户正在输入，暂时不处理
         } else {
             // 输入无效，重置为滑块当前值
-            input.value = slider.value;
+            input.value = parseFloat(slider.value).toFixed(3);
         }
+    }
+
+    // 输入框失焦时格式化为3位小数
+    function onInputBlur(slider, input) {
+        const val = parseFloat(input.value);
+        if (!isNaN(val) && val >= parseFloat(input.min) && val <= parseFloat(input.max)) {
+            slider.value = val;
+            input.value = val.toFixed(3);
+        } else {
+            input.value = parseFloat(slider.value).toFixed(3);
+        }
+        update();
     }
 
     function switchShape(shape) {
@@ -815,6 +937,11 @@
     innerRingSlider.addEventListener('input', update);
     outerRingSlider.addEventListener('input', update);
     triSideSlider.addEventListener('input', update);
+    pxToMmInput.addEventListener('input', update);
+    showIndexCheckbox.addEventListener('change', function() {
+        indexHintEl.textContent = this.checked ? '开启' : '关闭';
+        update();
+    });
 
     // 输入框事件监听器
     spacingInput.addEventListener('input', () => onInputChange(spacingSlider, spacingInput));
@@ -823,12 +950,17 @@
     outerRingInput.addEventListener('input', () => onInputChange(outerRingSlider, outerRingInput));
     triSideInput.addEventListener('input', () => onInputChange(triSideSlider, triSideInput));
 
-    // 输入框失去焦点或按回车时也更新
-    spacingInput.addEventListener('change', () => onInputChange(spacingSlider, spacingInput));
-    dotSizeInput.addEventListener('change', () => onInputChange(dotSizeSlider, dotSizeInput));
-    innerRingInput.addEventListener('change', () => onInputChange(innerRingSlider, innerRingInput));
-    outerRingInput.addEventListener('change', () => onInputChange(outerRingSlider, outerRingInput));
-    triSideInput.addEventListener('change', () => onInputChange(triSideSlider, triSideInput));
+    // 输入框失去焦点或按回车时格式化并更新
+    spacingInput.addEventListener('blur', () => onInputBlur(spacingSlider, spacingInput));
+    dotSizeInput.addEventListener('blur', () => onInputBlur(dotSizeSlider, dotSizeInput));
+    innerRingInput.addEventListener('blur', () => onInputBlur(innerRingSlider, innerRingInput));
+    outerRingInput.addEventListener('blur', () => onInputBlur(outerRingSlider, outerRingInput));
+    triSideInput.addEventListener('blur', () => onInputBlur(triSideSlider, triSideInput));
+    spacingInput.addEventListener('change', () => onInputBlur(spacingSlider, spacingInput));
+    dotSizeInput.addEventListener('change', () => onInputBlur(dotSizeSlider, dotSizeInput));
+    innerRingInput.addEventListener('change', () => onInputBlur(innerRingSlider, innerRingInput));
+    outerRingInput.addEventListener('change', () => onInputBlur(outerRingSlider, outerRingInput));
+    triSideInput.addEventListener('change', () => onInputBlur(triSideSlider, triSideInput));
 
     // 加载保存的设置（如果有的话）
     loadSettings();

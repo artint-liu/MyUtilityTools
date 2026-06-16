@@ -1,15 +1,16 @@
 {
   "name": "eext-batch-led-place",
-  "version": "1.0.0",
-  "description": "批量设置PCB中LED1~LED144的位置和旋转角度 - 立创EDA专业版扩展",
+  "version": "1.1.0",
+  "description": "批量设置PCB中元件的位置、旋转角度和层信息 - 立创EDA专业版扩展",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch"
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch"
   },
   "devDependencies": {
     "@jlceda/pro-api-types": "^0.2.59",
     "@types/node": "^18.0.0",
+    "esbuild": "^0.24.2",
     "pro-api-sdk": "github:easyeda/pro-api-sdk",
     "typescript": "^5.0.0"
   }

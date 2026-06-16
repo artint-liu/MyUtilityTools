@@ -1,7 +1,7 @@
 {
   "name": "eext-batch-led-place",
   "uuid": "8f234e9df1fa40f8b1ace0a7ae5be3b2",
-  "displayName": "批量设置LED位置",
+  "displayName": "批量设置元件位置",
   "description": "从CSV文件导入并批量设置PCB中元件的位置(X/Y坐标)、旋转角度和层信息",
   "version": "1.1.0",
   "publisher": "stdliu",
@@ -9,21 +9,48 @@
     "eda": "^2.3.0"
   },
   "license": "MIT",
+  "repository": {
+    "type": "extension-store",
+    "url": ""
+  },
   "categories": "PCB",
+  "keywords": ["PCB", "batch", "position", "CSV", "component"],
   "entry": "./dist/index",
   "images": {
     "logo": "./images/logo.png"
   },
+  "homepage": "",
+  "bugs": "",
+  "activationEvents": {},
+  "dependentExtensions": {},
   "headerMenus": {
-    "pcb": [
+    "home": [
       {
-        "id": "batchPlaceMenu",
+        "id": "batchPlaceMenuHome",
         "title": "批量设置元件坐标",
         "menuItems": [
           {
-            "id": "importFromCSV",
-            "title": "从CSV文件导入并设置元件坐标",
-            "registerFn": "importFromCSV"
+            "id": "aboutBatchPlace",
+            "title": "关于...",
+            "registerFn": "about"
+          }
+        ]
+      }
+    ],
+    "pcb": [
+      {
+        "id": "batchPlaceMenuPCB",
+        "title": "批量设置元件坐标",
+        "menuItems": [
+          {
+            "id": "importFromCSVMil",
+            "title": "从CSV导入坐标 (单位: mil)",
+            "registerFn": "importFromCSVMil"
+          },
+          {
+            "id": "importFromCSVMM",
+            "title": "从CSV导入坐标 (单位: mm)",
+            "registerFn": "importFromCSVMM"
           },
           {
             "id": "exportToCSV",
