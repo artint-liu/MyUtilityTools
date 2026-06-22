@@ -463,6 +463,13 @@
         <span id="indexHint" style="font-size:12px;color:#718096">关闭</span>
     </div>
 
+    <div class="control-row" style="align-items:center;gap:10px">
+        <label for="rotOffset" style="font-size:14px;font-weight:500;color:#a0aec0;min-width:60px">旋转偏移</label>
+        <input type="range" id="rotOffset" min="-360" max="360" value="0" step="1" style="flex:1" />
+        <input type="number" id="rotOffsetInput" min="-360" max="360" value="0" step="1" class="num-input" />
+        <span style="font-size:12px;color:#718096">°</span>
+    </div>
+
     <div class="info">
         <span id="areaLabel">区域圆点: <span class="num" id="ringDotCount" style="color:#68d391">0</span></span>
         <span>圆点总数: <span class="num" id="dotCount">0</span></span>
@@ -495,6 +502,8 @@
     const showIndexCheckbox = document.getElementById('showIndex');
     const indexHintEl = document.getElementById('indexHint');
     const pxToMmInput = document.getElementById('pxToMm');
+    const rotOffsetSlider = document.getElementById('rotOffset');
+    const rotOffsetInput = document.getElementById('rotOffsetInput');
 
     let currentShape = 'circle'; // 'circle' | 'triangle'
     let areaPoints = []; // 存储区域内点的坐标
@@ -804,6 +813,10 @@
             const angleRad = Math.atan2(cy - p.y, cx - p.x);
             let angleDeg = angleRad * 180 / Math.PI;
             if (angleDeg < 0) angleDeg += 360;
+            // 加上旋转角度偏移
+            const rotOffset = parseFloat(rotOffsetSlider.value) || 0;
+            angleDeg += rotOffset;
+            angleDeg = ((angleDeg % 360) + 360) % 360; // 归一化到 [0, 360)
             const rotation = angleDeg.toFixed(1);
             csv += `${designator},${midX},${midY},${rotation},Top\n`;
         });
@@ -830,7 +843,8 @@
             triSide: triSideSlider.value,
             currentShape: currentShape,
             pxToMm: pxToMmInput.value,
-            showIndex: showIndexCheckbox.checked
+            showIndex: showIndexCheckbox.checked,
+            rotOffset: rotOffsetSlider.value
         };
         try {
             localStorage.setItem('doggridSettings', JSON.stringify(settings));
@@ -881,6 +895,10 @@
 
                 // 恢复比例和序号设置
                 if (settings.pxToMm !== undefined) pxToMmInput.value = settings.pxToMm;
+                if (settings.rotOffset !== undefined) {
+                    rotOffsetSlider.value = settings.rotOffset;
+                    rotOffsetInput.value = settings.rotOffset;
+                }
                 if (settings.showIndex !== undefined) {
                     showIndexCheckbox.checked = settings.showIndex;
                     indexHintEl.textContent = settings.showIndex ? '开启' : '关闭';
@@ -938,6 +956,9 @@
     outerRingSlider.addEventListener('input', update);
     triSideSlider.addEventListener('input', update);
     pxToMmInput.addEventListener('input', update);
+    rotOffsetSlider.addEventListener('input', function() {
+        rotOffsetInput.value = this.value;
+    });
     showIndexCheckbox.addEventListener('change', function() {
         indexHintEl.textContent = this.checked ? '开启' : '关闭';
         update();
@@ -961,6 +982,19 @@
     innerRingInput.addEventListener('change', () => onInputBlur(innerRingSlider, innerRingInput));
     outerRingInput.addEventListener('change', () => onInputBlur(outerRingSlider, outerRingInput));
     triSideInput.addEventListener('change', () => onInputBlur(triSideSlider, triSideInput));
+    rotOffsetInput.addEventListener('input', () => {
+        const val = parseFloat(rotOffsetInput.value);
+        if (!isNaN(val) && val >= -360 && val <= 360) {
+            rotOffsetSlider.value = val;
+        }
+    });
+    rotOffsetInput.addEventListener('blur', () => {
+        let val = parseFloat(rotOffsetInput.value);
+        if (isNaN(val)) val = 0;
+        val = Math.max(-360, Math.min(360, val));
+        rotOffsetSlider.value = val;
+        rotOffsetInput.value = val;
+    });
 
     // 加载保存的设置（如果有的话）
     loadSettings();
