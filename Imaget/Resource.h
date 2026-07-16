@@ -7,12 +7,16 @@
 #define IDR_MAINFRAME			128
 #define IDD_IMAGET_DIALOG	102
 #define IDD_ABOUTBOX			103
+#define IDD_INPUT_DIALOG		104
 #define IDM_ABOUT				104
 #define IDM_EXIT				105
 #define IDI_IMAGET			107
 #define IDI_SMALL				108
 #define IDC_IMAGET			109
 #define IDC_MYICON				2
+#define IDC_INPUT_EDIT			1000
+#define IDC_INPUT_OK			1001
+#define IDC_INPUT_CANCEL		1002
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
