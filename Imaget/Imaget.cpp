@@ -43,6 +43,7 @@ HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, IWICBitmapSource
 void CreateCacheDirectory();
 void InitGraphicsFactories();
 void ShutdownGraphicsFactories();
+bool ParseSavedLabel(LPCWSTR pszFile, clStringW& outLabel);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
@@ -558,6 +559,13 @@ void LoadSavedImages(HWND hWnd)
             int offset = (iIndex % 10) * 32;
             SetWindowPos(hViewer, NULL, 100 + offset, 100 + offset, 0, 0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+            // 从文件名 (hash).(label).png 解析并还原用户设置的标签
+            clStringW strLabel;
+            if (ParseSavedLabel(strFilename, strLabel))
+            {
+                SetViewerWindowLabel(hViewer, strLabel);
+            }
             iIndex++;
         }
     }

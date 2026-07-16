@@ -2,6 +2,8 @@
 #include <windowsx.h>
 #include <tchar.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <commdlg.h>
 
 #include <clstd.h>
 #include <clString.h>
@@ -18,6 +20,7 @@ void OnPaint(HWND hWnd);
 void ResetSize(HWND hWnd);
 WNDDATA* GetWindowData(HWND hWnd);
 void EnsureRenderTarget(WNDDATA* pData, HWND hWnd, LONG cx, LONG cy);
+void SaveImageWithDialog(HWND hWnd, IWICBitmapSource* pSource);
 
 // 比较窗口原型
 LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -33,6 +36,10 @@ HMENU g_hImageMenu = NULL;
 // 全局比较图像（左右两侧），由“添加到比较”命令填充、由比较窗口使用
 static IWICBitmapSource* g_pCompareLeft  = nullptr;
 static IWICBitmapSource* g_pCompareRight = nullptr;
+
+// 比较图像对应的标签（用户在源窗口设置过才非空），由“添加到比较”命令记录，供比较窗口显示
+static clStringW g_strCompareLeftLabel;
+static clStringW g_strCompareRightLabel;
 
 // 输入对话框文本缓冲
 static WCHAR g_szInputBuf[512] = { 0 };
@@ -234,10 +241,19 @@ void EnsureRenderTarget(WNDDATA* pData, HWND hWnd, LONG cx, LONG cy)
         return;
     }
 
+    // 关键修复：D2D 的 HwndRenderTarget 把 SizeU 当作“物理像素”，
+    // 而 cx/cy 来自 GetClientRect（逻辑像素）。在 DPI≠96 的显示器上，
+    // 若直接把逻辑像素当物理像素传入，渲染目标只会覆盖窗口左上角一部分，
+    // DrawBitmap 超出部分被裁剪，画面就只显示原图左上区域。
+    // 这里按窗口 DPI 把逻辑像素放大为物理像素再传入，使 GetSize() 与逻辑客户区一致。
+    UINT dpi = GetDpiForWindow(hWnd);
+    FLOAT fDpiScale = dpi / 96.0f;
+    UINT32 pxW = (UINT32)(cx * fDpiScale);
+    UINT32 pxH = (UINT32)(cy * fDpiScale);
+
     if (pData->pRT == nullptr)
     {
-        D2D1_SIZE_U size = D2D1::SizeU((UINT32)cx, (UINT32)cy);
-        UINT dpi = GetDpiForWindow(hWnd);
+        D2D1_SIZE_U size = D2D1::SizeU(pxW, pxH);
         HRESULT hr = g_pD2DFactory->CreateHwndRenderTarget(
             D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -259,7 +275,7 @@ void EnsureRenderTarget(WNDDATA* pData, HWND hWnd, LONG cx, LONG cy)
     }
     else
     {
-        pData->pRT->Resize(D2D1::SizeU((UINT32)cx, (UINT32)cy));
+        pData->pRT->Resize(D2D1::SizeU(pxW, pxH));
     }
 }
 
@@ -410,7 +426,26 @@ void PutImageToClipboard(HWND hWnd, IWICBitmapSource* pSource)
     }
 }
 
-// 计算左右图像的绝对差值位图：相同 RGB 像素为黑色
+// 通过“保存图片”菜单命令，弹出文件保存对话框，将当前图像保存为 PNG。
+void SaveImageWithDialog(HWND hWnd, IWICBitmapSource* pSource)
+{
+    if (!pSource)
+    {
+        return;
+    }
+    WCHAR szFile[MAX_PATH] = { 0 };
+    OPENFILENAMEW ofn = { sizeof(OPENFILENAMEW) };
+    ofn.hwndOwner = hWnd;
+    ofn.lpstrFilter = L"PNG 图片 (*.png)\0*.png\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"png";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (GetSaveFileNameW(&ofn))
+    {
+        SaveWicBitmapToFile(pSource, szFile);
+    }
+}
 IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
 {
     if (!g_pWICFactory || !pLeft || !pRight)
@@ -508,7 +543,7 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
     return pDiff;
 }
 
-void SetCompareImage(bool bLeft, IWICBitmapSource* pImage)
+void SetCompareImage(bool bLeft, IWICBitmapSource* pImage, const clStringW& label)
 {
     IWICBitmap* pClone = CloneWicBitmap(pImage);
     if (!pClone)
@@ -519,11 +554,13 @@ void SetCompareImage(bool bLeft, IWICBitmapSource* pImage)
     {
         SAFE_RELEASE(g_pCompareLeft);
         g_pCompareLeft = pClone;
+        g_strCompareLeftLabel = (LPCWSTR)label;
     }
     else
     {
         SAFE_RELEASE(g_pCompareRight);
         g_pCompareRight = pClone;
+        g_strCompareRightLabel = (LPCWSTR)label;
     }
 }
 
@@ -552,6 +589,8 @@ void ClearCompareImages()
     SAFE_RELEASE(g_pCompareRight);
     g_pCompareLeft = nullptr;
     g_pCompareRight = nullptr;
+    g_strCompareLeftLabel.Clear();
+    g_strCompareRightLabel.Clear();
 }
 
 // 左右均已添加时，询问是否打开比较窗口；确认后打开并清空槽位
@@ -674,11 +713,18 @@ void EnsureCompareRenderTarget(COMPAREDATA* pData, HWND hWnd, LONG cx, LONG cy)
     {
         return;
     }
+
+    // 与 ImageViewer 相同：SizeU 是物理像素，需按窗口 DPI 把逻辑像素放大后再传入，
+    // 否则渲染目标只覆盖窗口一部分，导致 DPI≠96 时右/下侧被裁。
+    UINT dpi = GetDpiForWindow(hWnd);
+    FLOAT fDpiScale = dpi / 96.0f;
+    UINT32 pxW = (UINT32)(cx * fDpiScale);
+    UINT32 pxH = (UINT32)(cy * fDpiScale);
+
     if (pData->pRT == nullptr)
     {
-        D2D1_SIZE_U size = D2D1::SizeU((UINT32)cx, (UINT32)cy);
+        D2D1_SIZE_U size = D2D1::SizeU(pxW, pxH);
         // 关键修复：使用窗口实际 DPI 创建 RT，避免 DPI 缩放不匹配导致右侧被裁剪
-        UINT dpi = GetDpiForWindow(hWnd);
         HRESULT hr = g_pD2DFactory->CreateHwndRenderTarget(
             D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -696,7 +742,7 @@ void EnsureCompareRenderTarget(COMPAREDATA* pData, HWND hWnd, LONG cx, LONG cy)
     }
     else
     {
-        pData->pRT->Resize(D2D1::SizeU((UINT32)cx, (UINT32)cy));
+        pData->pRT->Resize(D2D1::SizeU(pxW, pxH));
     }
 }
 
@@ -730,10 +776,22 @@ void CompareOnPaint(HWND hWnd)
     FLOAT imgTop = barH;
     FLOAT imgH = fH - barH;
 
+    // 列标题：若源窗口设置过标签，则追加显示在标题中（如“左侧 - 标签名”）
+    WCHAR szTitle[2][256];
+    if (g_strCompareLeftLabel.GetLength() > 0)
+        _snwprintf_s(szTitle[0], _countof(szTitle[0]), _TRUNCATE, L"左侧 - %s", (LPCWSTR)g_strCompareLeftLabel);
+    else
+        wcscpy_s(szTitle[0], L"左侧");
+
+        if (g_strCompareRightLabel.GetLength() > 0)
+        _snwprintf_s(szTitle[1], _countof(szTitle[1]), _TRUNCATE, L"右侧 - %s", (LPCWSTR)g_strCompareRightLabel);
+    else
+        wcscpy_s(szTitle[1], L"右侧");
+
     struct { ID2D1Bitmap* bmp; LPCWSTR title; } cols[3] = {
-        { pData->pBmpLeft,  L"左侧" },
+        { pData->pBmpLeft,  szTitle[0] },
         { pData->pBmpDiff,  L"比较（差值）" },
-        { pData->pBmpRight, L"右侧" },
+        { pData->pBmpRight, szTitle[1] },
     };
 
     for (int i = 0; i < 3; i++)
@@ -879,9 +937,16 @@ INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 
 void ShowSetLabelDialog(HWND hWnd)
 {
+    WNDDATA* pData = GetWindowData(hWnd);
+
+    // 若已存在标签，将文本填入对话框作为输入缓冲，便于直接修改
+    if (pData && pData->label.GetLength() > 0)
+        wcscpy_s(g_szInputBuf, _countof(g_szInputBuf), (LPCWSTR)pData->label);
+    else
+        g_szInputBuf[0] = 0;
+
     if (DialogBoxW(GetModuleHandle(NULL), MAKEINTRESOURCEW(IDD_INPUT_DIALOG), hWnd, InputDialogProc) == IDOK)
     {
-        WNDDATA* pData = GetWindowData(hWnd);
         if (pData)
         {
             pData->label = g_szInputBuf;
@@ -1045,6 +1110,7 @@ void CreateImageMenu(HWND hWnd)
 
     AddItem(MENU_SETLABEL, L"设置标签");
     AddItem(MENU_SETCLIPBOARD, L"设置到剪贴板");
+    AddItem(MENU_SAVEIMAGE, L"保存图片");
     // 分隔线
     {
         MENUITEMINFOW info = { sizeof(MENUITEMINFOW) };
@@ -1121,12 +1187,21 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             }
         }
             break;
+        case MENU_SAVEIMAGE:
+        {
+            WNDDATA* pData = GetWindowData(hWnd);
+            if (pData && pData->pImage)
+            {
+                SaveImageWithDialog(hWnd, pData->pImage);
+            }
+        }
+            break;
         case MENU_ADDCOMPARE_LEFT:
         {
             WNDDATA* pData = GetWindowData(hWnd);
             if (pData && pData->pImage)
             {
-                SetCompareImage(true, pData->pImage);
+                SetCompareImage(true, pData->pImage, pData->label);
                 UpdateCompareMenuMarks();
                 if (HasCompareImages())
                 {
@@ -1140,7 +1215,7 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             WNDDATA* pData = GetWindowData(hWnd);
             if (pData && pData->pImage)
             {
-                SetCompareImage(false, pData->pImage);
+                SetCompareImage(false, pData->pImage, pData->label);
                 UpdateCompareMenuMarks();
                 if (HasCompareImages())
                 {
@@ -1311,6 +1386,142 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     return 0;
 }
 
+// 文件名安全的 Base64（Base64URL：'+'/'/' 替换为 '-'/'_'，无填充），
+// 用于把任意标签编码进文件名，绕过文件名非法字符限制。
+static clStringW Base64UrlEncode(const clStringW& str)
+{
+    static const WCHAR s_table[] = L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const BYTE* p = (const BYTE*)(LPCWSTR)str;
+    size_t n = str.GetLength() * sizeof(WCHAR);
+    clStringW out;
+    for (size_t i = 0; i < n; i += 3)
+    {
+        BYTE b0 = p[i];
+        BYTE b1 = (i + 1 < n) ? p[i + 1] : 0;
+        BYTE b2 = (i + 2 < n) ? p[i + 2] : 0;
+        UINT32 triple = ((UINT32)b0 << 16) | ((UINT32)b1 << 8) | (UINT32)b2;
+        out += s_table[(triple >> 18) & 0x3F];
+        out += s_table[(triple >> 12) & 0x3F];
+        if (i + 1 < n) out += s_table[(triple >> 6) & 0x3F];
+        if (i + 2 < n) out += s_table[triple & 0x3F];
+    }
+    return out;
+}
+
+// Base64URL 解码；成功返回 true，outLabel 为原始宽字符串。编码字节按 UTF-16 LE 重组。
+static bool Base64UrlDecode(const clStringW& enc, clStringW& outLabel)
+{
+    auto val = [](WCHAR c) -> int {
+        if (c >= L'A' && c <= L'Z') return c - L'A';
+        if (c >= L'a' && c <= L'z') return c - L'a' + 26;
+        if (c >= L'0' && c <= L'9') return c - L'0' + 52;
+        if (c == L'-') return 62;
+        if (c == L'_') return 63;
+        return -1;
+    };
+    outLabel.Clear();
+    // 收集有效字符（忽略可能的 '=' 填充，本实现不使用填充）
+    clStringW clean;
+    for (size_t i = 0; i < enc.GetLength(); i++)
+    {
+        if (enc[i] != L'=') clean += enc[i];
+    }
+    if (clean.GetLength() == 0)
+    {
+        return true; // 空标签
+    }
+    int acc = 0, bits = 0;
+    // 注意：不能用 clStringW 累积字节——其 Append(WCHAR) 在写入 0 字节后会导致后续字符丢失
+    // （clstd 字符串类对缓冲区内嵌 0 的缺陷）。base64 解码必然产生大量 0 字节，
+    // 故改用 std::wstring（push_back 对 0 字节安全）累积字节。
+    std::wstring res;
+    for (size_t i = 0; i < clean.GetLength(); i++)
+    {
+        int v = val(clean[i]);
+        if (v < 0) return false;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if (bits >= 8)
+        {
+            bits -= 8;
+            res.push_back((WCHAR)((acc >> bits) & 0xFF));
+            acc &= (1 << bits) - 1; // 丢弃已输出的高位，仅保留剩余低位，避免污染后续分组
+        }
+    }
+    // 字节按 UTF-16 LE 重组为宽字符串：每两个字节组成一个 WCHAR（低字节 | 高字节<<8）。
+    if ((res.size() % 2) != 0) return false;
+    std::wstring out;
+    for (size_t i = 0; i + 1 < res.size(); i += 2)
+    {
+        WCHAR w = (WCHAR)((BYTE)res[i] | ((BYTE)res[i + 1] << 8));
+        out.push_back(w);
+    }
+    // 用“带长度”的构造函数构建 clStringW（可正确处理内嵌 0 的情况）
+    outLabel = clStringW(out.c_str(), out.size());
+    return true;
+}
+
+// 由哈希、可选的标签与扩展名拼出“保存文件”名。
+// 约定文件名格式为 (hash).(label).png：标签以 Base64URL 编码后嵌入文件名，
+// 从而绕开文件名非法字符限制，并随图像一起持久化、下次启动可还原。无标签时退化为 (hash).png。
+static clStringW MakeSavedFileName(const std::wstring& strHash, const clStringW& label, LPCWSTR pszExt)
+{
+    clStringW name;
+    if (!strHash.empty())
+    {
+        name = strHash.c_str();
+    }
+    else
+    {
+        name = L"image";
+    }
+    if (label.GetLength() > 0)
+    {
+        name += L".";
+        name += Base64UrlEncode(label);
+    }
+    name += pszExt;
+    return name;
+}
+
+// 从“保存文件”名 (hash).(label).png 中解析并 Base64URL 解码出用户设置的标签。
+// 返回 true 表示文件名中含非空标签；否则表示无标签（纯 (hash).png）。解码失败也视为无标签。
+bool ParseSavedLabel(LPCWSTR pszFile, clStringW& outLabel)
+{
+    outLabel.Clear();
+    clStringW s(pszFile);
+    // 去掉扩展名（最后一个 '.' 起），得到 (hash).(label)
+    clsize nDot = s.ReverseFind(L'.');
+    if (nDot == clStringW::npos || nDot == 0)
+    {
+        return false;
+    }
+    clStringW stem = s.Left(nDot);
+    // 在 stem 中找最后一个 '.'，其右侧即为（Base64 编码的）标签；若没有 '.' 则无标签。
+    clsize nLabelDot = stem.ReverseFind(L'.');
+    if (nLabelDot == clStringW::npos)
+    {
+        return false; // 形如 hash.png —— 无标签
+    }
+    clStringW enc = stem.Right(stem.GetLength() - nLabelDot - 1);
+    if (enc.GetLength() == 0)
+    {
+        return false;
+    }
+    return Base64UrlDecode(enc, outLabel);
+}
+
+// 设置查看窗口标签（恢复场景使用），并触发重绘以立即显示。
+void SetViewerWindowLabel(HWND hWnd, const clStringW& label)
+{
+    WNDDATA* pData = GetWindowData(hWnd);
+    if (pData)
+    {
+        pData->label = label;
+        InvalidateRect(hWnd, NULL, TRUE);
+    }
+}
+
 // 退出时调用：遍历所有仍打开的“图像查看”窗口，将图像缓存到磁盘，供下次启动恢复。
 // 仅匹配本类窗口（szImageViewerClassName）；已关闭的窗口不会出现在枚举中，因此不会重新出现。
 // 注意：必须在图像窗口仍存活时调用（见主窗口 WM_CLOSE），
@@ -1334,8 +1545,9 @@ void SaveOpenImages()
                 {
                     // 使用图像哈希作为文件名，内容相同的图片共用同一文件名，
                     // 从而避免“保存结果”与“剪贴板”来源产生重复文件。
-                    strFilename = pData->strHash.c_str();
-                    strFilename += L".png";
+                    // 文件名格式 (hash).(label).png：用户设置的标签编码进文件名，
+                    // 随图像一起持久化，下次启动可解析还原。
+                    strFilename = MakeSavedFileName(pData->strHash, pData->label, L".png");
                 }
                 else
                 {

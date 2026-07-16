@@ -48,8 +48,13 @@ clStringW ComputeImageHash(IWICBitmapSource* pSource);
 #define MENU_ADDCOMPARE_LEFT  1103
 #define MENU_ADDCOMPARE_RIGHT 1104
 #define MENU_COMPAREIMG       1105
+#define MENU_SAVEIMAGE        1106
 
 // 比较窗口类（三格对比）
 ATOM RegisterCompareClass(HINSTANCE hInstance);
 void OpenCompareWindow(HINSTANCE hInstance, HWND hParent);
 void SaveOpenImages();   // 退出时保存当前仍打开的图像窗口
+
+// 标签编码进“保存文件”名：格式为 (hash).(label).png。无标签时退化为 (hash).png。
+// 退出保存时按此命名、下次启动从文件名解析还原，承载“用户设置的标签”持久化。
+void SetViewerWindowLabel(HWND hWnd, const clStringW& label);
