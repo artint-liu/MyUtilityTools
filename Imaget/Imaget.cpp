@@ -26,6 +26,7 @@ IDWriteFactory*     g_pDWriteFactory = nullptr;
 
 Gdiplus::Image*     g_pMainImage    = nullptr; // 托盘图标源（GDI+，仅用于分层窗口）
 clStringW g_strDirectory;
+std::unordered_set<std::wstring> g_setImageHashes;
 HMENU g_hMenu;
 
 void CreateMainMenu(HWND hWnd);
@@ -228,13 +229,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
   switch (message)
   {
   case WM_CREATE:
-    hwndNextViewer = SetClipboardViewer(hWnd);
     if (g_pMainImage)
     {
       UpdateIcon(hWnd);
     }
     CreateMainMenu(hWnd);
-    LoadSavedImages(hWnd);
+    LoadSavedImages(hWnd);                     // 先恢复已保存图像并填充哈希集合
+    hwndNextViewer = SetClipboardViewer(hWnd); // 再注册剪贴板监听，避免重复拦截已恢复的图像
     break;
 
   case WM_COMMAND:

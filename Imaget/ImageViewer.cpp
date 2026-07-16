@@ -7,6 +7,9 @@
 #include <clString.h>
 #include <clPathFile.h>
 
+#include <string>
+#include <unordered_set>
+
 #include "Imaget.h"
 
 struct WNDDATA;
@@ -43,6 +46,7 @@ struct WNDDATA
   DWORD scale                     = 0;
   INT lifeTime                    = 0;
   clStringW label;                           // 标签文本（空表示不显示）
+  std::wstring strHash;                      // 图像像素数据哈希，用于全局去重
 };
 
 // 比较窗口数据
@@ -101,8 +105,90 @@ void CalcThumbSize(IWICBitmapSource* pImage, SIZE* pSize)
     }
 }
 
+// 计算图像像素数据（RGB）的 64 位 FNV-1a 哈希，返回 16 位十六进制字符串。
+// 统一转换为 32bppBGR（忽略 Alpha）后逐像素计算，确保同一内容的不同来源（剪贴板/文件/重放）
+// 得到相同的哈希，从而实现去重。
+static IWICBitmap* ConvertToWicBitmap(IWICBitmapSource* pSource, REFWICPixelFormatGUID fmt); // 前向声明
+clStringW ComputeImageHash(IWICBitmapSource* pSource)
+{
+    if (!g_pWICFactory || !pSource)
+    {
+        return clStringW();
+    }
+
+    // 转为可锁定的 32bppBGR 位图（忽略 Alpha），便于按字节逐通道读取
+    IWICBitmap* pBmp = ConvertToWicBitmap(pSource, GUID_WICPixelFormat32bppBGR);
+    if (!pBmp)
+    {
+        return clStringW();
+    }
+
+    UINT width = 0, height = 0;
+    pBmp->GetSize(&width, &height);
+    clStringW strHash;
+    if (width > 0 && height > 0)
+    {
+        WICRect rc = { 0, 0, (INT)width, (INT)height };
+        IWICBitmapLock* pLock = nullptr;
+        if (SUCCEEDED(pBmp->Lock(&rc, WICBitmapLockRead, &pLock)))
+        {
+            UINT cbStride = 0, cbBufferSize = 0;
+            BYTE* pPixels = nullptr;
+            if (SUCCEEDED(pLock->GetDataPointer(&cbBufferSize, &pPixels)) &&
+                SUCCEEDED(pLock->GetStride(&cbStride)))
+            {
+                UINT64 hash = 1469598103934665603ULL; // FNV-1a 64 位偏移基值
+                const UINT64 fnvPrime = 1099511628211ULL;
+                // 混入宽高，进一步降低不同尺寸图像的碰撞概率
+                const BYTE* pDim = (const BYTE*)&width;
+                for (int i = 0; i < 4; i++) { hash ^= pDim[i]; hash *= fnvPrime; }
+                pDim = (const BYTE*)&height;
+                for (int i = 0; i < 4; i++) { hash ^= pDim[i]; hash *= fnvPrime; }
+
+                for (UINT y = 0; y < height; y++)
+                {
+                    const BYTE* pLine = pPixels + (size_t)y * cbStride;
+                    for (UINT x = 0; x < width; x++)
+                    {
+                        // BGR 三通道，跳过 Alpha
+                        hash ^= pLine[x * 4 + 0]; hash *= fnvPrime;
+                        hash ^= pLine[x * 4 + 1]; hash *= fnvPrime;
+                        hash ^= pLine[x * 4 + 2]; hash *= fnvPrime;
+                    }
+                }
+
+                // 转为 16 位十六进制字符串
+                WCHAR buf[17];
+                for (int i = 0; i < 16; i++)
+                {
+                    int nibble = (int)((hash >> ((15 - i) * 4)) & 0xF);
+                    buf[i] = (WCHAR)((nibble < 10) ? (L'0' + nibble) : (L'A' + nibble - 10));
+                }
+                buf[16] = L'\0';
+                strHash = buf;
+            }
+            pLock->Release();
+        }
+    }
+
+    SAFE_RELEASE(pBmp);
+    return strHash;
+}
+
 HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, IWICBitmapSource* pImage)
 {
+    // 图像去重：计算像素哈希，若已存在于全局集合则视为重复，直接丢弃、不创建新窗口。
+    clStringW strHash = ComputeImageHash(pImage);
+    if (strHash.GetLength() > 0)
+    {
+        std::wstring wkey = std::wstring((LPCWSTR)strHash);
+        if (g_setImageHashes.count(wkey) > 0)
+        {
+            pImage->Release();
+            return NULL;
+        }
+    }
+
     SIZE size;
     CalcThumbSize(pImage, &size);
     HWND hWnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, szImageViewerClassName, _T("ImageViewer"), WS_POPUPWINDOW|WS_THICKFRAME,
@@ -118,6 +204,13 @@ HWND CreateImageViewerWindow(HINSTANCE hInstance, HWND hParent, IWICBitmapSource
 
     pData->pImage = pImage; // 接管所有权，由本窗口负责释放
     pData->scale = 0;
+
+    // 记录哈希并加入全局集合，供关闭时移除、以及后续重复拦截时去重
+    if (strHash.GetLength() > 0)
+    {
+        pData->strHash = std::wstring((LPCWSTR)strHash);
+        g_setImageHashes.insert(pData->strHash);
+    }
 
     // 创建 DirectWrite 文字格式（用于倒计时/标签）
     if (g_pDWriteFactory)
@@ -1196,6 +1289,12 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
           pData->pImage = nullptr;
         }
 
+        // 从全局哈希集合移除本窗口图像的哈希，允许内容相同的图片再次被正常打开
+        if (!pData->strHash.empty())
+        {
+          g_setImageHashes.erase(pData->strHash);
+        }
+
         SAFE_RELEASE(pData->pBitmap);
         SAFE_RELEASE(pData->pRT);
         SAFE_RELEASE(pData->pTextFormat);
@@ -1231,7 +1330,17 @@ void SaveOpenImages()
             if (pData && pData->pImage)
             {
                 clStringW strFilename;
-                strFilename.Format(_CLTEXT("%lx.png"), (LONG_PTR)hWnd);
+                if (!pData->strHash.empty())
+                {
+                    // 使用图像哈希作为文件名，内容相同的图片共用同一文件名，
+                    // 从而避免“保存结果”与“剪贴板”来源产生重复文件。
+                    strFilename = pData->strHash.c_str();
+                    strFilename += L".png";
+                }
+                else
+                {
+                    strFilename.Format(_CLTEXT("%lx.png"), (LONG_PTR)hWnd);
+                }
                 clStringW strPath = clpathfile::CombinePath(g_strDirectory, strFilename);
                 SaveWicBitmapToFile(pData->pImage, strPath);
             }
