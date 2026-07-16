@@ -439,6 +439,42 @@ bool HasCompareImages()
     return g_pCompareLeft != nullptr && g_pCompareRight != nullptr;
 }
 
+// 根据左右比较槽是否就绪，更新右键菜单中“添加到比较（左/右）”的勾选标记
+void UpdateCompareMenuMarks()
+{
+    if (!g_hImageMenu)
+    {
+        return;
+    }
+    CheckMenuItem(g_hImageMenu, MENU_ADDCOMPARE_LEFT,
+        MF_BYCOMMAND | (g_pCompareLeft ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(g_hImageMenu, MENU_ADDCOMPARE_RIGHT,
+        MF_BYCOMMAND | (g_pCompareRight ? MF_CHECKED : MF_UNCHECKED));
+}
+
+// 清空左右比较槽位（释放图像引用）
+void ClearCompareImages()
+{
+    SAFE_RELEASE(g_pCompareLeft);
+    SAFE_RELEASE(g_pCompareRight);
+    g_pCompareLeft = nullptr;
+    g_pCompareRight = nullptr;
+}
+
+// 左右均已添加时，询问是否打开比较窗口；确认后打开并清空槽位
+void PromptOpenCompare(HWND hWnd)
+{
+    int ret = MessageBoxW(hWnd,
+        L"左右图片均已添加，是否打开窗口比较功能？",
+        L"图片比较", MB_YESNO | MB_ICONQUESTION);
+    if (ret == IDYES)
+    {
+        OpenCompareWindow(GetModuleHandle(NULL), hWnd);
+        ClearCompareImages();
+        UpdateCompareMenuMarks();
+    }
+}
+
 // ---------------- 比较窗口 ----------------
 
 ATOM RegisterCompareClass(HINSTANCE hInstance)
@@ -998,6 +1034,11 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             if (pData && pData->pImage)
             {
                 SetCompareImage(true, pData->pImage);
+                UpdateCompareMenuMarks();
+                if (HasCompareImages())
+                {
+                    PromptOpenCompare(hWnd);
+                }
             }
         }
             break;
@@ -1007,6 +1048,11 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             if (pData && pData->pImage)
             {
                 SetCompareImage(false, pData->pImage);
+                UpdateCompareMenuMarks();
+                if (HasCompareImages())
+                {
+                    PromptOpenCompare(hWnd);
+                }
             }
         }
             break;
@@ -1108,6 +1154,8 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
         // 根据两侧比较图像是否就绪，启用/灰化“比较图片”
         EnableMenuItem(g_hImageMenu, MENU_COMPAREIMG,
             HasCompareImages() ? MF_ENABLED : MF_GRAYED);
+        // 同步“添加比较（左/右）”的勾选标记
+        UpdateCompareMenuMarks();
         TrackPopupMenu(g_hImageMenu, 0, xPos, yPos, 0, hWnd, NULL);
     }
         break;
