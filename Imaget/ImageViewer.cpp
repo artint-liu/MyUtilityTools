@@ -38,11 +38,11 @@ LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
 LPCWSTR szCompareClassName = _T("Imaget-Compare");
 HMENU g_hImageMenu = NULL;
 
-// 全局比较图像（左右两侧），由“添加到比较”命令填充、由比较窗口使用
+// 全局比较图像（左右两侧），由"添加到比较"命令填充、由比较窗口使用
 static IWICBitmapSource* g_pCompareLeft  = nullptr;
 static IWICBitmapSource* g_pCompareRight = nullptr;
 
-// 比较图像对应的标签（用户在源窗口设置过才非空），由“添加到比较”命令记录，供比较窗口显示
+// 比较图像对应的标签（用户在源窗口设置过才非空），由"添加到比较"命令记录，供比较窗口显示
 static clStringW g_strCompareLeftLabel;
 static clStringW g_strCompareRightLabel;
 
@@ -67,12 +67,16 @@ struct COMPAREDATA
 {
   IWICBitmapSource*   pLeft;      // 左侧图像（AddRef）
   IWICBitmapSource*   pRight;     // 右侧图像（AddRef）
-  IWICBitmap*         pDiff;      // 差值位图（由左右计算）
+  IWICBitmapSource*    pDiff;      // 差值位图源（由左右计算，IWICBitmap*）；绘制时转成 pBmpDiff
   ID2D1HwndRenderTarget* pRT;
   ID2D1Bitmap*        pBmpLeft;
   ID2D1Bitmap*        pBmpRight;
   ID2D1Bitmap*        pBmpDiff;
   IDWriteTextFormat*  pTextFormat;
+  // 标签随比较数据一起保存，避免依赖全局变量：
+  // 全局变量会在 OpenCompareWindow 后被 ClearCompareImages 清空，导致调整窗口大小（重新绘制）时标签消失。
+  clStringW           strLeftLabel;
+  clStringW           strRightLabel;
 };
 
 ATOM RegisterImageViewerClass(HINSTANCE hInstance)
@@ -247,19 +251,17 @@ void EnsureRenderTarget(WNDDATA* pData, HWND hWnd, LONG cx, LONG cy)
         return;
     }
 
-    // 关键修复：D2D 的 HwndRenderTarget 把 SizeU 当作“物理像素”，
-    // 而 cx/cy 来自 GetClientRect（逻辑像素）。在 DPI≠96 的显示器上，
-    // 若直接把逻辑像素当物理像素传入，渲染目标只会覆盖窗口左上角一部分，
-    // DrawBitmap 超出部分被裁剪，画面就只显示原图左上区域。
-    // 这里按窗口 DPI 把逻辑像素放大为物理像素再传入，使 GetSize() 与逻辑客户区一致。
+    // 进程为 Per-Monitor V2 DPI 感知：GetClientRect 返回的 cx/cy 已是物理像素，
+    // 直接作为 RT 后备缓冲区的物理尺寸即可。RT 的 DPI 设为窗口实际 DPI，
+    // 使文字按原生 DPI 渲染（DIP→物理像素自动换算）、GetSize() 返回逻辑 DIP，
+    // 布局统一使用 DIP 坐标。
+    // 注意：若再次乘 fDpiScale 会让 RT 物理尺寸 > 窗口物理尺寸，
+    // 渲染结果右下被裁剪，且文字因非整数映射出现笔画粗细不均/缺失。
     UINT dpi = GetDpiForWindow(hWnd);
-    FLOAT fDpiScale = dpi / 96.0f;
-    UINT32 pxW = (UINT32)(cx * fDpiScale);
-    UINT32 pxH = (UINT32)(cy * fDpiScale);
 
     if (pData->pRT == nullptr)
     {
-        D2D1_SIZE_U size = D2D1::SizeU(pxW, pxH);
+        D2D1_SIZE_U size = D2D1::SizeU(cx, cy);
         HRESULT hr = g_pD2DFactory->CreateHwndRenderTarget(
             D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -281,7 +283,7 @@ void EnsureRenderTarget(WNDDATA* pData, HWND hWnd, LONG cx, LONG cy)
     }
     else
     {
-        pData->pRT->Resize(D2D1::SizeU(pxW, pxH));
+        pData->pRT->Resize(D2D1::SizeU(cx, cy));
     }
 }
 
@@ -301,7 +303,7 @@ IWICBitmap* CloneWicBitmap(IWICBitmapSource* pSource)
     return pBitmap;
 }
 
-// 将 IWICBitmapSource 转为“可锁定的” IWICBitmap（指定目标像素格式）。
+// 将 IWICBitmapSource 转为"可锁定的" IWICBitmap（指定目标像素格式）。
 // 注意：IWICBitmapSource（含格式转换器）没有 Lock 方法，只有 IWICBitmap 才有。
 static IWICBitmap* ConvertToWicBitmap(IWICBitmapSource* pSource, REFWICPixelFormatGUID fmt)
 {
@@ -432,7 +434,7 @@ void PutImageToClipboard(HWND hWnd, IWICBitmapSource* pSource)
     }
 }
 
-// 通过“保存图片”菜单命令，弹出文件保存对话框，将当前图像保存为 PNG。
+// 通过"保存图片"菜单命令，弹出文件保存对话框，将当前图像保存为 PNG。
 void SaveImageWithDialog(HWND hWnd, IWICBitmapSource* pSource)
 {
     if (!pSource)
@@ -514,7 +516,7 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
     {
         UINT cbStrideL = 0, cbStrideR = 0, cbStrideD = 0;
         BYTE* pPL = nullptr; BYTE* pPR = nullptr; BYTE* pPD = nullptr;
-        // 注意：GetDataPointer 第一个出参是“整个缓冲区大小”，必须用 GetStride 取每行步幅，
+        // 注意：GetDataPointer 第一个出参是"整个缓冲区大小"，必须用 GetStride 取每行步幅，
         // 否则 y>=1 时行首偏移 = y * 总大小，会越界读取。
         if (SUCCEEDED(pLockL->GetDataPointer(&cbStrideL, &pPL)) &&
             SUCCEEDED(pLockL->GetStride(&cbStrideL)) &&
@@ -575,7 +577,7 @@ bool HasCompareImages()
     return g_pCompareLeft != nullptr && g_pCompareRight != nullptr;
 }
 
-// 根据左右比较槽是否就绪，更新右键菜单中“添加到比较（左/右）”的勾选标记
+// 根据左右比较槽是否就绪，更新右键菜单中"添加到比较（左/右）"的勾选标记
 void UpdateCompareMenuMarks()
 {
     if (!g_hImageMenu)
@@ -641,10 +643,17 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     if (g_pCompareLeft)  g_pCompareLeft->GetSize(&wL, &hL);
     if (g_pCompareRight) g_pCompareRight->GetSize(&wR, &hR);
 
-    const FLOAT fBarH = 22.0f;   // 顶部标签条
-    const FLOAT fGap = 8.0f;     // 边距/列间距
-    const FLOAT fMaxCellW = 640.0f;
-    const FLOAT fMaxCellH = 520.0f;
+    // 窗口尺寸按父窗口所在显示器 DPI 缩放：Per-Monitor V2 下 CreateWindowEx 的尺寸
+    // 是物理像素，而这些布局常量按 96 DPI 设计，需乘 dpiScale 转为物理像素，
+    // 否则高 DPI 下窗口视觉偏小。CompareOnPaint 内部布局使用 DIP（GetSize），
+    // 由 RT 的 DPI 自动桥接，与此处物理像素窗口尺寸一致。
+    UINT dpi = GetDpiForWindow(hParent);
+    FLOAT dpiScale = dpi / 96.0f;
+
+    const FLOAT fBarH = 22.0f * dpiScale;   // 顶部标签条
+    const FLOAT fGap = 8.0f * dpiScale;     // 边距/列间距
+    const FLOAT fMaxCellW = 640.0f * dpiScale;
+    const FLOAT fMaxCellH = 520.0f * dpiScale;
 
     FLOAT imgW = (FLOAT)((wL > wR) ? wL : wR);
     FLOAT imgH = (FLOAT)((hL > hR) ? hL : hR);
@@ -674,16 +683,32 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     }
 
     COMPAREDATA* pData = new COMPAREDATA;
-    memset(pData, 0, sizeof(COMPAREDATA));
+    // 注意：不能用 memset 整体清零！COMPAREDATA 含 clStringW 成员（strLeftLabel/strRightLabel），
+    // memset 会把其内部的指针/引用计数清零，析构或赋值时破坏对象。
+    // new COMPAREDATA 已默认构造 clStringW 为合法空状态；这里只显式初始化裸指针成员。
+    pData->pLeft = pData->pRight = pData->pDiff = NULL;
+    pData->pRT = nullptr;
+    pData->pBmpLeft = pData->pBmpRight = pData->pBmpDiff = NULL;
+    pData->pTextFormat = NULL;
     pData->pLeft = g_pCompareLeft;   pData->pLeft->AddRef();
     pData->pRight = g_pCompareRight; pData->pRight->AddRef();
     pData->pDiff = ComputeDiffBitmap(g_pCompareLeft, g_pCompareRight);
+
+    // 在 ClearCompareImages 清空全局标签之前，先把标签复制进比较数据，
+    // 这样后续（调整窗口大小等触发的）重绘仍能显示标签。
+    pData->strLeftLabel  = g_strCompareLeftLabel;
+    pData->strRightLabel = g_strCompareRightLabel;
 
     if (g_pDWriteFactory)
     {
         g_pDWriteFactory->CreateTextFormat(L"Microsoft YaHei", NULL,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"zh-CN", &pData->pTextFormat);
+        // 标题在标签条内垂直居中
+        if (pData->pTextFormat)
+        {
+            pData->pTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
     }
 
     SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pData);
@@ -720,17 +745,14 @@ void EnsureCompareRenderTarget(COMPAREDATA* pData, HWND hWnd, LONG cx, LONG cy)
         return;
     }
 
-    // 与 ImageViewer 相同：SizeU 是物理像素，需按窗口 DPI 把逻辑像素放大后再传入，
-    // 否则渲染目标只覆盖窗口一部分，导致 DPI≠96 时右/下侧被裁。
+    // 与 ImageViewer 相同：Per-Monitor V2 下 GetClientRect 返回的 cx/cy 已是物理像素，
+    // 直接作为 RT 后备缓冲区物理尺寸；RT DPI 设为窗口实际 DPI，使文字按原生 DPI 渲染、
+    // GetSize() 返回逻辑 DIP，布局使用 DIP 坐标。
     UINT dpi = GetDpiForWindow(hWnd);
-    FLOAT fDpiScale = dpi / 96.0f;
-    UINT32 pxW = (UINT32)(cx * fDpiScale);
-    UINT32 pxH = (UINT32)(cy * fDpiScale);
 
     if (pData->pRT == nullptr)
     {
-        D2D1_SIZE_U size = D2D1::SizeU(pxW, pxH);
-        // 关键修复：使用窗口实际 DPI 创建 RT，避免 DPI 缩放不匹配导致右侧被裁剪
+        D2D1_SIZE_U size = D2D1::SizeU(cx, cy);
         HRESULT hr = g_pD2DFactory->CreateHwndRenderTarget(
             D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -748,7 +770,7 @@ void EnsureCompareRenderTarget(COMPAREDATA* pData, HWND hWnd, LONG cx, LONG cy)
     }
     else
     {
-        pData->pRT->Resize(D2D1::SizeU(pxW, pxH));
+        pData->pRT->Resize(D2D1::SizeU(cx, cy));
     }
 }
 
@@ -773,7 +795,7 @@ void CompareOnPaint(HWND hWnd)
     pData->pRT->Clear(D2D1::ColorF(D2D1::ColorF::LightGray, 1.0f));
 
     // 关键修复：布局以 RT 实际渲染尺寸为准（而非 GetClientRect），
-    // 避免 DPI 缩放导致“RT 可渲染范围 < 窗口客户区”从而右列被裁。
+    // 避免 DPI 缩放导致"RT 可渲染范围 < 窗口客户区"从而右列被裁。
     D2D1_SIZE_F rtSize = pData->pRT->GetSize();
     const FLOAT barH = 22.0f;    // 顶部标签条高度
     FLOAT fW = rtSize.width;
@@ -782,15 +804,15 @@ void CompareOnPaint(HWND hWnd)
     FLOAT imgTop = barH;
     FLOAT imgH = fH - barH;
 
-    // 列标题：若源窗口设置过标签，则追加显示在标题中（如“左侧 - 标签名”）
+    // 列标题：若源窗口设置过标签，则追加显示在标题中（如"左侧 - 标签名"）
     WCHAR szTitle[2][256];
-    if (g_strCompareLeftLabel.GetLength() > 0)
-        _snwprintf_s(szTitle[0], _countof(szTitle[0]), _TRUNCATE, L"左侧 - %s", (LPCWSTR)g_strCompareLeftLabel);
+    if (pData->strLeftLabel.GetLength() > 0)
+        _snwprintf_s(szTitle[0], _countof(szTitle[0]), _TRUNCATE, L"左侧 - %s", (LPCWSTR)pData->strLeftLabel);
     else
         wcscpy_s(szTitle[0], L"左侧");
 
-        if (g_strCompareRightLabel.GetLength() > 0)
-        _snwprintf_s(szTitle[1], _countof(szTitle[1]), _TRUNCATE, L"右侧 - %s", (LPCWSTR)g_strCompareRightLabel);
+    if (pData->strRightLabel.GetLength() > 0)
+        _snwprintf_s(szTitle[1], _countof(szTitle[1]), _TRUNCATE, L"右侧 - %s", (LPCWSTR)pData->strRightLabel);
     else
         wcscpy_s(szTitle[1], L"右侧");
 
@@ -834,10 +856,10 @@ void CompareOnPaint(HWND hWnd)
         }
     }
 
-    // 通过日志输出窗口与各图尺寸，便于排查“右侧缺失/空白”等问题（IDE 输出窗口可见）
-    D2D1_SIZE_F sL = pData->pBmpLeft  ? pData->pBmpLeft->GetSize()  : D2D1_SIZE_F{ 0, 0 };
-    D2D1_SIZE_F sR = pData->pBmpRight ? pData->pBmpRight->GetSize() : D2D1_SIZE_F{ 0, 0 };
-    D2D1_SIZE_F sD = pData->pBmpDiff  ? pData->pBmpDiff->GetSize()  : D2D1_SIZE_F{ 0, 0 };
+    // 通过日志输出窗口与各图尺寸，便于排查"右侧缺失/空白"等问题（IDE 输出窗口可见）
+    D2D1_SIZE_F sL = pData->pBmpLeft  ? pData->pBmpLeft->GetSize()  : D2D1::SizeF(0, 0);
+    D2D1_SIZE_F sR = pData->pBmpRight ? pData->pBmpRight->GetSize() : D2D1::SizeF(0, 0);
+    D2D1_SIZE_F sD = pData->pBmpDiff  ? pData->pBmpDiff->GetSize()  : D2D1::SizeF(0, 0);
     FLOAT rtDpiX = 0, rtDpiY = 0;
     pData->pRT->GetDpi(&rtDpiX, &rtDpiY);
     UINT winDpi = GetDpiForWindow(hWnd);
@@ -881,6 +903,28 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         {
             EnsureCompareRenderTarget(pData, hWnd, LOWORD(lParam), HIWORD(lParam));
         }
+        InvalidateRect(hWnd, NULL, TRUE);
+    }
+    break;
+
+    case WM_DPICHANGED:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData)
+        {
+            // DPI 变化（如移动到不同缩放比的显示器）：渲染目标按创建时的 DPI 渲染，
+            // Resize 不会改变其 DPI，因此必须释放后在下次绘制时按新 DPI 重建，
+            // 否则窗口仍按旧 DPI 渲染并被系统位图拉伸，导致文字缩放、笔画缺失。
+            SAFE_RELEASE(pData->pRT);
+            SAFE_RELEASE(pData->pBmpLeft);
+            SAFE_RELEASE(pData->pBmpRight);
+            SAFE_RELEASE(pData->pBmpDiff);
+        }
+        // 按建议矩形重新放置窗口（lParam 中的矩形已按新 DPI 计算）
+        RECT* pRect = (RECT*)lParam;
+        SetWindowPos(hWnd, NULL, pRect->left, pRect->top,
+            pRect->right - pRect->left, pRect->bottom - pRect->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
         InvalidateRect(hWnd, NULL, TRUE);
     }
     break;
@@ -1009,19 +1053,29 @@ void OnPaint(HWND hWnd)
     pData->pRT->SetTransform(D2D1::IdentityMatrix());
     pData->pRT->Clear(D2D1::ColorF(D2D1::ColorF::White, 1.0f));
 
+    // 布局统一使用 RT 的 DIP 尺寸（GetSize），而非 GetClientRect 的物理像素。
+    // Per-Monitor V2 下 rect.right/bottom 是物理像素，若直接当作 DIP 使用，
+    // 实际渲染范围会超出 RT 物理尺寸（1 DIP = dpi/96 物理像素），导致内容被裁。
+    D2D1_SIZE_F rtSize = pData->pRT->GetSize();
+
     UINT bmpW = 0, bmpH = 0;
     pData->pImage->GetSize(&bmpW, &bmpH);
 
-    FLOAT destW = (FLOAT)rect.right;
-    FLOAT destH = (FLOAT)rect.bottom;
+    FLOAT destW = rtSize.width;
+    FLOAT destH = rtSize.height;
     D2D1_RECT_F srcRect = D2D1::RectF(0, 0, (FLOAT)bmpW, (FLOAT)bmpH); // 缩略图模式：拉伸整张图
 
     if (pData->scale > 0)
     {
-        // 缩放模式：源取客户区大小（与原始 GDI+ 行为一致），放大显示
-        destW = (FLOAT)rect.right * pData->scale;
-        destH = (FLOAT)rect.bottom * pData->scale;
-        srcRect = D2D1::RectF(0, 0, (FLOAT)rect.right, (FLOAT)rect.bottom);
+        // 缩放模式：源取客户区"物理像素"大小作为图像像素坐标，放大 scale 倍显示
+        // （与 96 DPI 下原始 GDI+ 行为一致）。
+        // 关键：srcRect 是源位图像素坐标，必须用物理像素（GetPixelSize），不能用 DIP（rtSize）。
+        // 高 DPI 下 rtSize = 物理×96/dpi，若用 DIP 会只取图像左上一部分再放大，
+        // 导致 scale=1 时图像 1 像素 > 屏幕 1 像素（被放大 dpi/96 倍）。
+        D2D1_SIZE_U pxSize = pData->pRT->GetPixelSize();
+        destW = rtSize.width * pData->scale;
+        destH = rtSize.height * pData->scale;
+        srcRect = D2D1::RectF(0, 0, (FLOAT)pxSize.width, (FLOAT)pxSize.height);
     }
 
     pData->pRT->DrawBitmap(pData->pBitmap,
@@ -1029,7 +1083,7 @@ void OnPaint(HWND hWnd)
         1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
         srcRect);
 
-    // 与“XX秒后关闭”文字使用相同的样式：左上角，黑色文字 + 白色描边（偏移 1px）。
+    // 与"XX秒后关闭"文字使用相同的样式：左上角，黑色文字 + 白色描边（偏移 1px）。
     // 若同时显示倒计时，标签向下错开一行以免重叠。
     FLOAT labelTop = 0.0f;
     if (pData->lifeTime > 0)
@@ -1043,7 +1097,7 @@ void OnPaint(HWND hWnd)
         if (SUCCEEDED(pData->pRT->CreateSolidColorBrush(
                 D2D1::ColorF(D2D1::ColorF::Black), &pBrush)))
         {
-            D2D1_RECT_F layout = D2D1::RectF(1.0f, 1.0f + labelTop, (FLOAT)rect.right, (FLOAT)rect.bottom);
+            D2D1_RECT_F layout = D2D1::RectF(1.0f, 1.0f + labelTop, rtSize.width, rtSize.height);
             pData->pRT->DrawText(pData->label, (UINT32)pData->label.GetLength(), pData->pTextFormat,
                 layout, pBrush, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
             pBrush->Release();
@@ -1053,7 +1107,7 @@ void OnPaint(HWND hWnd)
         if (SUCCEEDED(pData->pRT->CreateSolidColorBrush(
                 D2D1::ColorF(D2D1::ColorF::White), &pWhite)))
         {
-            D2D1_RECT_F layout = D2D1::RectF(0.0f, 0.0f + labelTop, (FLOAT)rect.right, (FLOAT)rect.bottom);
+            D2D1_RECT_F layout = D2D1::RectF(0.0f, 0.0f + labelTop, rtSize.width, rtSize.height);
             pData->pRT->DrawText(pData->label, (UINT32)pData->label.GetLength(), pData->pTextFormat,
                 layout, pWhite, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
             pWhite->Release();
@@ -1069,7 +1123,7 @@ void OnPaint(HWND hWnd)
             clStringW str;
             str.Format(L"%d秒后关闭", pData->lifeTime);
 
-            D2D1_RECT_F layout = D2D1::RectF(1.0f, 1.0f, (FLOAT)rect.right, (FLOAT)rect.bottom);
+            D2D1_RECT_F layout = D2D1::RectF(1.0f, 1.0f, rtSize.width, rtSize.height);
             if (pData->pTextFormat)
             {
                 pData->pRT->DrawText(str, str.GetLength(), pData->pTextFormat,
@@ -1084,7 +1138,7 @@ void OnPaint(HWND hWnd)
         {
             clStringW str;
             str.Format(L"%d秒后关闭", pData->lifeTime);
-            D2D1_RECT_F layout = D2D1::RectF(0.0f, 0.0f, (FLOAT)rect.right, (FLOAT)rect.bottom);
+            D2D1_RECT_F layout = D2D1::RectF(0.0f, 0.0f, rtSize.width, rtSize.height);
             if (pData->pTextFormat)
             {
                 pData->pRT->DrawText(str, str.GetLength(), pData->pTextFormat,
@@ -1192,7 +1246,7 @@ void RemoveViewerTransparency(HWND hWnd)
         pData->byAlpha = 255;
 }
 
-// 弹出“设置透明度”滑块对话框。hOwner 为要调节透明度的图片窗口。
+// 弹出"设置透明度"滑块对话框。hOwner 为要调节透明度的图片窗口。
 void ShowTransparencyDialog(HWND hOwner)
 {
     DialogBoxParamW(GetModuleHandle(NULL), MAKEINTRESOURCEW(IDD_TRANSPARENCY_DIALOG),
@@ -1488,6 +1542,23 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     }
         break;
 
+    case WM_DPICHANGED:
+    {
+        WNDDATA* pData = GetWindowData(hWnd);
+        if (pData)
+        {
+            // 同上：DPI 变化时释放渲染目标，下次绘制按新 DPI 重建，避免文字被位图拉伸。
+            SAFE_RELEASE(pData->pRT);
+            SAFE_RELEASE(pData->pBitmap);
+        }
+        RECT* pRect = (RECT*)lParam;
+        SetWindowPos(hWnd, NULL, pRect->left, pRect->top,
+            pRect->right - pRect->left, pRect->bottom - pRect->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(hWnd, NULL, TRUE);
+    }
+        break;
+
     case WM_TIMER:
     {
         int id = wParam;
@@ -1553,12 +1624,12 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
     {
         int xPos = GET_X_LPARAM(lParam);
         int yPos = GET_Y_LPARAM(lParam);
-        // 根据两侧比较图像是否就绪，启用/灰化“比较图片”
+        // 根据两侧比较图像是否就绪，启用/灰化"比较图片"
         EnableMenuItem(g_hImageMenu, MENU_COMPAREIMG,
             HasCompareImages() ? MF_ENABLED : MF_GRAYED);
-        // 同步“添加比较（左/右）”的勾选标记
+        // 同步"添加比较（左/右）"的勾选标记
         UpdateCompareMenuMarks();
-        // 同步“半透明”勾选标记（当前透明度小于 255 即视为半透明）
+        // 同步"半透明"勾选标记（当前透明度小于 255 即视为半透明）
         {
             WNDDATA* pData = GetWindowData(hWnd);
             CheckMenuItem(g_hImageMenu, MENU_TRANSPARENT, MF_BYCOMMAND |
@@ -1596,7 +1667,7 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
       if (pData)
       {
         // 仅释放图像，不再在关闭时写盘。
-        // 持久化改为“退出时保存当前仍打开的窗口”（见 SaveOpenImages），
+        // 持久化改为"退出时保存当前仍打开的窗口"（见 SaveOpenImages），
         // 这样被用户关闭过的图片不会在下一次启动时重新出现。
         if (pData->pImage)
         {
@@ -1696,12 +1767,12 @@ static bool Base64UrlDecode(const clStringW& enc, clStringW& outLabel)
         WCHAR w = (WCHAR)((BYTE)res[i] | ((BYTE)res[i + 1] << 8));
         out.push_back(w);
     }
-    // 用“带长度”的构造函数构建 clStringW（可正确处理内嵌 0 的情况）
+    // 用"带长度"的构造函数构建 clStringW（可正确处理内嵌 0 的情况）
     outLabel = clStringW(out.c_str(), out.size());
     return true;
 }
 
-// 由哈希、可选的标签与扩展名拼出“保存文件”名。
+// 由哈希、可选的标签与扩展名拼出"保存文件"名。
 // 约定文件名格式为 (hash).(label).png：标签以 Base64URL 编码后嵌入文件名，
 // 从而绕开文件名非法字符限制，并随图像一起持久化、下次启动可还原。无标签时退化为 (hash).png。
 static clStringW MakeSavedFileName(const std::wstring& strHash, const clStringW& label, LPCWSTR pszExt)
@@ -1724,7 +1795,7 @@ static clStringW MakeSavedFileName(const std::wstring& strHash, const clStringW&
     return name;
 }
 
-// 从“保存文件”名 (hash).(label).png 中解析并 Base64URL 解码出用户设置的标签。
+// 从"保存文件"名 (hash).(label).png 中解析并 Base64URL 解码出用户设置的标签。
 // 返回 true 表示文件名中含非空标签；否则表示无标签（纯 (hash).png）。解码失败也视为无标签。
 bool ParseSavedLabel(LPCWSTR pszFile, clStringW& outLabel)
 {
@@ -1762,7 +1833,7 @@ void SetViewerWindowLabel(HWND hWnd, const clStringW& label)
     }
 }
 
-// 退出时调用：遍历所有仍打开的“图像查看”窗口，将图像缓存到磁盘，供下次启动恢复。
+// 退出时调用：遍历所有仍打开的"图像查看"窗口，将图像缓存到磁盘，供下次启动恢复。
 // 仅匹配本类窗口（szImageViewerClassName）；已关闭的窗口不会出现在枚举中，因此不会重新出现。
 // 注意：必须在图像窗口仍存活时调用（见主窗口 WM_CLOSE），
 // 否则窗口已销毁、WNDDATA 已释放，将无法枚举到任何打开的图像。
@@ -1784,7 +1855,7 @@ void SaveOpenImages()
                 if (!pData->strHash.empty())
                 {
                     // 使用图像哈希作为文件名，内容相同的图片共用同一文件名，
-                    // 从而避免“保存结果”与“剪贴板”来源产生重复文件。
+                    // 从而避免"保存结果"与"剪贴板"来源产生重复文件。
                     // 文件名格式 (hash).(label).png：用户设置的标签编码进文件名，
                     // 随图像一起持久化，下次启动可解析还原。
                     strFilename = MakeSavedFileName(pData->strHash, pData->label, L".png");

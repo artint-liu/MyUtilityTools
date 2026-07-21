@@ -64,7 +64,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+    // 改为“每显示器感知 V2”：代码已按窗口实际 DPI（GetDpiForWindow）创建 D2D 渲染目标，
+    // 但 SYSTEM_AWARE 下 GetDpiForWindow 只返回“系统 DPI”，非主显示器高 DPI 时
+    // 整个窗口被 Windows 位图拉伸，导致文字看起来被缩放、笔画缺失。
+    // 每显示器感知使渲染目标按各显示器原生 DPI 渲染，文字清晰。
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     // 初始化公共控件，滑块（trackbar）依赖此初始化
     INITCOMMONCONTROLSEX icex = { sizeof(icex), ICC_STANDARD_CLASSES | ICC_BAR_CLASSES };
