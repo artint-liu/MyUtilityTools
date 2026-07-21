@@ -62,21 +62,63 @@ struct WNDDATA
   BYTE byAlpha = 255;                        // 当前窗口透明度（255 为完全不透明），用于菜单勾选与滑块初始化
 };
 
+// 比较窗口子控件 ID（运行时创建，无需进入 Resource.h）
+#define IDC_CMP_DIFFSCALE_LABEL   2001
+#define IDC_CMP_DIFFSCALE_SLIDER  2002
+#define IDC_CMP_DIFFSCALE_VALUE   2003
+#define IDC_CMP_CHAN_R            2004
+#define IDC_CMP_CHAN_G            2005
+#define IDC_CMP_CHAN_B            2006
+#define IDC_CMP_CHAN_A            2007
+#define IDC_CMP_STATUS            2008
+
 // 比较窗口数据
 struct COMPAREDATA
 {
   IWICBitmapSource*   pLeft;      // 左侧图像（AddRef）
   IWICBitmapSource*   pRight;     // 右侧图像（AddRef）
-  IWICBitmapSource*    pDiff;      // 差值位图源（由左右计算，IWICBitmap*）；绘制时转成 pBmpDiff
+  IWICBitmapSource*    pDiff;     // 原始差值位图源（abs 差值，BGRA，由左右计算）
   ID2D1HwndRenderTarget* pRT;
   ID2D1Bitmap*        pBmpLeft;
   ID2D1Bitmap*        pBmpRight;
-  ID2D1Bitmap*        pBmpDiff;
+  ID2D1Bitmap*        pBmpDiffView;  // 显示用差值位图（按 diffScale + 通道开关重算）
   IDWriteTextFormat*  pTextFormat;
   // 标签随比较数据一起保存，避免依赖全局变量：
   // 全局变量会在 OpenCompareWindow 后被 ClearCompareImages 清空，导致调整窗口大小（重新绘制）时标签消失。
   clStringW           strLeftLabel;
   clStringW           strRightLabel;
+
+  // ---- 新增功能字段 ----
+  int    diffScale;          // 差值比例（1~20），输出颜色 = abs(L-R) * diffScale（clamp 255）
+  bool   bChannel[4];        // RGBA 通道开关（B=0,G=1,R=2,A=3，与 BGRA 字节序一致）。不勾选则该通道差值置 0
+  FLOAT  zoom;               // 用户缩放因子（相对"适配缩放"的倍数，1.0 = 适配）
+  FLOAT  offsetX, offsetY;   // 拖拽偏移（DIP，三栏共用，同步移动）
+
+  // 像素缓存（统一 BGRA，尺寸取左右图最小重叠区），用于鼠标悬停查询与差值重算
+  BYTE*  pLeftPixels;
+  BYTE*  pRightPixels;
+  BYTE*  pDiffPixels;        // 原始 abs 差值（不乘比例，不含通道过滤）
+  UINT   imgW, imgH;         // 缓存尺寸
+  UINT   cbStride;
+
+  // 鼠标交互状态
+  bool   bDragging;
+  POINT  ptDragStart;        // 屏幕坐标
+  FLOAT  dragStartOffX, dragStartOffY;
+  bool   bTrackingMouse;     // 是否已注册 TrackMouseEvent（用于接收 WM_MOUSELEAVE）
+
+  // 鼠标悬停状态（已转换为图像像素坐标，-1 表示不在差值栏内）
+  INT    hoverImgX, hoverImgY;
+
+  // 工具栏子控件句柄
+  HWND   hToolbarWnd;      // 工具栏容器窗口（统一背景色，承载下列子控件）
+  HWND   hLabScale;
+  HWND   hSliderScale;
+  HWND   hLabScaleVal;
+  HWND   hBtnR, hBtnG, hBtnB, hBtnA;
+  HWND   hTipWnd;            // 自绘 popup 提示窗口（跟随鼠标显示像素信息）
+  WCHAR  tipText[256];       // tip 当前文本
+  HFONT  hUiFont;            // 工具栏与 tip 共用字体
 };
 
 ATOM RegisterImageViewerClass(HINSTANCE hInstance)
@@ -461,10 +503,11 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
         return nullptr;
     }
 
-    // 统一为 32bpp BGR（无 Alpha）的可锁定 IWICBitmap，便于按字节逐通道运算
-    auto ToBGR = [](IWICBitmapSource* pSrc, IWICBitmap** ppOut) -> bool
+    // 统一为 32bpp BGRA（含 Alpha）的可锁定 IWICBitmap，便于按字节逐通道运算
+    // 使用 BGRA 而非 BGR，使 RGBA 通道按钮中的 A 通道差值也有意义
+    auto ToBGRA = [](IWICBitmapSource* pSrc, IWICBitmap** ppOut) -> bool
     {
-        IWICBitmap* pBmp = ConvertToWicBitmap(pSrc, GUID_WICPixelFormat32bppBGR);
+        IWICBitmap* pBmp = ConvertToWicBitmap(pSrc, GUID_WICPixelFormat32bppBGRA);
         if (!pBmp)
         {
             return false;
@@ -475,7 +518,7 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
 
     IWICBitmap* pL = nullptr;
     IWICBitmap* pR = nullptr;
-    if (!ToBGR(pLeft, &pL) || !ToBGR(pRight, &pR))
+    if (!ToBGRA(pLeft, &pL) || !ToBGRA(pRight, &pR))
     {
         SAFE_RELEASE(pL);
         SAFE_RELEASE(pR);
@@ -497,7 +540,7 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
 
     IWICBitmap* pDiff = nullptr;
     HRESULT hr = g_pWICFactory->CreateBitmap(width, height,
-        GUID_WICPixelFormat32bppBGR, WICBitmapCacheOnLoad, &pDiff);
+        GUID_WICPixelFormat32bppBGRA, WICBitmapCacheOnLoad, &pDiff);
     if (FAILED(hr))
     {
         SAFE_RELEASE(pL);
@@ -533,10 +576,11 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
                 for (UINT x = 0; x < width; x++)
                 {
                     int i = x * 4;
+                    // BGRA 四通道分别取绝对差值
                     sD[i + 0] = (BYTE)abs((int)sL[i + 0] - (int)sR[i + 0]);
                     sD[i + 1] = (BYTE)abs((int)sL[i + 1] - (int)sR[i + 1]);
                     sD[i + 2] = (BYTE)abs((int)sL[i + 2] - (int)sR[i + 2]);
-                    sD[i + 3] = 0xFF;
+                    sD[i + 3] = (BYTE)abs((int)sL[i + 3] - (int)sR[i + 3]);
                 }
             }
         }
@@ -549,6 +593,179 @@ IWICBitmap* ComputeDiffBitmap(IWICBitmapSource* pLeft, IWICBitmapSource* pRight)
     SAFE_RELEASE(pR);
 
     return pDiff;
+}
+
+// 将 IWICBitmapSource 转为 32bpp BGRA 并锁定全图，把像素拷贝到调用方提供的 buffer。
+// 返回步幅（bytes per row）。失败返回 0。pSrc 已被 AddRef，本函数不负责释放。
+// 调用方需保证 pOut 缓冲区至少 width*height*4 字节。
+static UINT CopyBGRAPixels(IWICBitmapSource* pSrc, BYTE* pOut, UINT width, UINT height)
+{
+    if (!g_pWICFactory || !pSrc || !pOut || width == 0 || height == 0)
+    {
+        return 0;
+    }
+    IWICBitmap* pBmp = ConvertToWicBitmap(pSrc, GUID_WICPixelFormat32bppBGRA);
+    if (!pBmp)
+    {
+        return 0;
+    }
+    WICRect rc = { 0, 0, (INT)width, (INT)height };
+    IWICBitmapLock* pLock = nullptr;
+    UINT cbStride = 0;
+    if (SUCCEEDED(pBmp->Lock(&rc, WICBitmapLockRead, &pLock)))
+    {
+        UINT cbBuf = 0;
+        BYTE* pSrc = nullptr;
+        if (SUCCEEDED(pLock->GetDataPointer(&cbBuf, &pSrc)) &&
+            SUCCEEDED(pLock->GetStride(&cbStride)) && pSrc && cbStride >= width * 4)
+        {
+            for (UINT y = 0; y < height; y++)
+            {
+                memcpy(pOut + (size_t)y * width * 4,
+                       pSrc + (size_t)y * cbStride,
+                       (size_t)width * 4);
+            }
+        }
+        else
+        {
+            cbStride = 0;
+        }
+        pLock->Release();
+    }
+    pBmp->Release();
+    return (cbStride >= width * 4) ? width * 4 : 0; // 统一以紧凑步幅返回
+}
+
+// 缓存左右图与原始差值的像素数据到 COMPAREDATA。
+// 左右图分别取其与差值图（最小重叠区）相同尺寸的左上角区域，确保三份缓存尺寸一致，
+// 便于按统一坐标 (x,y) 直接索引三份像素。
+static void CacheComparePixels(COMPAREDATA* pData)
+{
+    if (!pData || !pData->pDiff)
+    {
+        return;
+    }
+    // 先释放旧缓存
+    SAFE_DELETE_ARRAY(pData->pLeftPixels);
+    SAFE_DELETE_ARRAY(pData->pRightPixels);
+    SAFE_DELETE_ARRAY(pData->pDiffPixels);
+
+    UINT wD = 0, hD = 0;
+    pData->pDiff->GetSize(&wD, &hD);
+    pData->imgW = wD;
+    pData->imgH = hD;
+    pData->cbStride = wD * 4;
+    if (wD == 0 || hD == 0)
+    {
+        return;
+    }
+
+    size_t cbTotal = (size_t)wD * hD * 4;
+    pData->pLeftPixels  = new BYTE[cbTotal];
+    pData->pRightPixels = new BYTE[cbTotal];
+    pData->pDiffPixels  = new BYTE[cbTotal];
+    if (!pData->pLeftPixels || !pData->pRightPixels || !pData->pDiffPixels)
+    {
+        SAFE_DELETE_ARRAY(pData->pLeftPixels);
+        SAFE_DELETE_ARRAY(pData->pRightPixels);
+        SAFE_DELETE_ARRAY(pData->pDiffPixels);
+        pData->imgW = pData->imgH = 0;
+        return;
+    }
+
+    // 注意：左右图原始尺寸可能大于差值图（差值取最小重叠区），
+    // 此处通过 WIC 的 CopyPixels 子矩形方式只取左上 wD×hD。
+    auto CopySub = [](IWICBitmapSource* pSrc, BYTE* pOut, UINT w, UINT h) -> bool
+    {
+        if (!pSrc || !pOut) return false;
+        // 先转成 BGRA 的可锁定位图，再 CopyPixels（CopyPixels 不做格式转换）
+        IWICBitmap* pBmp = ConvertToWicBitmap(pSrc, GUID_WICPixelFormat32bppBGRA);
+        if (!pBmp) return false;
+        bool ok = false;
+        WICRect rc = { 0, 0, (INT)w, (INT)h };
+        if (SUCCEEDED(pBmp->CopyPixels(&rc, w * 4, (UINT)((size_t)w * h * 4), pOut)))
+        {
+            ok = true;
+        }
+        pBmp->Release();
+        return ok;
+    };
+
+    // 先用 pDiff 自身填充差值缓存
+    {
+        IWICBitmap* pDiffBmp = ConvertToWicBitmap(pData->pDiff, GUID_WICPixelFormat32bppBGRA);
+        if (pDiffBmp)
+        {
+            WICRect rc = { 0, 0, (INT)wD, (INT)hD };
+            pDiffBmp->CopyPixels(&rc, wD * 4, (UINT)((size_t)wD * hD * 4), pData->pDiffPixels);
+            pDiffBmp->Release();
+        }
+    }
+    CopySub(pData->pLeft,  pData->pLeftPixels,  wD, hD);
+    CopySub(pData->pRight, pData->pRightPixels, wD, hD);
+}
+
+// 根据当前 diffScale 与 bChannel 重算显示用差值位图 pBmpDiffView。
+// 输出像素 = clamp(原始差值[chan] * diffScale, 0, 255)，未勾选通道置 0；Alpha 通道始终 255（不透明）。
+// 需要在 RT 已创建后调用；若 pBmpDiffView 已存在则先释放重建。
+static void UpdateDiffViewBitmap(COMPAREDATA* pData)
+{
+    if (!pData || !pData->pRT || !pData->pDiffPixels || pData->imgW == 0 || pData->imgH == 0)
+    {
+        return;
+    }
+    SAFE_RELEASE(pData->pBmpDiffView);
+
+    UINT w = pData->imgW, h = pData->imgH;
+    size_t cbTotal = (size_t)w * h * 4;
+    BYTE* pView = new BYTE[cbTotal];
+    if (!pView) return;
+
+    int scale = pData->diffScale;
+    if (scale < 1) scale = 1;
+    if (scale > 20) scale = 20;
+
+    // 通道开关：BGRA 字节序
+    bool bB = pData->bChannel[0];
+    bool bG = pData->bChannel[1];
+    bool bR = pData->bChannel[2];
+    bool bA = pData->bChannel[3];
+
+    const BYTE* pSrc = pData->pDiffPixels;
+    for (size_t i = 0; i < (size_t)w * h; i++)
+    {
+        size_t o = i * 4;
+        int vB = bB ? (int)pSrc[o + 0] * scale : 0;
+        int vG = bG ? (int)pSrc[o + 1] * scale : 0;
+        int vR = bR ? (int)pSrc[o + 2] * scale : 0;
+        // Alpha 通道：差值缩放后作为可视 alpha；但为保持图像不透明显示，
+        // 这里仍把输出 alpha 设为 255，让 B/G/R 差值可见。A 通道的差值仅参与悬停信息展示。
+        pView[o + 0] = (vB > 255) ? 255 : (BYTE)vB;
+        pView[o + 1] = (vG > 255) ? 255 : (BYTE)vG;
+        pView[o + 2] = (vR > 255) ? 255 : (BYTE)vR;
+        pView[o + 3] = 0xFF;
+    }
+
+    // 用 BGRA 数据创建 WIC 位图，再转 D2D 位图（D2D 要求 PBGRA，CopyPixels 时已不透明，可直接转）
+    IWICBitmap* pWicView = nullptr;
+    if (SUCCEEDED(g_pWICFactory->CreateBitmapFromMemory(w, h,
+        GUID_WICPixelFormat32bppBGRA, w * 4, (UINT)cbTotal, pView, &pWicView)))
+    {
+        // PBGRA 通道转换：D2D CreateBitmapFromWicBitmap 接受 BGRA 并按 PREMULTIPLIED 处理，
+        // 因为我们 alpha=255（不透明），预乘与直乘等价。
+        IWICBitmap* pPBGRA = ConvertToWicBitmap(pWicView, GUID_WICPixelFormat32bppPBGRA);
+        if (pPBGRA)
+        {
+            pData->pRT->CreateBitmapFromWicBitmap(pPBGRA, nullptr, &pData->pBmpDiffView);
+            pPBGRA->Release();
+        }
+        else
+        {
+            pData->pRT->CreateBitmapFromWicBitmap(pWicView, nullptr, &pData->pBmpDiffView);
+        }
+        pWicView->Release();
+    }
+    delete[] pView;
 }
 
 void SetCompareImage(bool bLeft, IWICBitmapSource* pImage, const clStringW& label)
@@ -617,8 +834,93 @@ void PromptOpenCompare(HWND hWnd)
 
 // ---------------- 比较窗口 ----------------
 
+// 工具栏容器窗口类名
+static LPCWSTR szCompareToolbarClassName = L"Imaget-CompareToolbar";
+// 自绘提示窗口类名
+static LPCWSTR szCompareTipClassName = L"Imaget-CompareTip";
+
+// 自绘提示窗口过程：用 GDI 绘制浅色背景 + 黑色边框 + 多行文本。
+// 不依赖 Tooltip 控件，完全自控，避免被 D2D 呈现覆盖或受其刷新时序影响。
+static LRESULT CALLBACK CompareTipProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_ERASEBKGND)
+    {
+        return 1; // 自绘背景，避免 GDI 先擦除造成闪烁
+    }
+    if (message == WM_PAINT)
+    {
+        PAINTSTRUCT ps;
+        BeginPaint(hWnd, &ps);
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+
+        // 背景：InfoBackground 系统色（与标准 tooltip 一致）
+        HBRUSH hbrBG = (HBRUSH)GetStockObject(WHITE_BRUSH);
+        FillRect(ps.hdc, &rc, hbrBG);
+        // 黑色边框
+        HPEN hPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));
+        HPEN hOldPen = (HPEN)SelectObject(ps.hdc, hPen);
+        HBRUSH hOldBr = (HBRUSH)SelectObject(ps.hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(ps.hdc, rc.left, rc.top, rc.right - 1, rc.bottom - 1);
+        SelectObject(ps.hdc, hOldPen);
+        SelectObject(ps.hdc, hOldBr);
+        DeleteObject(hPen);
+
+        // 文本
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
+        LPCWSTR text = pData ? pData->tipText : L"";
+        HFONT hFont = (pData && pData->hUiFont) ? pData->hUiFont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        HFONT hOldFont = (HFONT)SelectObject(ps.hdc, hFont);
+        SetBkMode(ps.hdc, TRANSPARENT);
+        SetTextColor(ps.hdc, RGB(0, 0, 0));
+        RECT rcText = { rc.left + 6, rc.top + 3, rc.right - 6, rc.bottom - 3 };
+        DrawTextW(ps.hdc, text, -1, &rcText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        SelectObject(ps.hdc, hOldFont);
+
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    return DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
+// 工具栏容器窗口过程：画统一背景（由 hbrBackground 处理），并把子控件的通知消息
+// （WM_COMMAND/WM_HSCROLL）转发给主比较窗口，使其仍能响应滑块与按钮。
+static LRESULT CALLBACK CompareToolbarProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_COMMAND || message == WM_HSCROLL || message == WM_VSCROLL)
+    {
+        HWND hMain = GetParent(hWnd);
+        if (hMain)
+        {
+            return SendMessageW(hMain, message, wParam, lParam);
+        }
+    }
+    return DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
 ATOM RegisterCompareClass(HINSTANCE hInstance)
 {
+    // 注册工具栏容器类：背景色用 COLOR_BTNFACE，与按钮/静态控件背景一致，
+    // 保证工具栏横条颜色统一。
+    WNDCLASSEXW wcTb = { sizeof(WNDCLASSEX) };
+    wcTb.style = CS_HREDRAW;
+    wcTb.lpfnWndProc = CompareToolbarProc;
+    wcTb.hInstance = hInstance;
+    wcTb.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcTb.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wcTb.lpszClassName = szCompareToolbarClassName;
+    RegisterClassExW(&wcTb);
+
+    // 注册自绘提示窗口类
+    WNDCLASSEXW wcTip = { sizeof(WNDCLASSEX) };
+    wcTip.style = CS_HREDRAW | CS_VREDRAW;
+    wcTip.lpfnWndProc = CompareTipProc;
+    wcTip.hInstance = hInstance;
+    wcTip.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcTip.hbrBackground = NULL; // 自绘背景
+    wcTip.lpszClassName = szCompareTipClassName;
+    RegisterClassExW(&wcTip);
+
     WNDCLASSEXW wcex = { sizeof(WNDCLASSEX) };
     wcex.style = CS_HREDRAW | CS_VREDRAW;
     wcex.lpfnWndProc = CompareWndProc;
@@ -629,6 +931,98 @@ ATOM RegisterCompareClass(HINSTANCE hInstance)
     wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wcex.lpszClassName = szCompareClassName;
     return RegisterClassExW(&wcex);
+}
+
+// 比较窗口工具栏高度（DIP）
+#define CMP_TOOLBAR_H   36.0f
+// 比较窗口标签条高度（DIP）
+#define CMP_TITLEBAR_H  22.0f
+
+// 创建比较窗口工具栏：先建一个等宽容器窗口（统一背景色），把控件作为容器的子窗口
+static void CreateCompareToolbar(HWND hWnd, COMPAREDATA* pData)
+{
+    HINSTANCE hInst = (HINSTANCE)GetWindowLongPtrW(hWnd, GWLP_HINSTANCE);
+    UINT dpi = GetDpiForWindow(hWnd);
+    FLOAT s = dpi / 96.0f;
+    auto DIP = [s](int v) { return (LONG)(v * s); };
+
+    // 字体：默认 GUI 字体在高 DPI 下偏小，显式创建一个按 DPI 缩放的字体（工具栏与 tip 共用）
+    pData->hUiFont = nullptr;
+    {
+        LOGFONTW lf = { 0 };
+        lf.lfHeight = -MulDiv(9, dpi, 72); // 9pt
+        lf.lfWeight = FW_NORMAL;
+        wcscpy_s(lf.lfFaceName, L"Microsoft YaHei");
+        pData->hUiFont = CreateFontIndirectW(&lf);
+    }
+    HFONT hFont = pData->hUiFont;
+
+    // 容器窗口：与客户区等宽，高度为工具栏高度。背景色由类 hbrBackground(COLOR_BTNFACE) 绘制
+    RECT rcClient;
+    GetClientRect(hWnd, &rcClient);
+    pData->hToolbarWnd = CreateWindowExW(0, szCompareToolbarClassName, L"",
+        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+        0, 0, rcClient.right, DIP((int)CMP_TOOLBAR_H), hWnd, NULL, hInst, nullptr);
+    HWND hParent = pData->hToolbarWnd; // 控件的父窗口改为容器
+
+    LONG yLab = DIP(8);
+    LONG hLab = DIP(20);
+    LONG yBtn = DIP(6);
+    LONG hBtn = DIP(26);
+
+    LONG x = DIP(8);
+    pData->hLabScale = CreateWindowExW(0, L"STATIC", L"差值比例:",
+        WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, x, yLab, DIP(60), hLab, hParent, (HMENU)IDC_CMP_DIFFSCALE_LABEL, hInst, nullptr);
+    x += DIP(64);
+    pData->hSliderScale = CreateWindowExW(0, TRACKBAR_CLASSW, L"",
+        WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, x, DIP(6), DIP(140), DIP(24), hParent, (HMENU)IDC_CMP_DIFFSCALE_SLIDER, hInst, nullptr);
+    SendMessageW(pData->hSliderScale, TBM_SETRANGE, TRUE, MAKELPARAM(1, 20));
+    SendMessageW(pData->hSliderScale, TBM_SETTICFREQ, 1, 0);
+    SendMessageW(pData->hSliderScale, TBM_SETPOS, TRUE, pData->diffScale);
+    x += DIP(144);
+    pData->hLabScaleVal = CreateWindowExW(0, L"STATIC", L"1",
+        WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, x, yLab, DIP(28), hLab, hParent, (HMENU)IDC_CMP_DIFFSCALE_VALUE, hInst, nullptr);
+    x += DIP(34);
+
+    // R/G/B/A 复选按钮
+    auto MakeBtn = [&](LPCWSTR text, int id) {
+        HWND h = CreateWindowExW(0, L"BUTTON", text,
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, x, yBtn, DIP(28), hBtn, hParent, (HMENU)(INT_PTR)id, hInst, nullptr);
+        x += DIP(30);
+        return h;
+    };
+    pData->hBtnR = MakeBtn(L"R", IDC_CMP_CHAN_R);
+    pData->hBtnG = MakeBtn(L"G", IDC_CMP_CHAN_G);
+    pData->hBtnB = MakeBtn(L"B", IDC_CMP_CHAN_B);
+    pData->hBtnA = MakeBtn(L"A", IDC_CMP_CHAN_A);
+    // 默认全部勾选
+    SendMessageW(pData->hBtnR, BM_SETCHECK, BST_CHECKED, 0);
+    SendMessageW(pData->hBtnG, BM_SETCHECK, BST_CHECKED, 0);
+    SendMessageW(pData->hBtnB, BM_SETCHECK, BST_CHECKED, 0);
+    SendMessageW(pData->hBtnA, BM_SETCHECK, BST_CHECKED, 0);
+
+    // 创建自绘提示 popup 窗口（跟随鼠标显示像素信息，初始隐藏）
+    // 用 WS_EX_TOPMOST 确保在 D2D 主窗口之上；WS_POPUP 无边框，自绘边框
+    pData->hTipWnd = CreateWindowExW(WS_EX_TOPMOST, szCompareTipClassName, L"",
+        WS_POPUP, 0, 0, 100, 40, hWnd, NULL, hInst, nullptr);
+    if (pData->hTipWnd)
+    {
+        SetWindowLongPtrW(pData->hTipWnd, GWLP_USERDATA, (LONG_PTR)pData);
+        pData->tipText[0] = 0;
+        // 初始隐藏
+        ShowWindow(pData->hTipWnd, SW_HIDE);
+    }
+
+    // 给所有子控件设置字体
+    HWND children[] = { pData->hLabScale, pData->hSliderScale, pData->hLabScaleVal,
+                        pData->hBtnR, pData->hBtnG, pData->hBtnB, pData->hBtnA };
+    if (hFont)
+    {
+        for (HWND h : children)
+        {
+            if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
+        }
+    }
 }
 
 void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
@@ -650,7 +1044,8 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     UINT dpi = GetDpiForWindow(hParent);
     FLOAT dpiScale = dpi / 96.0f;
 
-    const FLOAT fBarH = 22.0f * dpiScale;   // 顶部标签条
+    const FLOAT fBarH = CMP_TITLEBAR_H * dpiScale;   // 标签条
+    const FLOAT fToolbarH = CMP_TOOLBAR_H * dpiScale; // 工具栏
     const FLOAT fGap = 8.0f * dpiScale;     // 边距/列间距
     const FLOAT fMaxCellW = 640.0f * dpiScale;
     const FLOAT fMaxCellH = 520.0f * dpiScale;
@@ -666,7 +1061,7 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     FLOAT cellH = imgH * scale;
 
     LONG winW = (LONG)(cellW * 3.0f + fGap * 4.0f);
-    LONG winH = (LONG)(cellH + fBarH + fGap * 2.0f);
+    LONG winH = (LONG)(cellH + fBarH + fToolbarH + fGap * 2.0f);
 
     // 不超过屏幕可用区域
     int scrW = GetSystemMetrics(SM_CXSCREEN);
@@ -674,8 +1069,10 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     if (winW > scrW - 40) winW = scrW - 40;
     if (winH > scrH - 80) winH = scrH - 80;
 
+    // WS_CLIPCHILDREN：让 D2D 的 HwndRenderTarget 呈现时裁剪掉工具栏子控件区域，
+    // 避免 Clear/DrawBitmap 覆盖子控件导致其反复消失再重绘（闪烁）。
     HWND hWnd = CreateWindowExW(WS_EX_TOPMOST, szCompareClassName, _T("图片对比"),
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, winW, winH, hParent, nullptr, hInstance, nullptr);
     if (!hWnd)
     {
@@ -688,7 +1085,7 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     // new COMPAREDATA 已默认构造 clStringW 为合法空状态；这里只显式初始化裸指针成员。
     pData->pLeft = pData->pRight = pData->pDiff = NULL;
     pData->pRT = nullptr;
-    pData->pBmpLeft = pData->pBmpRight = pData->pBmpDiff = NULL;
+    pData->pBmpLeft = pData->pBmpRight = pData->pBmpDiffView = NULL;
     pData->pTextFormat = NULL;
     pData->pLeft = g_pCompareLeft;   pData->pLeft->AddRef();
     pData->pRight = g_pCompareRight; pData->pRight->AddRef();
@@ -698,6 +1095,32 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     // 这样后续（调整窗口大小等触发的）重绘仍能显示标签。
     pData->strLeftLabel  = g_strCompareLeftLabel;
     pData->strRightLabel = g_strCompareRightLabel;
+
+    // 新增功能字段初始化
+    pData->diffScale = 1;
+    pData->bChannel[0] = true; // B
+    pData->bChannel[1] = true; // G
+    pData->bChannel[2] = true; // R
+    pData->bChannel[3] = true; // A
+    pData->zoom = 1.0f;
+    pData->offsetX = 0.0f;
+    pData->offsetY = 0.0f;
+    pData->pLeftPixels = pData->pRightPixels = pData->pDiffPixels = nullptr;
+    pData->imgW = pData->imgH = pData->cbStride = 0;
+    pData->bDragging = false;
+    pData->ptDragStart = { 0, 0 };
+    pData->dragStartOffX = pData->dragStartOffY = 0.0f;
+    pData->bTrackingMouse = false;
+    pData->hoverImgX = pData->hoverImgY = -1;
+    pData->hLabScale = pData->hSliderScale = pData->hLabScaleVal = nullptr;
+    pData->hBtnR = pData->hBtnG = pData->hBtnB = pData->hBtnA = nullptr;
+    pData->hToolbarWnd = nullptr;
+    pData->hTipWnd = nullptr;
+    pData->tipText[0] = 0;
+    pData->hUiFont = nullptr;
+
+    // 缓存像素（用于鼠标悬停查询与差值视图重算）
+    CacheComparePixels(pData);
 
     if (g_pDWriteFactory)
     {
@@ -712,6 +1135,10 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     }
 
     SetWindowLongPtrW(hWnd, 0, (LONG_PTR)pData);
+
+    // 创建工具栏子控件（依赖 hWnd 与 pData->diffScale）
+    CreateCompareToolbar(hWnd, pData);
+
     ShowWindow(hWnd, SW_NORMAL);
     UpdateWindow(hWnd);
 }
@@ -766,12 +1193,95 @@ void EnsureCompareRenderTarget(COMPAREDATA* pData, HWND hWnd, LONG cx, LONG cy)
         }
         pData->pBmpLeft  = MakeD2DBitmap(pData->pRT, pData->pLeft);
         pData->pBmpRight = MakeD2DBitmap(pData->pRT, pData->pRight);
-        pData->pBmpDiff  = MakeD2DBitmap(pData->pRT, pData->pDiff);
+        // 差值显示位图按当前 diffScale + 通道开关重算（而非直接用原始 pDiff）
+        UpdateDiffViewBitmap(pData);
     }
     else
     {
         pData->pRT->Resize(D2D1::SizeU(cx, cy));
     }
+}
+
+// 比较窗口布局信息：用于绘制与鼠标坐标转换共用，保证三者一致
+struct CMP_LAYOUT
+{
+    FLOAT fW, fH;          // RT 总尺寸（DIP）
+    FLOAT toolbarH;        // 工具栏高度
+    FLOAT titleH;          // 标题条高度
+    FLOAT imgTop;          // 图像区域顶部 y
+    FLOAT imgAreaH;        // 图像区域高度
+    FLOAT colW;            // 每栏宽度
+    FLOAT imgPixW, imgPixH; // 图像像素尺寸（以差值尺寸为准，三栏一致）
+    FLOAT fitScale;        // 适配缩放（contain）
+    FLOAT drawW, drawH;    // 显示尺寸 = imgPix * fitScale * zoom
+    FLOAT colCenterX[3];   // 每栏中心 X
+    FLOAT imgAreaCenterY;  // 图像区域中心 Y
+};
+
+// 计算比较窗口布局。zoom/offset 来自 pData。
+static void ComputeCompareLayout(COMPAREDATA* pData, HWND hWnd, CMP_LAYOUT& L)
+{
+    D2D1_SIZE_F rtSize = pData->pRT->GetSize();
+    L.fW = rtSize.width;
+    L.fH = rtSize.height;
+    L.toolbarH = CMP_TOOLBAR_H;
+    L.titleH = CMP_TITLEBAR_H;
+    L.imgTop = L.toolbarH + L.titleH;
+    L.imgAreaH = L.fH - L.imgTop;
+    if (L.imgAreaH < 1) L.imgAreaH = 1;
+    L.colW = L.fW / 3.0f;
+
+    L.imgPixW = (FLOAT)pData->imgW;
+    L.imgPixH = (FLOAT)pData->imgH;
+    if (L.imgPixW <= 0) L.imgPixW = 1;
+    if (L.imgPixH <= 0) L.imgPixH = 1;
+
+    // 适配缩放（contain）：图像完整显示在栏内（栏内留 4px 边距）
+    FLOAT availW = L.colW - 4.0f;
+    FLOAT availH = L.imgAreaH;
+    if (availW < 1) availW = 1;
+    if (availH < 1) availH = 1;
+    L.fitScale = min(availW / L.imgPixW, availH / L.imgPixH);
+
+    FLOAT z = pData->zoom;
+    if (z < 0.01f) z = 0.01f;
+    L.drawW = L.imgPixW * L.fitScale * z;
+    L.drawH = L.imgPixH * L.fitScale * z;
+
+    for (int i = 0; i < 3; i++)
+    {
+        L.colCenterX[i] = L.colW * i + L.colW / 2.0f;
+    }
+    L.imgAreaCenterY = L.imgTop + L.imgAreaH / 2.0f;
+}
+
+// 根据栏索引计算图像目标矩形（居中 + offset）
+static inline D2D1_RECT_F LayoutCellDestRect(const CMP_LAYOUT& L, int col, FLOAT offX, FLOAT offY)
+{
+    FLOAT left = L.colCenterX[col] - L.drawW / 2.0f + offX;
+    FLOAT top  = L.imgAreaCenterY - L.drawH / 2.0f + offY;
+    return D2D1::RectF(left, top, left + L.drawW, top + L.drawH);
+}
+
+// 屏幕鼠标坐标（DIP）→ 栏索引与图像像素坐标。返回是否在该栏的图像显示矩形内。
+// offX/offY 为当前拖拽偏移。outCol/outImgX/outImgY 为输出。
+static bool LayoutPointToImage(const CMP_LAYOUT& L, FLOAT mxDip, FLOAT myDip,
+                               FLOAT offX, FLOAT offY,
+                               int& outCol, FLOAT& outImgX, FLOAT& outImgY)
+{
+    if (mxDip < 0 || myDip < L.imgTop) return false;
+    int col = (int)(mxDip / L.colW);
+    if (col < 0 || col > 2) return false;
+    D2D1_RECT_F rc = LayoutCellDestRect(L, col, offX, offY);
+    if (mxDip < rc.left || mxDip > rc.right || myDip < rc.top || myDip > rc.bottom)
+    {
+        outCol = col;
+        return false;
+    }
+    outCol = col;
+    outImgX = (mxDip - rc.left) / L.drawW * L.imgPixW;
+    outImgY = (myDip - rc.top) / L.drawH * L.imgPixH;
+    return true;
 }
 
 void CompareOnPaint(HWND hWnd)
@@ -792,17 +1302,13 @@ void CompareOnPaint(HWND hWnd)
 
     pData->pRT->BeginDraw();
     pData->pRT->SetTransform(D2D1::IdentityMatrix());
-    pData->pRT->Clear(D2D1::ColorF(D2D1::ColorF::LightGray, 1.0f));
 
-    // 关键修复：布局以 RT 实际渲染尺寸为准（而非 GetClientRect），
-    // 避免 DPI 缩放导致"RT 可渲染范围 < 窗口客户区"从而右列被裁。
-    D2D1_SIZE_F rtSize = pData->pRT->GetSize();
-    const FLOAT barH = 22.0f;    // 顶部标签条高度
-    FLOAT fW = rtSize.width;
-    FLOAT fH = rtSize.height;
-    FLOAT colW = fW / 3.0f;
-    FLOAT imgTop = barH;
-    FLOAT imgH = fH - barH;
+    CMP_LAYOUT L;
+    ComputeCompareLayout(pData, hWnd, L);
+
+    // Clear 整个 RT 为背景色。WS_CLIPCHILDREN 使 D2D 呈现（BitBlt）时裁剪子控件区域，
+    // 子控件不被覆盖（无闪烁）；工具栏中子控件未覆盖的空白区域则呈现为 LightGray。
+    pData->pRT->Clear(D2D1::ColorF(D2D1::ColorF::LightGray, 1.0f));
 
     // 列标题：若源窗口设置过标签，则追加显示在标题中（如"左侧 - 标签名"）
     WCHAR szTitle[2][256];
@@ -817,69 +1323,190 @@ void CompareOnPaint(HWND hWnd)
         wcscpy_s(szTitle[1], L"右侧");
 
     struct { ID2D1Bitmap* bmp; LPCWSTR title; } cols[3] = {
-        { pData->pBmpLeft,  szTitle[0] },
-        { pData->pBmpDiff,  L"比较（差值）" },
-        { pData->pBmpRight, szTitle[1] },
+        { pData->pBmpLeft,     szTitle[0] },
+        { pData->pBmpDiffView, L"比较（差值）" },
+        { pData->pBmpRight,    szTitle[1] },
     };
+
+    // 源矩形：左/右图只取与差值重叠的左上 imgPixW×imgPixH 区域，保证三栏像素一一对应
+    D2D1_RECT_F srcRect = D2D1::RectF(0, 0, L.imgPixW, L.imgPixH);
+
+    ID2D1SolidColorBrush* pBrush = nullptr;
+    pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &pBrush);
+    ID2D1SolidColorBrush* pLineBrush = nullptr;
+    pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &pLineBrush);
+    ID2D1SolidColorBrush* pCrossBrush = nullptr;
+    pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red, 0.8f), &pCrossBrush);
 
     for (int i = 0; i < 3; i++)
     {
-        FLOAT x = colW * i;
-        D2D1_RECT_F rcImg = D2D1::RectF(x + 2, imgTop, x + colW - 2, imgTop + imgH);
-        if (cols[i].bmp)
-        {
-            pData->pRT->DrawBitmap(cols[i].bmp, rcImg, 1.0f,
-                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                D2D1::RectF(0, 0, (FLOAT)cols[i].bmp->GetSize().width, (FLOAT)cols[i].bmp->GetSize().height));
-        }
+        FLOAT x = L.colW * i;
 
-        // 顶部标签
-        ID2D1SolidColorBrush* pBrush = nullptr;
-        if (SUCCEEDED(pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &pBrush)))
+        // 标题条背景与文字
+        if (pBrush)
         {
-            D2D1_RECT_F rcBar = D2D1::RectF(x, 0, x + colW, barH);
-            D2D1_RECT_F rcTxt = D2D1::RectF(x + 4, 0, x + colW - 4, barH);
-            if (pData->pTextFormat)
+            D2D1_RECT_F rcTxt = D2D1::RectF(x + 4, L.toolbarH, x + L.colW - 4, L.toolbarH + L.titleH);
+            if (pData->pTextFormat && cols[i].title)
             {
                 pData->pRT->DrawText(cols[i].title, (UINT32)wcslen(cols[i].title),
                     pData->pTextFormat, rcTxt, pBrush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL);
             }
-            pBrush->Release();
         }
-        // 分隔线
-        ID2D1SolidColorBrush* pLine = nullptr;
-        if (i > 0 && SUCCEEDED(pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &pLine)))
+
+        // 栏裁剪区域：限制图像绘制不溢出到相邻栏
+        D2D1_RECT_F rcClip = D2D1::RectF(x + 1, L.imgTop, x + L.colW - 1, L.imgTop + L.imgAreaH);
+        pData->pRT->PushAxisAlignedClip(rcClip, D2D1_ANTIALIAS_MODE_ALIASED);
+
+        if (cols[i].bmp)
         {
-            pData->pRT->DrawLine(D2D1::Point2F(x, imgTop), D2D1::Point2F(x, fH), pLine);
-            pLine->Release();
+            D2D1_RECT_F destRect = LayoutCellDestRect(L, i, pData->offsetX, pData->offsetY);
+            pData->pRT->DrawBitmap(cols[i].bmp, destRect, 1.0f,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, srcRect);
+        }
+
+        // 鼠标悬停十字标记：在差值栏（i==1）且 hover 有效时绘制
+        if (i == 1 && pData->hoverImgX >= 0 && pData->hoverImgY >= 0 && pCrossBrush)
+        {
+            D2D1_RECT_F destRect = LayoutCellDestRect(L, i, pData->offsetX, pData->offsetY);
+            FLOAT hx = destRect.left + (FLOAT)pData->hoverImgX / L.imgPixW * L.drawW;
+            FLOAT hy = destRect.top  + (FLOAT)pData->hoverImgY / L.imgPixH * L.drawH;
+            pData->pRT->DrawLine(D2D1::Point2F(rcClip.left, hy), D2D1::Point2F(rcClip.right, hy), pCrossBrush, 1.0f);
+            pData->pRT->DrawLine(D2D1::Point2F(hx, rcClip.top),  D2D1::Point2F(hx, rcClip.bottom), pCrossBrush, 1.0f);
+        }
+
+        pData->pRT->PopAxisAlignedClip();
+
+        // 分隔线
+        if (pLineBrush && i > 0)
+        {
+            pData->pRT->DrawLine(D2D1::Point2F(x, L.imgTop), D2D1::Point2F(x, L.fH), pLineBrush, 1.0f);
         }
     }
 
-    // 通过日志输出窗口与各图尺寸，便于排查"右侧缺失/空白"等问题（IDE 输出窗口可见）
-    D2D1_SIZE_F sL = pData->pBmpLeft  ? pData->pBmpLeft->GetSize()  : D2D1::SizeF(0, 0);
-    D2D1_SIZE_F sR = pData->pBmpRight ? pData->pBmpRight->GetSize() : D2D1::SizeF(0, 0);
-    D2D1_SIZE_F sD = pData->pBmpDiff  ? pData->pBmpDiff->GetSize()  : D2D1::SizeF(0, 0);
-    FLOAT rtDpiX = 0, rtDpiY = 0;
-    pData->pRT->GetDpi(&rtDpiX, &rtDpiY);
-    UINT winDpi = GetDpiForWindow(hWnd);
-    CLOGW(L"CompareOnPaint 窗口(客户区) %dx%d | RT %dx%d | RT-DPI %.1f 窗口-DPI %u | colW %.1f 右列x %.1f~%.1f | 图片区域 %dx%d | 左 %dx%d  右 %dx%d  差值 %dx%d",
-        (int)rect.right, (int)rect.bottom,
-        (int)pData->pRT->GetSize().width, (int)pData->pRT->GetSize().height,
-        rtDpiX, winDpi,
-        colW, colW * 2.0f, colW * 3.0f,
-        (int)(colW - 4), (int)imgH,
-        (int)sL.width, (int)sL.height,
-        (int)sR.width, (int)sR.height,
-        (int)sD.width, (int)sD.height);
+    SAFE_RELEASE(pBrush);
+    SAFE_RELEASE(pLineBrush);
+    SAFE_RELEASE(pCrossBrush);
 
     HRESULT hr = pData->pRT->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET)
     {
         SAFE_RELEASE(pData->pBmpLeft);
         SAFE_RELEASE(pData->pBmpRight);
-        SAFE_RELEASE(pData->pBmpDiff);
+        SAFE_RELEASE(pData->pBmpDiffView);
         SAFE_RELEASE(pData->pRT);
+    }
+}
+
+// 从 RGBA 字节序（内存中 R,G,B,A）取值；缓存为 BGRA 字节序，故按 B/G/R/A 索引。
+// 返回字符串 "R,G,B,A"。
+static inline void FormatRGBA(WCHAR* buf, int buflen, const BYTE* pxBGRA)
+{
+    _snwprintf_s(buf, buflen, _TRUNCATE, L"R=%d G=%d B=%d A=%d",
+        pxBGRA[2], pxBGRA[1], pxBGRA[0], pxBGRA[3]);
+}
+
+// 更新自绘提示窗口：显示鼠标悬停点的左/右/差值信息，并跟随鼠标定位
+static void UpdateCompareTooltip(HWND hWnd, COMPAREDATA* pData, int screenX, int screenY)
+{
+    if (!pData->hTipWnd) return;
+
+    if (pData->hoverImgX < 0 || pData->hoverImgY < 0 ||
+        !pData->pLeftPixels || !pData->pRightPixels || !pData->pDiffPixels ||
+        (UINT)pData->hoverImgX >= pData->imgW || (UINT)pData->hoverImgY >= pData->imgH)
+    {
+        // 无效悬停：隐藏
+        ShowWindow(pData->hTipWnd, SW_HIDE);
+        return;
+    }
+
+    size_t idx = ((size_t)pData->hoverImgY * pData->imgW + pData->hoverImgX) * 4;
+    const BYTE* pL = pData->pLeftPixels  + idx;
+    const BYTE* pR = pData->pRightPixels + idx;
+    const BYTE* pD = pData->pDiffPixels  + idx;
+    _snwprintf_s(pData->tipText, _countof(pData->tipText), _TRUNCATE,
+        L"(%d,%d)\n左: R=%d G=%d B=%d A=%d\n右: R=%d G=%d B=%d A=%d\n差值: R=%d G=%d B=%d A=%d",
+        pData->hoverImgX, pData->hoverImgY,
+        pL[2], pL[1], pL[0], pL[3],
+        pR[2], pR[1], pR[0], pR[3],
+        pD[2], pD[1], pD[0], pD[3]);
+
+    // 用 GDI 计算文本尺寸以确定窗口大小
+    HDC hdc = GetDC(NULL);
+    HFONT hFont = pData->hUiFont ? pData->hUiFont : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+    RECT rcText = { 0, 0, 600, 0 };
+    DrawTextW(hdc, pData->tipText, -1, &rcText, DT_CALCRECT | DT_WORDBREAK);
+    SelectObject(hdc, hOldFont);
+    ReleaseDC(NULL, hdc);
+
+    int tipW = (rcText.right - rcText.left) + 14;
+    int tipH = (rcText.bottom - rcText.top) + 8;
+
+    // 定位到鼠标右下方
+    int tipX = screenX + 18;
+    int tipY = screenY + 18;
+    int scrW = GetSystemMetrics(SM_CXSCREEN);
+    int scrH = GetSystemMetrics(SM_CYSCREEN);
+    if (tipX + tipW > scrW) tipX = screenX - tipW - 4;
+    if (tipY + tipH > scrH) tipY = screenY - tipH - 4;
+    if (tipX < 0) tipX = 0;
+    if (tipY < 0) tipY = 0;
+
+    // 显示并定位（SWP_NOACTIVATE 避免抢焦点导致主窗口失去 hover 跟踪）
+    SetWindowPos(pData->hTipWnd, HWND_TOPMOST, tipX, tipY, tipW, tipH,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+    InvalidateRect(pData->hTipWnd, NULL, FALSE);
+    UpdateWindow(pData->hTipWnd);
+}
+
+// 从滑块读取差值比例，更新显示并重算差值视图
+static void ApplyDiffScaleFromSlider(HWND hWnd, COMPAREDATA* pData)
+{
+    if (!pData->hSliderScale) return;
+    int pos = (int)SendMessageW(pData->hSliderScale, TBM_GETPOS, 0, 0);
+    if (pos < 1) pos = 1;
+    if (pos > 20) pos = 20;
+    if (pos == pData->diffScale) return;
+    pData->diffScale = pos;
+    WCHAR buf[16];
+    _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d", pos);
+    SetWindowTextW(pData->hLabScaleVal, buf);
+    UpdateDiffViewBitmap(pData);
+    InvalidateRect(hWnd, NULL, FALSE);
+}
+
+// 从按钮读取 RGBA 通道开关，重算差值视图
+static void ApplyChannelButtons(HWND hWnd, COMPAREDATA* pData)
+{
+    auto Get = [](HWND h) { return SendMessageW(h, BM_GETCHECK, 0, 0) == BST_CHECKED; };
+    pData->bChannel[0] = Get(pData->hBtnB); // B
+    pData->bChannel[1] = Get(pData->hBtnG); // G
+    pData->bChannel[2] = Get(pData->hBtnR); // R
+    pData->bChannel[3] = Get(pData->hBtnA); // A
+    UpdateDiffViewBitmap(pData);
+    InvalidateRect(hWnd, NULL, FALSE);
+}
+
+// 客户区物理像素坐标 → DIP（基于窗口 DPI）
+static inline void ClientPxToDip(HWND hWnd, int px, int py, FLOAT& dx, FLOAT& dy)
+{
+    UINT dpi = GetDpiForWindow(hWnd);
+    dx = px * 96.0f / (FLOAT)dpi;
+    dy = py * 96.0f / (FLOAT)dpi;
+}
+
+// 调整工具栏子控件位置（窗口大小变化时调用）
+static void LayoutCompareToolbar(HWND hWnd, COMPAREDATA* pData)
+{
+    // 容器窗口随客户区等宽变化，子控件位置固定（相对容器）
+    if (pData->hToolbarWnd)
+    {
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+        UINT dpi = GetDpiForWindow(hWnd);
+        LONG h = (LONG)(CMP_TOOLBAR_H * dpi / 96.0f);
+        SetWindowPos(pData->hToolbarWnd, NULL, 0, 0, rc.right, h, SWP_NOZORDER | SWP_NOMOVE);
     }
 }
 
@@ -902,6 +1529,7 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         if (pData)
         {
             EnsureCompareRenderTarget(pData, hWnd, LOWORD(lParam), HIWORD(lParam));
+            LayoutCompareToolbar(hWnd, pData);
         }
         InvalidateRect(hWnd, NULL, TRUE);
     }
@@ -918,7 +1546,7 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             SAFE_RELEASE(pData->pRT);
             SAFE_RELEASE(pData->pBmpLeft);
             SAFE_RELEASE(pData->pBmpRight);
-            SAFE_RELEASE(pData->pBmpDiff);
+            SAFE_RELEASE(pData->pBmpDiffView);
         }
         // 按建议矩形重新放置窗口（lParam 中的矩形已按新 DPI 计算）
         RECT* pRect = (RECT*)lParam;
@@ -926,6 +1554,175 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             pRect->right - pRect->left, pRect->bottom - pRect->top,
             SWP_NOZORDER | SWP_NOACTIVATE);
         InvalidateRect(hWnd, NULL, TRUE);
+    }
+    break;
+
+    case WM_HSCROLL:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData && (HWND)lParam == pData->hSliderScale)
+        {
+            ApplyDiffScaleFromSlider(hWnd, pData);
+        }
+    }
+    break;
+
+    case WM_COMMAND:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData)
+        {
+            WORD cmd = LOWORD(wParam);
+            if (cmd == IDC_CMP_CHAN_R || cmd == IDC_CMP_CHAN_G ||
+                cmd == IDC_CMP_CHAN_B || cmd == IDC_CMP_CHAN_A)
+            {
+                // BN_CLICKED 通知
+                if (HIWORD(wParam) == BN_CLICKED)
+                {
+                    ApplyChannelButtons(hWnd, pData);
+                }
+            }
+        }
+    }
+    break;
+
+    case WM_LBUTTONDOWN:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData)
+        {
+            // 仅在图像区域开始拖拽（顶部工具栏/标题条不处理）
+            FLOAT mxDip, myDip;
+            ClientPxToDip(hWnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), mxDip, myDip);
+            if (myDip >= (CMP_TOOLBAR_H + CMP_TITLEBAR_H) || !pData->pRT)
+            {
+                pData->bDragging = true;
+                pData->ptDragStart.x = GET_X_LPARAM(lParam);
+                pData->ptDragStart.y = GET_Y_LPARAM(lParam);
+                pData->dragStartOffX = pData->offsetX;
+                pData->dragStartOffY = pData->offsetY;
+                SetCapture(hWnd);
+                SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+            }
+        }
+    }
+    break;
+
+    case WM_LBUTTONUP:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData && pData->bDragging)
+        {
+            pData->bDragging = false;
+            ReleaseCapture();
+            SetCursor(LoadCursor(nullptr, IDC_ARROW));
+        }
+    }
+    break;
+
+    case WM_MOUSEMOVE:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (!pData || !pData->pRT) break;
+
+        // 注册鼠标离开跟踪（首次进入时）
+        if (!pData->bTrackingMouse)
+        {
+            TRACKMOUSEEVENT tme = { sizeof(tme) };
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hWnd;
+            if (TrackMouseEvent(&tme))
+            {
+                pData->bTrackingMouse = true;
+            }
+        }
+
+        int mx = GET_X_LPARAM(lParam);
+        int my = GET_Y_LPARAM(lParam);
+
+        // 拖拽：三个图同步移动（offset 是 DIP）
+        if (pData->bDragging)
+        {
+            FLOAT curDipX, curDipY;
+            ClientPxToDip(hWnd, mx, my, curDipX, curDipY);
+            FLOAT startDipX, startDipY;
+            ClientPxToDip(hWnd, pData->ptDragStart.x, pData->ptDragStart.y, startDipX, startDipY);
+            pData->offsetX = pData->dragStartOffX + (curDipX - startDipX);
+            pData->offsetY = pData->dragStartOffY + (curDipY - startDipY);
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+
+        // 悬停信息：计算当前鼠标对应的图像像素坐标
+        CMP_LAYOUT L;
+        ComputeCompareLayout(pData, hWnd, L);
+        FLOAT mxDip, myDip;
+        ClientPxToDip(hWnd, mx, my, mxDip, myDip);
+        int col = -1;
+        FLOAT imgX = 0, imgY = 0;
+        bool inImg = LayoutPointToImage(L, mxDip, myDip, pData->offsetX, pData->offsetY, col, imgX, imgY);
+        INT newHX = inImg ? (INT)imgX : -1;
+        INT newHY = inImg ? (INT)imgY : -1;
+        // 限制在图像范围内
+        if (newHX >= 0 && (UINT)newHX >= pData->imgW) newHX = -1;
+        if (newHY >= 0 && (UINT)newHY >= pData->imgH) newHY = -1;
+        bool hoverChanged = (newHX != pData->hoverImgX || newHY != pData->hoverImgY);
+        pData->hoverImgX = newHX;
+        pData->hoverImgY = newHY;
+        // 每次移动都更新 tip（位置跟随鼠标；hover 无效时 UpdateCompareTooltip 内部会隐藏）
+        POINT ptScreen = { mx, my };
+        ClientToScreen(hWnd, &ptScreen);
+        UpdateCompareTooltip(hWnd, pData, ptScreen.x, ptScreen.y);
+        if (hoverChanged)
+        {
+            InvalidateRect(hWnd, NULL, FALSE);
+        }
+    }
+    break;
+
+    case WM_MOUSEWHEEL:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData && pData->pRT)
+        {
+            int zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+            FLOAT factor = (zDelta > 0) ? 1.1f : (1.0f / 1.1f);
+            FLOAT newZoom = pData->zoom * factor;
+            if (newZoom < 0.1f) newZoom = 0.1f;
+            if (newZoom > 50.0f) newZoom = 50.0f;
+            if (newZoom != pData->zoom)
+            {
+                pData->zoom = newZoom;
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+        }
+    }
+    break;
+
+    case WM_SETCURSOR:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData && pData->bDragging)
+        {
+            SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+            return TRUE;
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    break;
+
+    case WM_MOUSELEAVE:
+    {
+        COMPAREDATA* pData = (COMPAREDATA*)GetWindowLongPtrW(hWnd, 0);
+        if (pData)
+        {
+            pData->bTrackingMouse = false;
+            if (pData->hoverImgX >= 0 || pData->hoverImgY >= 0)
+            {
+                pData->hoverImgX = pData->hoverImgY = -1;
+                UpdateCompareTooltip(hWnd, pData, 0, 0);
+                InvalidateRect(hWnd, NULL, FALSE);
+            }
+        }
     }
     break;
 
@@ -943,9 +1740,15 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             SAFE_RELEASE(pData->pDiff);
             SAFE_RELEASE(pData->pBmpLeft);
             SAFE_RELEASE(pData->pBmpRight);
-            SAFE_RELEASE(pData->pBmpDiff);
+            SAFE_RELEASE(pData->pBmpDiffView);
             SAFE_RELEASE(pData->pRT);
             SAFE_RELEASE(pData->pTextFormat);
+            if (pData->hTipWnd) { DestroyWindow(pData->hTipWnd); pData->hTipWnd = nullptr; }
+            if (pData->hToolbarWnd) { DestroyWindow(pData->hToolbarWnd); pData->hToolbarWnd = nullptr; }
+            if (pData->hUiFont) { DeleteObject(pData->hUiFont); pData->hUiFont = nullptr; }
+            SAFE_DELETE_ARRAY(pData->pLeftPixels);
+            SAFE_DELETE_ARRAY(pData->pRightPixels);
+            SAFE_DELETE_ARRAY(pData->pDiffPixels);
             SAFE_DELETE(pData);
             SetWindowLongPtr(hWnd, 0, NULL);
         }

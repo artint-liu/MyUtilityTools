@@ -18,6 +18,10 @@
 #define SAFE_DELETE(p) do { if (p) { delete p; (p) = nullptr; } } while(0)
 #endif
 
+#ifndef SAFE_DELETE_ARRAY
+#define SAFE_DELETE_ARRAY(p) do { if (p) { delete[] (p); (p) = nullptr; } } while(0)
+#endif
+
 // 全局 DirectX / WIC / DirectWrite 工厂
 extern ID2D1Factory*          g_pD2DFactory;
 extern IWICImagingFactory*    g_pWICFactory;
