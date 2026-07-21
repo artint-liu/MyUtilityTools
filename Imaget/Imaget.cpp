@@ -1,5 +1,6 @@
 ﻿#include <windows.h>
 #include <windowsx.h>
+#include <commctrl.h>
 #include <tchar.h>
 
 #include <clstd.h>
@@ -9,6 +10,7 @@
 
 #include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "comctl32.lib")
 
 #define MAX_LOADSTRING 100
 //#define SAFE_DELETE(p) if(p) { delete p; p = NULL; }
@@ -45,6 +47,15 @@ void InitGraphicsFactories();
 void ShutdownGraphicsFactories();
 bool ParseSavedLabel(LPCWSTR pszFile, clStringW& outLabel);
 
+// 顶层未处理异常过滤器：进程意外崩溃时，尽力把当前仍打开的 ImageViewer 图像
+// 落盘到 Saved 目录，使下次启动时能自动恢复（对应“崩溃保护”这一新增需求）。
+// 注意：崩溃时进程状态可能已损坏，此处为最佳努力（best-effort），写盘若失败则直接终止。
+static LONG WINAPI ImagetCrashHandler(EXCEPTION_POINTERS* /*pExceptionInfo*/)
+{
+    SaveOpenImages();
+    return EXCEPTION_EXECUTE_HANDLER; // 交由系统终止进程
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
@@ -55,6 +66,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
 
+    // 初始化公共控件，滑块（trackbar）依赖此初始化
+    INITCOMMONCONTROLSEX icex = { sizeof(icex), ICC_STANDARD_CLASSES | ICC_BAR_CLASSES };
+    InitCommonControlsEx(&icex);
+
     // GDI+ 初始化（仅用于分层窗口托盘图标）
     Gdiplus::GdiplusStartupInput gdiplusStartupInput;
     ULONG_PTR gdiplusToken = 0;
@@ -62,6 +77,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     InitGraphicsFactories();
     CreateCacheDirectory();
+
+    // 注册崩溃保护：发生未处理异常时，尽力把当前打开的图像保存到磁盘
+    SetUnhandledExceptionFilter(ImagetCrashHandler);
 
     // 加载托盘图标（get256.png）为 GDI+ 图像
     g_pMainImage = new Gdiplus::Image(_T("get256.png"));
@@ -246,6 +264,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
     case MENU_CLOSEAPP:
       SendMessageW(hWnd, WM_CLOSE, 0, 0);
+      break;
+    case MENU_SHOWALL:
+      ShowAllImages();
       break;
     }
   }
@@ -529,10 +550,15 @@ void CreateMainMenu(HWND hWnd)
   g_hMenu = CreatePopupMenu();
   MENUITEMINFOW info = { sizeof(MENUITEMINFOW) };
   info.fMask = MIIM_STRING | MIIM_ID;
+  info.wID = MENU_SHOWALL;            // used if MIIM_ID
+  info.dwTypeData = (LPWSTR)L"显示所有图片";  // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
+
+    InsertMenuItemW(g_hMenu, 0, false, &info);
+
   info.wID = MENU_CLOSEAPP;           // used if MIIM_ID
   info.dwTypeData = (LPWSTR)L"退出";    // used if MIIM_TYPE (4.0) or MIIM_STRING (>4.0)
 
-    InsertMenuItemW(g_hMenu, 0, false, &info);
+    InsertMenuItemW(g_hMenu, 1, false, &info);
 }
 
 void LoadSavedImages(HWND hWnd)

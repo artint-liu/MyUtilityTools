@@ -1,5 +1,6 @@
 ﻿#include <windows.h>
 #include <windowsx.h>
+#include <commctrl.h>
 #include <tchar.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -29,6 +30,10 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent);
 // 输入对话框原型
 INT_PTR CALLBACK InputDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
 
+// 透明度滑块对话框原型
+void ShowTransparencyDialog(HWND hOwner);
+INT_PTR CALLBACK TransparencyDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+
 LPCWSTR szImageViewerClassName = _T("Imaget-Viewer");
 LPCWSTR szCompareClassName = _T("Imaget-Compare");
 HMENU g_hImageMenu = NULL;
@@ -54,6 +59,7 @@ struct WNDDATA
   INT lifeTime                    = 0;
   clStringW label;                           // 标签文本（空表示不显示）
   std::wstring strHash;                      // 图像像素数据哈希，用于全局去重
+  BYTE byAlpha = 255;                        // 当前窗口透明度（255 为完全不透明），用于菜单勾选与滑块初始化
 };
 
 // 比较窗口数据
@@ -1128,6 +1134,16 @@ void CreateImageMenu(HWND hWnd)
         info.fType = MFT_SEPARATOR;
         InsertMenuItemW(g_hImageMenu, GetMenuItemCount(g_hImageMenu), true, &info);
     }
+    AddItem(MENU_TRANSPARENT, L"半透明");
+    AddItem(MENU_SET_TRANSPARENCY, L"设置透明度");
+    AddItem(MENU_HIDE_IMAGE, L"隐藏");
+    // 分隔线
+    {
+        MENUITEMINFOW info = { sizeof(MENUITEMINFOW) };
+        info.fMask = MIIM_FTYPE;
+        info.fType = MFT_SEPARATOR;
+        InsertMenuItemW(g_hImageMenu, GetMenuItemCount(g_hImageMenu), true, &info);
+    }
     AddItem(MENU_CLOSEIMAGE, L"关闭");
 }
 
@@ -1151,6 +1167,203 @@ void SwitchScale(HWND hWnd, int nTargeScale)
         pData->scale = nTargeScale;
         ResetSize(hWnd);
     }
+}
+
+// 设置查看窗口整体不透明度（alpha 取值 0~255，255 为完全不透明）
+void SetViewerTransparency(HWND hWnd, BYTE alpha)
+{
+    DWORD exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hWnd, 0, alpha, LWA_ALPHA);
+
+    WNDDATA* pData = GetWindowData(hWnd);
+    if (pData)
+        pData->byAlpha = alpha;
+}
+
+// 去掉窗口的分层（layered）属性，使其恢复为完全不透明的普通窗口
+void RemoveViewerTransparency(HWND hWnd)
+{
+    DWORD exStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+    SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle & ~WS_EX_LAYERED);
+
+    WNDDATA* pData = GetWindowData(hWnd);
+    if (pData)
+        pData->byAlpha = 255;
+}
+
+// 弹出“设置透明度”滑块对话框。hOwner 为要调节透明度的图片窗口。
+void ShowTransparencyDialog(HWND hOwner)
+{
+    DialogBoxParamW(GetModuleHandle(NULL), MAKEINTRESOURCEW(IDD_TRANSPARENCY_DIALOG),
+        hOwner, TransparencyDialogProc, (LPARAM)hOwner);
+}
+
+INT_PTR CALLBACK TransparencyDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+    case WM_INITDIALOG:
+    {
+        // 图片窗口是 TOPMOST，这里让对话框也置顶，避免被盖住
+        SetWindowPos(hDlg, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+        HWND hTarget = (HWND)lParam;
+        SetWindowLongPtrW(hDlg, GWLP_USERDATA, (LONG_PTR)hTarget);
+
+        HWND hSlider = GetDlgItem(hDlg, IDC_TRANS_SLIDER);
+        SendMessageW(hSlider, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+        SendMessageW(hSlider, TBM_SETTICFREQ, 10, 0);
+
+        // 以目标窗口当前透明度初始化滑块位置
+        int pos = 50;
+        WNDDATA* pData = GetWindowData(hTarget);
+        if (pData)
+        {
+            pos = (int)((pData->byAlpha * 100 + 127) / 255);
+            if (pos < 0) pos = 0;
+            if (pos > 100) pos = 100;
+        }
+        SendMessageW(hSlider, TBM_SETPOS, TRUE, pos);
+
+        WCHAR buf[32];
+        _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"透明度: %d%%", pos);
+        SetDlgItemTextW(hDlg, IDC_TRANS_LABEL, buf);
+
+        // 摆放对话框，避开图片窗口区域，不覆盖图片内容
+        {
+            RECT rcDlg, rcTarget, rcWork;
+            GetWindowRect(hDlg, &rcDlg);
+            GetWindowRect(hTarget, &rcTarget);
+
+            int dlgW = rcDlg.right - rcDlg.left;
+            int dlgH = rcDlg.bottom - rcDlg.top;
+
+            // 取图片窗口所在显示器的工作区
+            HMONITOR hMon = MonitorFromWindow(hTarget, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi = { sizeof(mi) };
+            GetMonitorInfoW(hMon, &mi);
+            rcWork = mi.rcWork;
+
+            const int gap = 6;
+            int x = 0, y = 0;
+            bool placed = false;
+
+            // 依次尝试：下方 -> 上方 -> 右侧 -> 左侧，选第一个能完整容纳的位置
+            // 下方
+            if (!placed && rcTarget.bottom + gap + dlgH <= rcWork.bottom)
+            {
+                x = rcTarget.left;
+                y = rcTarget.bottom + gap;
+                placed = true;
+            }
+            // 上方
+            if (!placed && rcTarget.top - gap - dlgH >= rcWork.top)
+            {
+                x = rcTarget.left;
+                y = rcTarget.top - gap - dlgH;
+                placed = true;
+            }
+            // 右侧
+            if (!placed && rcTarget.right + gap + dlgW <= rcWork.right)
+            {
+                x = rcTarget.right + gap;
+                y = rcTarget.top;
+                placed = true;
+            }
+            // 左侧
+            if (!placed && rcTarget.left - gap - dlgW >= rcWork.left)
+            {
+                x = rcTarget.left - gap - dlgW;
+                y = rcTarget.top;
+                placed = true;
+            }
+            // 实在放不下，就贴到工作区右下角
+            if (!placed)
+            {
+                x = rcWork.right - dlgW;
+                y = rcWork.bottom - dlgH;
+            }
+
+            // 夹取到工作区范围内
+            if (x + dlgW > rcWork.right)  x = rcWork.right - dlgW;
+            if (x < rcWork.left)          x = rcWork.left;
+            if (y + dlgH > rcWork.bottom) y = rcWork.bottom - dlgH;
+            if (y < rcWork.top)           y = rcWork.top;
+
+            SetWindowPos(hDlg, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE);
+        }
+        return TRUE;
+    }
+
+    case WM_HSCROLL:
+    {
+        HWND hSlider = (HWND)lParam;
+        if (hSlider != GetDlgItem(hDlg, IDC_TRANS_SLIDER))
+            break;
+
+        HWND hTarget = (HWND)GetWindowLongPtrW(hDlg, GWLP_USERDATA);
+        int code = (int)LOWORD(wParam);
+        int pos;
+        if (code == TB_THUMBTRACK || code == TB_THUMBPOSITION)
+            pos = (int)HIWORD(wParam);
+        else
+            pos = (int)SendMessageW(hSlider, TBM_GETPOS, 0, 0);
+
+        // 拖拽过程中实时设置透明度
+        BYTE alpha = (BYTE)((pos * 255 + 50) / 100);
+        SetViewerTransparency(hTarget, alpha);
+
+        WCHAR buf[32];
+        _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"透明度: %d%%", pos);
+        SetDlgItemTextW(hDlg, IDC_TRANS_LABEL, buf);
+
+        if (code == TB_ENDTRACK)
+        {
+            if (pos == 0)
+            {
+                // 0% 视为隐藏图片，并关闭对话框
+                ShowWindow(hTarget, SW_HIDE);
+                EndDialog(hDlg, IDOK);
+            }
+            else if (pos == 100)
+            {
+                // 100% 去掉窗口 layered 属性
+                RemoveViewerTransparency(hTarget);
+            }
+        }
+        return TRUE;
+    }
+
+    case WM_COMMAND:
+    {
+        int id = LOWORD(wParam);
+        if (id == IDC_TRANS_OK || id == IDCANCEL)
+        {
+            EndDialog(hDlg, id);
+            return TRUE;
+        }
+    }
+    break;
+    }
+
+    return FALSE;
+}
+
+// 取消所有图片窗口的半透明并重新显示被隐藏的窗口
+void ShowAllImages()
+{
+    EnumWindows([](HWND hWnd, LPARAM) -> BOOL
+    {
+        WCHAR szClass[64] = { 0 };
+        GetClassNameW(hWnd, szClass, (int)_countof(szClass));
+        if (_wcsicmp(szClass, szImageViewerClassName) == 0)
+        {
+            RemoveViewerTransparency(hWnd);
+            ShowWindow(hWnd, SW_SHOW);
+        }
+        return TRUE;
+    }, 0);
 }
 
 
@@ -1229,6 +1442,27 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             {
                 OpenCompareWindow(GetModuleHandle(NULL), hWnd);
             }
+            break;
+        case MENU_TRANSPARENT:
+        {
+            WNDDATA* pData = GetWindowData(hWnd);
+            if (pData && pData->byAlpha < 255)
+            {
+                // 当前处于半透明 -> 恢复完全不透明并移除分层属性
+                RemoveViewerTransparency(hWnd);
+            }
+            else
+            {
+                // 当前不透明 -> 开启半透明（默认 50%）
+                SetViewerTransparency(hWnd, 128);
+            }
+            break;
+        }
+        case MENU_SET_TRANSPARENCY:
+            ShowTransparencyDialog(hWnd);
+            break;
+        case MENU_HIDE_IMAGE:
+            ShowWindow(hWnd, SW_HIDE);
             break;
         }
     }
@@ -1324,6 +1558,12 @@ LRESULT CALLBACK ImageViewerWndProc(HWND hWnd, UINT message, WPARAM wParam, LPAR
             HasCompareImages() ? MF_ENABLED : MF_GRAYED);
         // 同步“添加比较（左/右）”的勾选标记
         UpdateCompareMenuMarks();
+        // 同步“半透明”勾选标记（当前透明度小于 255 即视为半透明）
+        {
+            WNDDATA* pData = GetWindowData(hWnd);
+            CheckMenuItem(g_hImageMenu, MENU_TRANSPARENT, MF_BYCOMMAND |
+                (pData && pData->byAlpha < 255 ? MF_CHECKED : MF_UNCHECKED));
+        }
         TrackPopupMenu(g_hImageMenu, 0, xPos, yPos, 0, hWnd, NULL);
     }
         break;

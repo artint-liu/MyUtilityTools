@@ -50,10 +50,23 @@ clStringW ComputeImageHash(IWICBitmapSource* pSource);
 #define MENU_COMPAREIMG       1105
 #define MENU_SAVEIMAGE        1106
 
+// ImageViewer 右键菜单：半透明 / 设置透明度 / 隐藏
+#define MENU_TRANSPARENT       1110
+#define MENU_SET_TRANSPARENCY  1111
+#define MENU_HIDE_IMAGE        1112
+
+// 主窗口右键菜单：显示所有图片
+#define MENU_SHOWALL         1201
+
 // 比较窗口类（三格对比）
 ATOM RegisterCompareClass(HINSTANCE hInstance);
 void OpenCompareWindow(HINSTANCE hInstance, HWND hParent);
 void SaveOpenImages();   // 退出时保存当前仍打开的图像窗口
+
+// 设置查看窗口整体不透明度（0~255）。0 附近为接近全透明。
+void SetViewerTransparency(HWND hWnd, BYTE alpha);
+// 取消所有图片窗口的半透明并重新显示被隐藏的窗口（主窗口“显示所有图片”命令调用）。
+void ShowAllImages();
 
 // 标签编码进“保存文件”名：格式为 (hash).(label).png。无标签时退化为 (hash).png。
 // 退出保存时按此命名、下次启动从文件名解析还原，承载“用户设置的标签”持久化。

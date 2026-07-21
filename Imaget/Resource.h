@@ -20,6 +20,19 @@
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
+
+// 透明度滑块对话框
+#define IDD_TRANSPARENCY_DIALOG	105
+#define IDC_TRANS_SLIDER		1003
+#define IDC_TRANS_LABEL			1004
+#define IDC_TRANS_OK			1005
+
+// 透明度滑块对话框
+#define IDD_TRANSPARENCY_DIALOG	105
+#define IDC_TRANS_SLIDER		1003
+#define IDC_TRANS_LABEL			1004
+#define IDC_TRANS_OK			1005
+
 // 新对象的下一组默认值
 //
 #ifdef APSTUDIO_INVOKED
@@ -28,7 +41,7 @@
 #define _APS_NO_MFC					130
 #define _APS_NEXT_RESOURCE_VALUE	129
 #define _APS_NEXT_COMMAND_VALUE		32771
-#define _APS_NEXT_CONTROL_VALUE		1000
+#define _APS_NEXT_CONTROL_VALUE		1006
 #define _APS_NEXT_SYMED_VALUE		110
 #endif
 #endif
