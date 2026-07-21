@@ -71,6 +71,8 @@ struct WNDDATA
 #define IDC_CMP_CHAN_B            2006
 #define IDC_CMP_CHAN_A            2007
 #define IDC_CMP_STATUS            2008
+#define IDC_CMP_MODE_TOGGLE       2009  // 单图/三联模式切换
+#define IDC_CMP_SINGLE_TOGGLE     2010  // 单图模式下左/右切换
 
 // 比较窗口数据
 struct COMPAREDATA
@@ -91,6 +93,8 @@ struct COMPAREDATA
   // ---- 新增功能字段 ----
   int    diffScale;          // 差值比例（1~20），输出颜色 = abs(L-R) * diffScale（clamp 255）
   bool   bChannel[4];        // RGBA 通道开关（B=0,G=1,R=2,A=3，与 BGRA 字节序一致）。不勾选则该通道差值置 0
+  bool   bSingleMode;         // 单图模式：true=只显示一张图（左或右），false=三联模式（左/差值/右）
+  bool   bShowRightInSingle;  // 单图模式下当前显示右侧图像（true=右，false=左）
   FLOAT  zoom;               // 用户缩放因子（相对"适配缩放"的倍数，1.0 = 适配）
   FLOAT  offsetX, offsetY;   // 拖拽偏移（DIP，三栏共用，同步移动）
 
@@ -116,6 +120,8 @@ struct COMPAREDATA
   HWND   hSliderScale;
   HWND   hLabScaleVal;
   HWND   hBtnR, hBtnG, hBtnB, hBtnA;
+  HWND   hBtnMode;            // 单图/三联模式切换按钮
+  HWND   hBtnSingleToggle;    // 单图模式下左/右切换按钮
   HWND   hTipWnd;            // 自绘 popup 提示窗口（跟随鼠标显示像素信息）
   WCHAR  tipText[256];       // tip 当前文本
   HFONT  hUiFont;            // 工具栏与 tip 共用字体
@@ -1001,6 +1007,15 @@ static void CreateCompareToolbar(HWND hWnd, COMPAREDATA* pData)
     SendMessageW(pData->hBtnB, BM_SETCHECK, BST_CHECKED, 0);
     SendMessageW(pData->hBtnA, BM_SETCHECK, BST_CHECKED, 0);
 
+    x += DIP(12);
+    // 单图/三联模式切换按钮
+    pData->hBtnMode = CreateWindowExW(0, L"BUTTON", L"单图模式",
+        WS_CHILD | WS_VISIBLE, x, yBtn, DIP(88), hBtn, hParent, (HMENU)IDC_CMP_MODE_TOGGLE, hInst, nullptr);
+    x += DIP(92);
+    // 单图模式下左/右切换按钮
+    pData->hBtnSingleToggle = CreateWindowExW(0, L"BUTTON", L"显示右图",
+        WS_CHILD | WS_VISIBLE | WS_DISABLED, x, yBtn, DIP(88), hBtn, hParent, (HMENU)IDC_CMP_SINGLE_TOGGLE, hInst, nullptr);
+
     // 创建自绘提示 popup 窗口（跟随鼠标显示像素信息，初始隐藏）
     // 用 WS_EX_TOPMOST 确保在 D2D 主窗口之上；WS_POPUP 无边框，自绘边框
     pData->hTipWnd = CreateWindowExW(WS_EX_TOPMOST, szCompareTipClassName, L"",
@@ -1015,7 +1030,8 @@ static void CreateCompareToolbar(HWND hWnd, COMPAREDATA* pData)
 
     // 给所有子控件设置字体
     HWND children[] = { pData->hLabScale, pData->hSliderScale, pData->hLabScaleVal,
-                        pData->hBtnR, pData->hBtnG, pData->hBtnB, pData->hBtnA };
+                        pData->hBtnR, pData->hBtnG, pData->hBtnB, pData->hBtnA,
+                        pData->hBtnMode, pData->hBtnSingleToggle };
     if (hFont)
     {
         for (HWND h : children)
@@ -1023,6 +1039,26 @@ static void CreateCompareToolbar(HWND hWnd, COMPAREDATA* pData)
             if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hFont, TRUE);
         }
     }
+}
+
+// 根据当前模式（单图/三联）与显示侧，更新工具栏按钮文本与可用状态
+static void UpdateCompareModeControls(COMPAREDATA* pData)
+{
+    if (!pData->hBtnMode) return;
+    // 模式按钮文本：当前处于单图模式则显示"三联模式"（提示可切回），反之显示"单图模式"
+    SetWindowTextW(pData->hBtnMode, pData->bSingleMode ? L"三联模式" : L"单图模式");
+    // 单图左/右切换按钮：仅单图模式可用
+    EnableWindow(pData->hBtnSingleToggle, pData->bSingleMode);
+    SetWindowTextW(pData->hBtnSingleToggle, pData->bShowRightInSingle ? L"显示左图" : L"显示右图");
+    // 差值比例与通道控件：仅三联模式有意义（单图模式不显示差值），三联模式下重新启用
+    BOOL enable = pData->bSingleMode ? FALSE : TRUE;
+    EnableWindow(pData->hLabScale, enable);
+    EnableWindow(pData->hSliderScale, enable);
+    EnableWindow(pData->hLabScaleVal, enable);
+    EnableWindow(pData->hBtnR, enable);
+    EnableWindow(pData->hBtnG, enable);
+    EnableWindow(pData->hBtnB, enable);
+    EnableWindow(pData->hBtnA, enable);
 }
 
 void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
@@ -1102,6 +1138,8 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     pData->bChannel[1] = true; // G
     pData->bChannel[2] = true; // R
     pData->bChannel[3] = true; // A
+    pData->bSingleMode = false;         // 默认三联模式
+    pData->bShowRightInSingle = false;  // 单图模式初始显示左图
     pData->zoom = 1.0f;
     pData->offsetX = 0.0f;
     pData->offsetY = 0.0f;
@@ -1114,6 +1152,7 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
     pData->hoverImgX = pData->hoverImgY = -1;
     pData->hLabScale = pData->hSliderScale = pData->hLabScaleVal = nullptr;
     pData->hBtnR = pData->hBtnG = pData->hBtnB = pData->hBtnA = nullptr;
+    pData->hBtnMode = pData->hBtnSingleToggle = nullptr;
     pData->hToolbarWnd = nullptr;
     pData->hTipWnd = nullptr;
     pData->tipText[0] = 0;
@@ -1138,6 +1177,8 @@ void OpenCompareWindow(HINSTANCE hInstance, HWND hParent)
 
     // 创建工具栏子控件（依赖 hWnd 与 pData->diffScale）
     CreateCompareToolbar(hWnd, pData);
+    // 按当前模式刷新按钮文本与可用状态
+    UpdateCompareModeControls(pData);
 
     ShowWindow(hWnd, SW_NORMAL);
     UpdateWindow(hWnd);
@@ -1210,11 +1251,12 @@ struct CMP_LAYOUT
     FLOAT titleH;          // 标题条高度
     FLOAT imgTop;          // 图像区域顶部 y
     FLOAT imgAreaH;        // 图像区域高度
+    int   colCount;        // 栏数：三联模式=3，单图模式=1
     FLOAT colW;            // 每栏宽度
     FLOAT imgPixW, imgPixH; // 图像像素尺寸（以差值尺寸为准，三栏一致）
     FLOAT fitScale;        // 适配缩放（contain）
     FLOAT drawW, drawH;    // 显示尺寸 = imgPix * fitScale * zoom
-    FLOAT colCenterX[3];   // 每栏中心 X
+    FLOAT colCenterX[3];   // 每栏中心 X（单图模式仅用 [0]）
     FLOAT imgAreaCenterY;  // 图像区域中心 Y
 };
 
@@ -1229,7 +1271,8 @@ static void ComputeCompareLayout(COMPAREDATA* pData, HWND hWnd, CMP_LAYOUT& L)
     L.imgTop = L.toolbarH + L.titleH;
     L.imgAreaH = L.fH - L.imgTop;
     if (L.imgAreaH < 1) L.imgAreaH = 1;
-    L.colW = L.fW / 3.0f;
+    L.colCount = pData->bSingleMode ? 1 : 3;
+    L.colW = L.fW / (FLOAT)L.colCount;
 
     L.imgPixW = (FLOAT)pData->imgW;
     L.imgPixH = (FLOAT)pData->imgH;
@@ -1271,7 +1314,7 @@ static bool LayoutPointToImage(const CMP_LAYOUT& L, FLOAT mxDip, FLOAT myDip,
 {
     if (mxDip < 0 || myDip < L.imgTop) return false;
     int col = (int)(mxDip / L.colW);
-    if (col < 0 || col > 2) return false;
+    if (col < 0 || col >= L.colCount) return false;
     D2D1_RECT_F rc = LayoutCellDestRect(L, col, offX, offY);
     if (mxDip < rc.left || mxDip > rc.right || myDip < rc.top || myDip > rc.bottom)
     {
@@ -1328,6 +1371,21 @@ void CompareOnPaint(HWND hWnd)
         { pData->pBmpRight,    szTitle[1] },
     };
 
+    // 单图模式：仅显示选中的那一张图（左或右），占据整列（colCount=1，仅用 cols[0]）
+    if (pData->bSingleMode)
+    {
+        if (pData->bShowRightInSingle)
+        {
+            cols[0].bmp   = pData->pBmpRight;
+            cols[0].title = szTitle[1];
+        }
+        else
+        {
+            cols[0].bmp   = pData->pBmpLeft;
+            cols[0].title = szTitle[0];
+        }
+    }
+
     // 源矩形：左/右图只取与差值重叠的左上 imgPixW×imgPixH 区域，保证三栏像素一一对应
     D2D1_RECT_F srcRect = D2D1::RectF(0, 0, L.imgPixW, L.imgPixH);
 
@@ -1338,7 +1396,7 @@ void CompareOnPaint(HWND hWnd)
     ID2D1SolidColorBrush* pCrossBrush = nullptr;
     pData->pRT->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Red, 0.8f), &pCrossBrush);
 
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < L.colCount; i++)
     {
         FLOAT x = L.colW * i;
 
@@ -1365,8 +1423,10 @@ void CompareOnPaint(HWND hWnd)
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, srcRect);
         }
 
-        // 鼠标悬停十字标记：在差值栏（i==1）且 hover 有效时绘制
-        if (i == 1 && pData->hoverImgX >= 0 && pData->hoverImgY >= 0 && pCrossBrush)
+        // 鼠标悬停十字标记：三联模式画在差值栏（i==1），单图模式画在唯一图像上（i==0）
+        bool bDrawCross = pData->hoverImgX >= 0 && pData->hoverImgY >= 0 && pCrossBrush &&
+            ((L.colCount == 3 && i == 1) || (L.colCount == 1 && i == 0));
+        if (bDrawCross)
         {
             D2D1_RECT_F destRect = LayoutCellDestRect(L, i, pData->offsetX, pData->offsetY);
             FLOAT hx = destRect.left + (FLOAT)pData->hoverImgX / L.imgPixW * L.drawW;
@@ -1580,6 +1640,31 @@ LRESULT CALLBACK CompareWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
                 if (HIWORD(wParam) == BN_CLICKED)
                 {
                     ApplyChannelButtons(hWnd, pData);
+                }
+            }
+            else if (HIWORD(wParam) == BN_CLICKED)
+            {
+                // 单图/三联模式切换
+                if (cmd == IDC_CMP_MODE_TOGGLE)
+                {
+                    pData->bSingleMode = !pData->bSingleMode;
+                    // 切回三联模式时重置显示侧为左图，保持稳定初始状态
+                    if (!pData->bSingleMode)
+                    {
+                        pData->bShowRightInSingle = false;
+                    }
+                    UpdateCompareModeControls(pData);
+                    InvalidateRect(hWnd, NULL, FALSE);
+                }
+                // 单图模式下左/右切换（往复）
+                else if (cmd == IDC_CMP_SINGLE_TOGGLE)
+                {
+                    if (pData->bSingleMode)
+                    {
+                        pData->bShowRightInSingle = !pData->bShowRightInSingle;
+                        UpdateCompareModeControls(pData);
+                        InvalidateRect(hWnd, NULL, FALSE);
+                    }
                 }
             }
         }
