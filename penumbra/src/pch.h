@@ -1,4 +1,4 @@
-// pch.h: precompiled header for penumbra
+﻿// pch.h：penumbra 预编译头
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN

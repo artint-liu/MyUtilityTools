@@ -1,19 +1,20 @@
-// ProviderClient.h: CLI-side named-pipe client to talk to a running provider.
+// ProviderClient.h：CLI 侧命名管道客户端，通过固定管道 \\.\pipe\penumbra
+// 与单例守护进程通信。
 #pragma once
 #include <string>
 #include "Protocol.h"
 
 class ProviderClient {
 public:
-    // Probe whether a provider is listening for the given normalized root.
-    static bool IsProviderRunning(const std::wstring& normalizedRoot);
+    // 探测单例守护进程是否正在监听。
+    static bool IsProviderRunning();
 
-    // Connect to the provider's pipe. Returns false if not running.
-    bool Connect(const std::wstring& normalizedRoot);
+    // 连接到守护进程管道。未运行时返回 false。
+    bool Connect();
     void Close();
 
-    // Send a command with an optional UTF-16LE payload string; receive a
-    // status and a response payload string. Returns false on transport error.
+    // 发送命令（可带 UTF-16LE payload 字符串），接收状态与响应 payload 字符串。
+    // 传输错误返回 false。
     bool Send(IpcCommand cmd, const std::wstring& payload,
               IpcStatus& status, std::wstring& responsePayload);
 

@@ -1,4 +1,4 @@
-// ProjFsProvider.h: ProjFS virtualization provider lifecycle and callbacks.
+﻿// ProjFsProvider.h：ProjFS 虚拟化 provider 生命周期与回调。
 #pragma once
 #include <string>
 #include <vector>
@@ -20,20 +20,18 @@ public:
     ProjFsProvider();
     ~ProjFsProvider();
 
-    // Register the ProjFS instance on `root` and start virtualizing.
+    // 在 `root` 上注册 ProjFS 实例并开始虚拟化。
     bool Mount(const std::wstring& root);
     void Stop();
     bool IsRunning() const { return m_nsCtx != nullptr; }
 
-    // Convert unmodified svn files under `relPath` (relative to root; empty
-    // means the whole working copy) to placeholders. When `recursive` is false
-    // and `relPath` is a directory, only its direct children are freed; when
-    // true, all descendants are included. `report` receives a human-readable
-    // summary.
+    // 将 `relPath`（相对于 root；空表示整个工作副本）下未修改的 svn 文件转为占位。
+    // `recursive` 为 false 且 `relPath` 是目录时，仅释放其直接子文件；为 true 时
+    // 包含所有后代。`report` 接收可读的汇总。
     bool DehydrateFiles(const std::wstring& relPath, bool recursive,
                         std::wstring& report);
 
-    // Force-hydrate a single file or directory given by relative path.
+    // 按相对路径强制水合（还原）单个文件或目录。
     bool HydrateFile(const std::wstring& relPath, std::wstring& report);
 
     const std::wstring& Root() const { return m_root; }
@@ -59,13 +57,11 @@ private:
                                            PRJ_NOTIFICATION_PARAMETERS* operationParameters);
     static void CALLBACK CancelCommandCb(const PRJ_CALLBACK_DATA* callbackData);
 
-    // Force hydration of a single on-disk path by reading it through ProjFS.
+    // 通过 ProjFS 读取单个磁盘路径以强制水合。
     bool ForceHydrateOne(const std::wstring& fullPath);
 
-    // Start/stop ProjFS virtualization. Used by Mount(), and also by
-    // DehydrateFiles/HydrateFile to temporarily lift virtualization so that
-    // svn.exe can enumerate directories without triggering ProjFS callback
-    // re-entrancy (which would deadlock).
+    // 启动/停止 ProjFS 虚拟化。供 Mount() 使用，也供 DehydrateFiles/HydrateFile
+    // 临时暂停虚拟化，使 svn.exe 枚举目录时不触发 ProjFS 回调重入（否则会死锁）。
     bool StartVirtualizing();
     void StopVirtualizing();
 

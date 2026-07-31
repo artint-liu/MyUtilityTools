@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "Util.h"
 #include "Protocol.h"
+#include <projectedfslib.h>
 #include <algorithm>
 
 static std::mutex g_logMutex;
@@ -32,8 +33,8 @@ uint64_t Fnv1aHash(const std::wstring& s) {
     return h;
 }
 
-std::wstring MakePipeName(const std::wstring& normalizedRoot) {
-    return L"\\\\.\\pipe\\penumbra\\" + std::to_wstring(Fnv1aHash(normalizedRoot));
+std::wstring DaemonPipeName() {
+    return L"\\\\.\\pipe\\penumbra";
 }
 
 std::wstring GetTempDir() {
@@ -43,12 +44,13 @@ std::wstring GetTempDir() {
     return std::wstring(buf, n);
 }
 
-std::wstring PidFilePath(const std::wstring& normalizedRoot) {
-    return GetTempDir() + L"penumbra-" + std::to_wstring(Fnv1aHash(normalizedRoot)) + L".pid";
+// --- 单例守护进程的 PID 锁（固定文件名）---
+std::wstring DaemonPidFilePath() {
+    return GetTempDir() + L"penumbra.pid";
 }
 
-bool WritePidFile(const std::wstring& normalizedRoot, DWORD pid) {
-    std::wstring path = PidFilePath(normalizedRoot);
+bool WriteDaemonPidFile(DWORD pid) {
+    std::wstring path = DaemonPidFilePath();
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"w") != 0 || !f) return false;
     fwprintf(f, L"%lu", pid);
@@ -56,8 +58,8 @@ bool WritePidFile(const std::wstring& normalizedRoot, DWORD pid) {
     return true;
 }
 
-bool ReadPidFile(const std::wstring& normalizedRoot, DWORD& pid) {
-    std::wstring path = PidFilePath(normalizedRoot);
+bool ReadDaemonPidFile(DWORD& pid) {
+    std::wstring path = DaemonPidFilePath();
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return false;
     int ok = fwscanf_s(f, L"%lu", &pid);
@@ -65,15 +67,14 @@ bool ReadPidFile(const std::wstring& normalizedRoot, DWORD& pid) {
     return ok == 1;
 }
 
-bool DeletePidFile(const std::wstring& normalizedRoot) {
-    std::wstring path = PidFilePath(normalizedRoot);
-    return DeleteFileW(path.c_str()) != 0;
+bool DeleteDaemonPidFile() {
+    return DeleteFileW(DaemonPidFilePath().c_str()) != 0;
 }
 
-void SetBackgroundLogging(bool enabled, const std::wstring& normalizedRoot) {
+void SetBackgroundLogging(bool enabled) {
     std::lock_guard<std::mutex> lk(g_logMutex);
     if (enabled) {
-        g_logFile = GetTempDir() + L"penumbra-" + std::to_wstring(Fnv1aHash(normalizedRoot)) + L".log";
+        g_logFile = GetTempDir() + L"penumbra.log";
     } else {
         g_logFile.clear();
     }
@@ -84,7 +85,11 @@ void Log(const std::wstring& msg) {
     if (!g_logFile.empty()) {
         FILE* f = nullptr;
         if (_wfopen_s(&f, g_logFile.c_str(), L"a") == 0 && f) {
-            fwprintf(f, L"%s\n", msg.c_str());
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            fwprintf(f, L"[%04u-%02u-%02u %02u:%02u:%02u.%03u] %s\n",
+                     st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute,
+                     st.wSecond, st.wMilliseconds, msg.c_str());
             fclose(f);
         }
     } else {
@@ -94,7 +99,7 @@ void Log(const std::wstring& msg) {
 }
 
 void LogError(const std::wstring& msg) {
-    Log(L"[ERROR] " + msg);
+    Log(L"[错误] " + msg);
 }
 
 const GUID& PenumbraProviderId() {
@@ -137,7 +142,7 @@ bool PipeReadAll(void* hPipe, void* data, size_t len) {
         DWORD got = 0;
         if (!ReadFile(h, p + total, toRead, &got, nullptr)) return false;
         if (got == 0) return false;
-        total += got; 
+        total += got;
     }
     return true;
 }
@@ -164,4 +169,152 @@ bool PathInScope(const std::wstring& relCandidate, const std::wstring& scopeRel,
     if (recursive) return true;
     const wchar_t* rest = r.c_str() + prefix.size();
     return wcschr(rest, L'\\') == nullptr;
+}
+
+// --- 注册表持久化挂载列表 ---
+// HKCU\Software\penumbra ，值 "Mounts"（REG_MULTI_SZ）。
+
+static const wchar_t* kRegSubKey = L"Software\\penumbra";
+static const wchar_t* kRegMountsValue = L"Mounts";
+
+static HKEY OpenOrCreatePenumbraKey() {
+    HKEY hKey = nullptr;
+    DWORD disp = 0;
+    LONG rc = RegCreateKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, nullptr, 0,
+                              KEY_READ | KEY_WRITE, nullptr, &hKey, &disp);
+    if (rc != ERROR_SUCCESS) return nullptr;
+    return hKey;
+}
+
+std::vector<std::wstring> RegistryReadMounts() {
+    std::vector<std::wstring> result;
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        return result;
+    }
+    DWORD type = 0;
+    DWORD cb = 0;
+    LONG rc = RegQueryValueExW(hKey, kRegMountsValue, nullptr, &type, nullptr, &cb);
+    if (rc == ERROR_SUCCESS && (type == REG_MULTI_SZ || type == REG_SZ) && cb >= sizeof(wchar_t)) {
+        std::vector<wchar_t> buf(cb / sizeof(wchar_t) + 1, 0);
+        rc = RegQueryValueExW(hKey, kRegMountsValue, nullptr, nullptr,
+                              reinterpret_cast<LPBYTE>(buf.data()), &cb);
+        if (rc == ERROR_SUCCESS) {
+            const wchar_t* p = buf.data();
+            const wchar_t* end = p + cb / sizeof(wchar_t);
+            while (p < end && *p != L'\0') {
+                std::wstring entry(p);
+                if (!entry.empty()) result.push_back(entry);
+                p += entry.size() + 1;
+            }
+        }
+    }
+    RegCloseKey(hKey);
+    return result;
+}
+
+bool RegistryWriteMounts(const std::vector<std::wstring>& mounts) {
+    HKEY hKey = OpenOrCreatePenumbraKey();
+    if (!hKey) return false;
+    // 构造 REG_MULTI_SZ：每个字符串以 NUL 结尾，列表末尾再补一个 NUL。
+    // 空列表为单个 NUL（2 字节）。
+    std::wstring blob;
+    for (const auto& m : mounts) {
+        blob += m;
+        blob.push_back(L'\0');
+    }
+    blob.push_back(L'\0');
+    DWORD cb = static_cast<DWORD>(blob.size() * sizeof(wchar_t));
+    LONG rc = RegSetValueExW(hKey, kRegMountsValue, 0, REG_MULTI_SZ,
+                             reinterpret_cast<const BYTE*>(blob.data()), cb);
+    RegCloseKey(hKey);
+    return rc == ERROR_SUCCESS;
+}
+
+bool RegistryAddMount(const std::wstring& normalizedRoot) {
+    auto mounts = RegistryReadMounts();
+    for (const auto& m : mounts) {
+        if (_wcsicmp(m.c_str(), normalizedRoot.c_str()) == 0) {
+            return true; // 已存在
+        }
+    }
+    mounts.push_back(normalizedRoot);
+    return RegistryWriteMounts(mounts);
+}
+
+bool RegistryRemoveMount(const std::wstring& normalizedRoot) {
+    auto mounts = RegistryReadMounts();
+    bool found = false;
+    std::vector<std::wstring> kept;
+    kept.reserve(mounts.size());
+    for (const auto& m : mounts) {
+        if (_wcsicmp(m.c_str(), normalizedRoot.c_str()) == 0) {
+            found = true;
+        } else {
+            kept.push_back(m);
+        }
+    }
+    if (!found) return false;
+    return RegistryWriteMounts(kept);
+}
+
+bool RegistryIsMounted(const std::wstring& normalizedRoot) {
+    auto mounts = RegistryReadMounts();
+    for (const auto& m : mounts) {
+        if (_wcsicmp(m.c_str(), normalizedRoot.c_str()) == 0) return true;
+    }
+    return false;
+}
+
+// --- 占位检测 ---
+
+namespace {
+
+// 递归扫描 `dir`，查找任意未水合的占位文件。找到即提前返回 true，整棵树都没有
+// 则返回 false。
+bool ScanForPlaceholders(const std::wstring& dir) {
+    std::wstring pattern = dir + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pattern.c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+
+        std::wstring full = dir + L"\\" + fd.cFileName;
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            // 跳过 svn 元数据（不会被占位化，避免无谓遍历）。
+            if (_wcsicmp(fd.cFileName, L".svn") == 0) continue;
+            if (ScanForPlaceholders(full)) { FindClose(h); return true; }
+            continue;
+        }
+
+        PRJ_FILE_STATE state;
+        if (SUCCEEDED(PrjGetOnDiskFileState(full.c_str(), &state))) {
+            bool isPlaceholder = (state & PRJ_FILE_STATE_PLACEHOLDER) != 0;
+            bool isHydrated = (state & PRJ_FILE_STATE_HYDRATED_PLACEHOLDER) != 0;
+            bool isFull = (state & PRJ_FILE_STATE_FULL) != 0;
+            // 未水合的占位在 provider 停止后将不可访问；这正是 umount 必须拒绝的情况。
+            if (isPlaceholder && !isHydrated && !isFull) {
+                FindClose(h);
+                return true;
+            }
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return false;
+}
+
+} // namespace
+
+bool HasPlaceholders(const std::wstring& root, std::wstring& err) {
+    // projectedfslib 为延迟加载：预加载它，以便延迟加载辅助代码能解析
+    // PrjGetOnDiskFileState。保留引用（不要 FreeLibrary），否则解析得到的
+    // 函数指针会悬空。
+    HMODULE hProj = LoadLibraryW(L"projectedfslib.dll");
+    if (!hProj) {
+        err = L"未找到 projectedfslib.dll（请以管理员身份启用 ProjFS 可选功能）";
+        return false;
+    }
+    return ScanForPlaceholders(root);
 }

@@ -1,4 +1,4 @@
-// SvnClient.cpp
+﻿// SvnClient.cpp
 #include "pch.h"
 #include "SvnClient.h"
 #include "Util.h"
@@ -43,10 +43,9 @@ std::wstring DecodeXmlEntities(const std::wstring& s) {
     return r;
 }
 
-// Lightweight SAX-style XML parser — handles tags with attributes (including
-// whitespace/newlines between tag name and attributes), entity decoding,
-// self-closing tags, comments, CDATA, and processing instructions.
-// Sufficient for parsing svn status --xml output without external deps.
+// 轻量 SAX 风格 XML 解析器——支持带属性的标签（含标签名与属性间的空白/换行）、
+// 实体解码、自闭合标签、注释、CDATA 与处理指令。足以无外部依赖地解析
+// svn status --xml 输出。
 class XmlSaxParser {
 public:
     struct Attribute { std::wstring name; std::wstring value; };
@@ -93,7 +92,7 @@ public:
                 continue;
             }
 
-            // Start tag: <name attr="val" ...>  or  <name .../>
+            // 起始标签：<name attr="val" ...>  或  <name .../>
             std::wstring name = parseName(xml, pos);
             if (name.empty()) { pos++; continue; }
             std::vector<Attribute> attrs;
@@ -186,11 +185,11 @@ bool RunCapture(const std::wstring& cmdLine, std::string& out, DWORD& exitCode) 
     if (hNul && hNul != INVALID_HANDLE_VALUE) CloseHandle(hNul);
     if (!ok) {
         CloseHandle(hRead);
-        Log(L"RunCapture: CreateProcessW failed, error " + std::to_wstring(GetLastError()));
+        Log(L"RunCapture：CreateProcessW 失败，错误 " + std::to_wstring(GetLastError()));
         return false;
     }
 
-    Log(L"RunCapture: process started, reading stdout...");
+    Log(L"RunCapture：进程已启动，正在读取 stdout...");
     char rbuf[8192];
     DWORD got = 0;
     ULONGLONG readStart = GetTickCount64();
@@ -201,13 +200,13 @@ bool RunCapture(const std::wstring& cmdLine, std::string& out, DWORD& exitCode) 
         totalRead += got;
         ULONGLONG now = GetTickCount64();
         if (now - lastLogTime >= 10000) {
-            Log(L"RunCapture: still reading... " +
-                std::to_wstring(totalRead) + L" bytes (" +
-                std::to_wstring((now - readStart) / 1000) + L"s elapsed)");
+            Log(L"RunCapture：仍在读取... " +
+                std::to_wstring(totalRead) + L" 字节（已耗时 " +
+                std::to_wstring((now - readStart) / 1000) + L" 秒）");
             lastLogTime = now;
         }
     }
-    Log(L"RunCapture: stdout read done, " + std::to_wstring(out.size()) + L" bytes");
+    Log(L"RunCapture：stdout 读取完成，" + std::to_wstring(out.size()) + L" 字节");
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &exitCode);
     CloseHandle(pi.hProcess);
@@ -251,7 +250,7 @@ bool RunStream(const std::wstring& cmdLine, const SvnClient::DataCallback& cb,
     while (cont && ReadFile(hRead, rbuf, sizeof(rbuf), &got, nullptr) && got > 0) {
         if (!cb(rbuf, (size_t)got)) cont = false;
     }
-    // Drain remaining output so the child does not block on a full pipe.
+    // 排空剩余输出，避免子进程因管道写满而阻塞。
     while (ReadFile(hRead, rbuf, sizeof(rbuf), &got, nullptr) && got > 0) {}
     WaitForSingleObject(pi.hProcess, INFINITE);
     GetExitCodeProcess(pi.hProcess, &exitCode);
@@ -284,7 +283,7 @@ std::wstring SvnClient::FindSvnRoot(const std::wstring& path) {
     while (!cur.empty()) {
         if (DirExists(cur + L"\\.svn")) return cur;
         size_t bs = cur.find_last_of(L'\\');
-        if (bs == std::wstring::npos || bs <= 2) break; // reached drive root
+        if (bs == std::wstring::npos || bs <= 2) break; // 已到盘根
         cur = cur.substr(0, bs);
     }
     return std::wstring();
@@ -296,13 +295,12 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
                                                          std::wstring& err) {
     std::vector<std::wstring> result;
     if (m_svnExe.empty()) {
-        err = L"svn.exe not found on PATH";
+        err = L"PATH 中未找到 svn.exe";
         return result;
     }
 
-    // Build the svn status command, scoped to the target subdirectory to avoid
-    // enumerating the entire working copy (which can produce hundreds of MB
-    // of XML for large repos).
+    // 构建 svn status 命令，范围限定在目标子目录，避免枚举整个工作副本
+    //（大仓库可能产生数百 MB XML）。
     std::wstring target = svnRoot;
     if (!scopeRel.empty()) {
         target = svnRoot + L"\\" + scopeRel;
@@ -316,25 +314,24 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
     args.push_back(target);
     std::wstring cmd = BuildCmdLine(m_svnExe, args);
 
-    Log(L"svn status: " + cmd);
+    Log(L"svn status：" + cmd);
     std::string out;
     DWORD code = 0;
     if (!RunCapture(cmd, out, code)) {
-        err = L"failed to launch svn status";
-        Log(L"svn status: launch failed");
+        err = L"启动 svn status 失败";
+        Log(L"svn status：启动失败");
         return result;
     }
-    Log(L"svn status: exit code " + std::to_wstring(code) + L", " +
-        std::to_wstring(out.size()) + L" bytes output");
+    Log(L"svn status：退出码 " + std::to_wstring(code) + L"，输出 " +
+        std::to_wstring(out.size()) + L" 字节");
     if (code != 0) {
-        err = L"svn status exited with code " + std::to_wstring(code);
+        err = L"svn status 退出码 " + std::to_wstring(code);
     }
 
     std::wstring xml = Utf8ToWide(out);
 
-    // Parse XML using a lightweight SAX-style parser. svn status --xml may
-    // format tags with newlines between the tag name and attributes, and paths
-    // may be absolute. The parser handles all of this robustly.
+    // 用轻量 SAX 风格解析器解析 XML。svn status --xml 可能在标签名与属性间插入
+    // 换行，路径可能是绝对路径。该解析器能稳健处理这些情况。
     std::wstring rootPrefix = svnRoot + L"\\";
     size_t rootPrefixLen = rootPrefix.size();
 
@@ -364,9 +361,8 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
             totalEntries++;
             if (curItem == L"normal") {
                 normalEntries++;
-                // svn reports absolute paths; strip svnRoot\ prefix to get a
-                // path relative to svnRoot. Convert backslashes to forward
-                // slashes for consistency with the rest of the code.
+                // svn 报告绝对路径；去掉 svnRoot\ 前缀得到相对 svnRoot 的路径。
+                // 反斜杠转正斜杠以与代码其余部分保持一致。
                 if (!curPath.empty() &&
                     _wcsnicmp(curPath.c_str(), rootPrefix.c_str(), rootPrefixLen) == 0) {
                     std::wstring rel = curPath.substr(rootPrefixLen);
@@ -375,7 +371,7 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
                 } else if (!curPath.empty() &&
                            _wcsicmp(curPath.c_str(), svnRoot.c_str()) != 0 &&
                            curPath != L".") {
-                    // Relative path (fallback).
+                    // 相对路径（回退）。
                     result.push_back(curPath);
                 }
             }
@@ -383,27 +379,27 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
     };
     parser.parse(xml);
 
-    Log(L"parsed " + std::to_wstring(totalEntries) + L" entries, " +
-        std::to_wstring(normalEntries) + L" normal items, " +
-        std::to_wstring(result.size()) + L" in result");
+    Log(L"已解析 " + std::to_wstring(totalEntries) + L" 个条目，" +
+        std::to_wstring(normalEntries) + L" 个 normal，结果中 " +
+        std::to_wstring(result.size()) + L" 个");
     return result;
 }
 
 bool SvnClient::CatFile(const std::wstring& svnRoot, const std::wstring& relPath,
                         const DataCallback& cb, std::wstring& err) {
     if (m_svnExe.empty()) {
-        err = L"svn.exe not found on PATH";
+        err = L"PATH 中未找到 svn.exe";
         return false;
     }
     std::wstring full = svnRoot + L"\\" + relPath;
     std::wstring cmd = BuildCmdLine(m_svnExe, { L"cat", full });
     DWORD code = 0;
     if (!RunStream(cmd, cb, code)) {
-        err = L"failed to launch svn cat";
+        err = L"启动 svn cat 失败";
         return false;
     }
     if (code != 0) {
-        err = L"svn cat exited with code " + std::to_wstring(code);
+        err = L"svn cat 退出码 " + std::to_wstring(code);
         return false;
     }
     return true;

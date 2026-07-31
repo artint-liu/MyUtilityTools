@@ -3,19 +3,15 @@
 #include "ProviderClient.h"
 #include "Util.h"
 
-bool ProviderClient::IsProviderRunning(const std::wstring& normalizedRoot) {
-    std::wstring name = MakePipeName(normalizedRoot);
-    // WaitNamedPipeW checks for an available instance WITHOUT consuming one.
-    // The previous CreateFileW approach opened (and consumed) the server's
-    // only listening instance, creating a race where the subsequent Connect
-    // could fail with ERROR_FILE_NOT_FOUND before the server re-created the
-    // next instance.
+bool ProviderClient::IsProviderRunning() {
+    std::wstring name = DaemonPipeName();
+    // WaitNamedPipeW 检查是否有可用实例，且不会消费实例。
     return WaitNamedPipeW(name.c_str(), 200) != 0;
 }
 
-bool ProviderClient::Connect(const std::wstring& normalizedRoot) {
+bool ProviderClient::Connect() {
     Close();
-    std::wstring name = MakePipeName(normalizedRoot);
+    std::wstring name = DaemonPipeName();
     for (int i = 0; i < 50; ++i) {
         m_pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                              OPEN_EXISTING, 0, nullptr);
@@ -30,10 +26,9 @@ bool ProviderClient::Connect(const std::wstring& normalizedRoot) {
             WaitNamedPipeW(name.c_str(), 200);
             continue;
         }
-        // The server rotates pipe instances one at a time. After a probe or
-        // a busy instance is released there is a brief window before the next
-        // instance is created during which CreateFileW fails with
-        // ERROR_FILE_NOT_FOUND. Retry briefly to ride through it.
+        // 服务端逐个轮换管道实例。探测或繁忙实例释放后，下一个实例创建前存在
+        // 短暂窗口，此时 CreateFileW 会以 ERROR_FILE_NOT_FOUND 失败。短暂重试以
+        // 渡过该窗口。
         if (err == ERROR_FILE_NOT_FOUND && i < 20) {
             Sleep(20);
             continue;

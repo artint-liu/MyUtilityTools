@@ -1,4 +1,4 @@
-// ProjFsProvider.cpp
+﻿// ProjFsProvider.cpp
 #include "pch.h"
 #include "ProjFsProvider.h"
 #include "Util.h"
@@ -20,24 +20,23 @@ std::wstring Hex32(unsigned long v) {
     return buf;
 }
 
-// Extract the volume root from a path so GetVolumeInformationW receives a
-// proper root with trailing backslash, as documented (passing a deep
-// subdirectory can return ERROR_INVALID_NAME (123) on some configurations).
+// 从路径中提取卷根，使 GetVolumeInformationW 收到带末尾反斜杠的合法根路径
+//（向其传入深层子目录在某些配置下会返回 ERROR_INVALID_NAME (123)）。
 //   "C:\Users\foo\bar"  -> "C:\"
 //   "\\server\share\dir" -> "\\server\share"
 std::wstring VolumeRootFromPath(const std::wstring& path) {
     auto isAlpha = [](wchar_t c) {
         return (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z');
     };
-    // Drive-letter path: "X:\..." -> "X:\"
+    // 盘符路径："X:\..." -> "X:\"
     if (path.size() >= 3 && isAlpha(path[0]) && path[1] == L':' && path[2] == L'\\') {
         return path.substr(0, 3);
     }
-    // UNC: "\\server\share\..." -> "\\server\share"
+    // UNC："\\server\share\..." -> "\\server\share"
     if (path.size() >= 2 && path[0] == L'\\' && path[1] == L'\\') {
         size_t i = 2;
         while (i < path.size() && path[i] != L'\\') ++i; // server
-        if (i < path.size()) ++i;                        // backslash
+        if (i < path.size()) ++i;                        // 反斜杠
         while (i < path.size() && path[i] != L'\\') ++i; // share
         return path.substr(0, i);
     }
@@ -52,12 +51,11 @@ ProjFsProvider::~ProjFsProvider() { Stop(); }
 bool ProjFsProvider::Mount(const std::wstring& root) {
     if (m_nsCtx) return true;
 
-    // projectedfslib.dll only exists after the Client-ProjFS optional feature is
-    // enabled. Delay-load it so the process can still run (e.g. `help`) without
-    // it; here we pre-load and fail gracefully if absent.
+    // projectedfslib.dll 仅在启用 Client-ProjFS 可选功能后才存在。延迟加载它，
+    // 使得进程在缺少该 dll 时仍能运行（如 `help`）；此处预加载，缺失时优雅失败。
     HMODULE hProj = LoadLibraryW(L"projectedfslib.dll");
     if (!hProj) {
-        LogError(L"projectedfslib.dll not found. Enable the ProjFS optional feature as admin: "
+        LogError(L"未找到 projectedfslib.dll。请以管理员身份启用 ProjFS 可选功能："
                  L"Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS");
         return false;
     }
@@ -72,36 +70,35 @@ bool ProjFsProvider::Mount(const std::wstring& root) {
     }
     if (m_root.empty()) return false;
 
-    // ProjFS only works on NTFS volumes. Verify the filesystem of the target
-    // root before attempting to mark it as a placeholder, so we can surface a
-    // clear error instead of an opaque PrjMarkDirectoryAsPlaceholder failure
-    // (e.g. on FAT32/exFAT/ReFS/network shares).
+    // ProjFS 仅在 NTFS 卷上工作。在尝试标记为占位前校验目标根的文件系统，
+    // 以便给出清晰错误，而非晦涩的 PrjMarkDirectoryAsPlaceholder 失败
+    //（如 FAT32/exFAT/ReFS/网络共享）。
     wchar_t fsName[MAX_PATH + 1] = {};
     std::wstring volRoot = VolumeRootFromPath(m_root);
     if (GetVolumeInformationW(volRoot.c_str(), nullptr, 0, nullptr, nullptr, nullptr, fsName, MAX_PATH)) {
         if (_wcsicmp(fsName, L"NTFS") != 0) {
-            LogError(L"Unsupported filesystem: " + std::wstring(fsName) +
-                     L". ProjFS requires NTFS. Root: " + m_root);
+            LogError(L"不支持的文件系统：" + std::wstring(fsName) +
+                     L"。ProjFS 需要 NTFS。根：" + m_root);
             return false;
         }
     } else {
         DWORD e = GetLastError();
-        LogError(L"GetVolumeInformationW failed (" + std::to_wstring(e) +
-                 L"); cannot verify filesystem for " + m_root + L", proceeding");
+        LogError(L"GetVolumeInformationW 失败（" + std::to_wstring(e) +
+                 L"）；无法校验 " + m_root + L" 的文件系统，继续");
     }
 
     HRESULT hr = PrjMarkDirectoryAsPlaceholder(m_root.c_str(), nullptr, nullptr,
                                                &PenumbraProviderId());
     if (FAILED(hr)) {
-        LogError(L"PrjMarkDirectoryAsPlaceholder failed: " + Hex32((unsigned long)hr) +
-                 L" (enable ProjFS optional feature as admin: "
+        LogError(L"PrjMarkDirectoryAsPlaceholder 失败：" + Hex32((unsigned long)hr) +
+                 L"（请以管理员身份启用 ProjFS 可选功能："
                  L"Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS)");
         return false;
     }
 
     if (!StartVirtualizing()) return false;
 
-    Log(L"ProjFS provider mounted: " + m_root);
+    Log(L"ProjFS provider 已挂载：" + m_root);
     return true;
 }
 
@@ -132,7 +129,7 @@ bool ProjFsProvider::StartVirtualizing() {
 
     HRESULT hr = PrjStartVirtualizing(m_root.c_str(), &cb, this, &opts, &m_nsCtx);
     if (FAILED(hr)) {
-        LogError(L"PrjStartVirtualizing failed: " + Hex32((unsigned long)hr));
+        LogError(L"PrjStartVirtualizing 失败：" + Hex32((unsigned long)hr));
         m_nsCtx = nullptr;
         return false;
     }
@@ -150,15 +147,14 @@ void ProjFsProvider::StopVirtualizing() {
 void ProjFsProvider::Stop() {
     StopVirtualizing();
     if (!m_root.empty()) {
-        Log(L"ProjFS provider stopped: " + m_root);
+        Log(L"ProjFS provider 已停止：" + m_root);
     }
 }
 
 HRESULT CALLBACK ProjFsProvider::GetPlaceholderInformationCb(const PRJ_CALLBACK_DATA* /*callbackData*/) {
-    // We eagerly create placeholders on disk via PrjWritePlaceholderInfo, so
-    // ProjFS reads their metadata directly from disk. For any path we do not
-    // manage (regular files, non-existent), report "not found" so ProjFS falls
-    // back to the on-disk file (or returns not found).
+    // 我们通过 PrjWritePlaceholderInfo 在磁盘上即时创建占位，因此 ProjFS 直接从磁盘
+    // 读取其元数据。对我们未管理的路径（普通文件、不存在的），返回"未找到"，使
+    // ProjFS 回落到磁盘文件（或返回未找到）。
     return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 }
 
@@ -169,7 +165,7 @@ HRESULT CALLBACK ProjFsProvider::GetFileDataCb(const PRJ_CALLBACK_DATA* callback
 
     std::wstring relPath = callbackData->FilePathName ? callbackData->FilePathName : L"";
     const UINT64 end = byteOffset + (UINT64)length;
-    const UINT32 CHUNK = 1u << 20; // 1 MB aligned write buffer
+    const UINT32 CHUNK = 1u << 20; // 1MB 对齐写缓冲
 
     void* aligned = PrjAllocateAlignedBuffer(self->m_nsCtx, CHUNK);
     if (!aligned) return E_OUTOFMEMORY;
@@ -217,7 +213,7 @@ HRESULT CALLBACK ProjFsProvider::GetFileDataCb(const PRJ_CALLBACK_DATA* callback
                 }
             }
             cursor += len;
-            return cursor < end; // stop once the requested range is covered
+            return cursor < end; // 覆盖所请求范围后即停止
         }, err);
 
     if (!failed && bufFill > 0) {
@@ -228,22 +224,22 @@ HRESULT CALLBACK ProjFsProvider::GetFileDataCb(const PRJ_CALLBACK_DATA* callback
 
     if (failed) {
         self->m_stats.errors++;
-        LogError(L"hydrate write failed: " + relPath);
+        LogError(L"水合写入失败：" + relPath);
         return E_FAIL;
     }
     if (totalWritten != (UINT64)length) {
         if (!err.empty()) {
             self->m_stats.errors++;
-            LogError(L"hydrate failed (" + err + L"): " + relPath);
+            LogError(L"水合失败（" + err + L"）：" + relPath);
         } else if (!procOk) {
             self->m_stats.errors++;
-            LogError(L"hydrate failed (svn cat error): " + relPath);
+            LogError(L"水合失败（svn cat 错误）：" + relPath);
         }
         return E_FAIL;
     }
 
     self->m_stats.hydrated++;
-    Log(L"hydrated: " + relPath);
+    Log(L"已水合：" + relPath);
     return S_OK;
 }
 
@@ -255,13 +251,13 @@ HRESULT CALLBACK ProjFsProvider::NotificationCb(const PRJ_CALLBACK_DATA* callbac
     const wchar_t* path = callbackData->FilePathName ? callbackData->FilePathName : L"";
     switch (notification) {
         case PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED:
-            Log(std::wstring(L"modified: ") + path);
+            Log(std::wstring(L"已修改：") + path);
             break;
         case PRJ_NOTIFICATION_PRE_DELETE:
-            Log(std::wstring(L"pre-delete: ") + path);
+            Log(std::wstring(L"删除前：") + path);
             break;
         case PRJ_NOTIFICATION_FILE_RENAMED:
-            Log(std::wstring(L"renamed: ") + path +
+            Log(std::wstring(L"已重命名：") + path +
                 (destinationFileName ? (L" -> " + std::wstring(destinationFileName)) : L""));
             break;
         default:
@@ -271,22 +267,19 @@ HRESULT CALLBACK ProjFsProvider::NotificationCb(const PRJ_CALLBACK_DATA* callbac
 }
 
 void CALLBACK ProjFsProvider::CancelCommandCb(const PRJ_CALLBACK_DATA* /*callbackData*/) {
-    // No long-running cancellable work to interrupt.
+    // 无需中断的长时任务。
 }
 
-// Directory enumeration callbacks.
+// 目录枚举回调。
 //
-// penumbra's backing store IS the virtualization root (the SVN working copy
-// itself): every entry (full file or dehydrated placeholder) already exists on
-// disk, so there is nothing for the provider to project. ProjFS automatically
-// merges on-disk items into enumeration results.
+// penumbra 的后备存储即虚拟化根本身（SVN 工作副本本身）：每个条目（完整文件或
+// 已释放占位）都已存在于磁盘上，因此 provider 无需投影任何内容。ProjFS 会自动
+// 把磁盘项合并进枚举结果。
 //
-// We MUST NOT call FindFirstFileW on paths inside the virtualization root from
-// these callbacks: ProjFS would intercept the call and try to re-enter the
-// callbacks on the same thread, deadlocking (same root cause as the svn-status
-// deadlock handled in DehydrateFiles via StopVirtualizing, but the plain
-// directory-browse path had no such guard, so any access to the root or its
-// children hung the shell).
+// 这些回调中绝不能对虚拟化根内的路径调用 FindFirstFileW：ProjFS 会拦截该调用并
+// 试图在同线程内重入回调，导致死锁（与 DehydrateFiles 中用 StopVirtualizing 处理
+// 的 svn-status 死锁同源；但普通目录浏览路径此前无此防护，故任何对根或其子项的
+// 访问都会卡死 shell）。
 HRESULT CALLBACK ProjFsProvider::StartDirectoryEnumerationCb(
     const PRJ_CALLBACK_DATA* /*callbackData*/,
     const GUID* /*enumerationId*/) {
@@ -309,34 +302,32 @@ HRESULT CALLBACK ProjFsProvider::GetDirectoryEnumerationCb(
 
 bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive, std::wstring& report) {
     if (!m_nsCtx) {
-        report = L"provider not mounted";
+        report = L"provider 未挂载";
         return false;
     }
 
     std::wstring scopeRel = ToBackslash(relPath);
 
-    // Temporarily stop ProjFS virtualization so that svn.exe can enumerate
-    // directories without triggering ProjFS callback re-entrancy (which would
-    // deadlock: the enumeration callback's FindFirstFileW on the virtualization
-    // root gets intercepted by ProjFS, which tries to re-enter the callback).
-    // After svn status completes, restart virtualization for the dehydrate loop
-    // (PrjDeleteFile / PrjWritePlaceholderInfo require an active instance).
-    Log(L"DehydrateFiles: temporarily stopping virtualization for svn status");
+    // 临时停止 ProjFS 虚拟化，使 svn.exe 枚举目录时不触发 ProjFS 回调重入（否则
+    // 会死锁：枚举回调中对虚拟化根的 FindFirstFileW 会被 ProjFS 拦截并试图重入
+    // 回调）。svn status 完成后，再为释放循环重启虚拟化
+    //（PrjDeleteFile / PrjWritePlaceholderInfo 需要活动实例）。
+    Log(L"DehydrateFiles：为 svn status 临时停止虚拟化");
     StopVirtualizing();
 
     std::wstring err;
-    Log(L"DehydrateFiles: enumerating clean files (scopeRel='" + scopeRel +
-        L"', recursive=" + std::to_wstring(recursive) + L")...");
+    Log(L"DehydrateFiles：枚举未修改文件（scopeRel='" + scopeRel +
+        L"', recursive=" + std::to_wstring(recursive) + L"）...");
     auto candidates = m_svn.EnumerateCleanFiles(m_root, scopeRel, recursive, err);
-    Log(L"DehydrateFiles: got " + std::to_wstring(candidates.size()) +
-        L" candidates" + (err.empty() ? L"" : (L", err: " + err)));
+    Log(L"DehydrateFiles：得到 " + std::to_wstring(candidates.size()) +
+        L" 个候选" + (err.empty() ? L"" : (L"，错误：" + err)));
     if (!err.empty()) {
-        report = L"svn status: " + err + L"\n";
+        report = L"svn status：" + err + L"\n";
     }
 
-    Log(L"DehydrateFiles: restarting virtualization");
+    Log(L"DehydrateFiles：重启虚拟化");
     if (!StartVirtualizing()) {
-        report += L"ERROR: failed to restart ProjFS virtualization\n";
+        report += L"错误：重启 ProjFS 虚拟化失败\n";
         return false;
     }
 
@@ -355,8 +346,8 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         processed++;
         std::wstring relBs = ToBackslash(rel);
 
-        // Defense-in-depth: never touch .svn metadata. If a pristine file ever
-        // became a placeholder, hydrating it via svn cat would recurse.
+        // 纵深防御：绝不触碰 .svn 元数据。若 pristine 文件变为占位，经 svn cat
+        // 水合时会递归。
         if (relBs.size() >= 4 && relBs.compare(0, 4, L".svn") == 0 &&
             (relBs.size() == 4 || relBs[4] == L'\\')) {
             skipped++;
@@ -374,11 +365,10 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         if (!GetFileAttributesExW(full.c_str(), GetFileExInfoStandard, &fad)) {
             skipped++;
             m_stats.errors++;
-            LogError(L"skip (no attrs): " + relBs);
+            LogError(L"跳过（无属性）：" + relBs);
             continue;
         }
-        // Skip directories (svn status XML often omits kind="file", so we
-        // filter here).
+        // 跳过目录（svn status XML 常省略 kind="file"，故在此过滤）。
         if (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             skipped++;
             continue;
@@ -387,7 +377,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         sz.LowPart = fad.nFileSizeLow;
         sz.HighPart = fad.nFileSizeHigh;
 
-        // Skip files that are already dehydrated placeholders.
+        // 跳过已是已释放占位的文件。
         PRJ_FILE_STATE state;
         bool isPlaceholder = false;
         if (SUCCEEDED(PrjGetOnDiskFileState(full.c_str(), &state))) {
@@ -400,7 +390,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
             }
         }
 
-        // Delete the existing on-disk representation.
+        // 删除现有磁盘表示。
         bool deleted = false;
         if (isPlaceholder) {
             PRJ_UPDATE_FAILURE_CAUSES fail = PRJ_UPDATE_FAILURE_CAUSE_NONE;
@@ -410,7 +400,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
             if (SUCCEEDED(hr)) {
                 deleted = true;
             } else {
-                LogError(L"PrjDeleteFile failed " + Hex32((unsigned long)hr) + L": " + relBs);
+                LogError(L"PrjDeleteFile 失败 " + Hex32((unsigned long)hr) + L"：" + relBs);
             }
         }
         if (!deleted) {
@@ -420,12 +410,12 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
                 DWORD e = GetLastError();
                 skipped++;
                 m_stats.errors++;
-                LogError(L"delete failed (" + std::to_wstring(e) + L"): " + relBs);
+                LogError(L"删除失败（" + std::to_wstring(e) + L"）：" + relBs);
                 continue;
             }
         }
 
-        // Build placeholder info.
+        // 构建占位信息。
         PRJ_PLACEHOLDER_INFO info{};
         info.FileBasicInfo.IsDirectory = FALSE;
         info.FileBasicInfo.FileSize = (INT64)sz.QuadPart;
@@ -453,42 +443,41 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         HRESULT hr = PrjWritePlaceholderInfo(m_nsCtx, relBs.c_str(), &info, sizeof(info));
         if (FAILED(hr)) {
             m_stats.errors++;
-            LogError(L"PrjWritePlaceholderInfo failed " + Hex32((unsigned long)hr) + L": " + relBs);
+            LogError(L"PrjWritePlaceholderInfo 失败 " + Hex32((unsigned long)hr) + L"：" + relBs);
             continue;
         }
 
         m_stats.dehydrated++;
         freed += sz.QuadPart;
 
-        // Progress logging: every N files or every LOG_INTERVAL_MS, whichever
-        // comes first. For 100k+ files this ensures the user sees regular
-        // activity instead of an apparent hang.
+        // 进度日志：每 N 个文件或每 LOG_INTERVAL_MS 一次（取先到者）。对 10 万+
+        // 文件这能保证用户看到持续活动，而非疑似卡住。
         ULONGLONG now = GetTickCount64();
         if (processed % LOG_EVERY_N == 0 || now - lastLogTime >= LOG_INTERVAL_MS) {
             ULONGLONG elapsed = now - startTime;
-            Log(L"DehydrateFiles: " + std::to_wstring(processed) + L"/" +
-                std::to_wstring(total) + L" (" +
-                std::to_wstring(elapsed / 1000) + L"s elapsed), " +
-                L"dehydrated=" + std::to_wstring(m_stats.dehydrated.load()) +
-                L", skipped=" + std::to_wstring(skipped) +
-                L", errors=" + std::to_wstring(m_stats.errors.load()) +
-                L", freed=" + std::to_wstring(freed / (1024 * 1024)) + L"MB" +
-                L", current: " + relBs);
+            Log(L"DehydrateFiles：" + std::to_wstring(processed) + L"/" +
+                std::to_wstring(total) + L"（已耗时 " +
+                std::to_wstring(elapsed / 1000) + L" 秒），" +
+                L"已释放=" + std::to_wstring(m_stats.dehydrated.load()) +
+                L", 已跳过=" + std::to_wstring(skipped) +
+                L", 错误=" + std::to_wstring(m_stats.errors.load()) +
+                L", 释放=" + std::to_wstring(freed / (1024 * 1024)) + L"MB" +
+                L", 当前：" + relBs);
             lastLogTime = now;
         }
     }
 
     ULONGLONG elapsed = GetTickCount64() - startTime;
-    Log(L"DehydrateFiles: loop done in " + std::to_wstring(elapsed / 1000) + L"s, " +
-        std::to_wstring(m_stats.dehydrated.load()) + L" dehydrated, " +
-        std::to_wstring(skipped) + L" skipped, " +
-        std::to_wstring(m_stats.errors.load()) + L" errors");
+    Log(L"DehydrateFiles：循环完成，耗时 " + std::to_wstring(elapsed / 1000) + L" 秒，" +
+        std::to_wstring(m_stats.dehydrated.load()) + L" 已释放，" +
+        std::to_wstring(skipped) + L" 已跳过，" +
+        std::to_wstring(m_stats.errors.load()) + L" 错误");
 
-    report += L"candidates: " + std::to_wstring(candidates.size()) + L"\n";
-    report += L"dehydrated: " + std::to_wstring(m_stats.dehydrated.load()) + L"\n";
-    report += L"skipped: " + std::to_wstring(skipped) + L"\n";
-    report += L"errors: " + std::to_wstring(m_stats.errors.load()) + L"\n";
-    report += L"bytes freed: " + std::to_wstring(freed) + L"\n";
+    report += L"候选：" + std::to_wstring(candidates.size()) + L"\n";
+    report += L"已释放：" + std::to_wstring(m_stats.dehydrated.load()) + L"\n";
+    report += L"已跳过：" + std::to_wstring(skipped) + L"\n";
+    report += L"错误：" + std::to_wstring(m_stats.errors.load()) + L"\n";
+    report += L"已释放字节：" + std::to_wstring(freed) + L"\n";
     return true;
 }
 
@@ -510,19 +499,18 @@ bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& repo
 
     DWORD attr = GetFileAttributesW(full.c_str());
     if (attr == INVALID_FILE_ATTRIBUTES) {
-        report = L"not found: " + full;
+        report = L"未找到：" + full;
         return false;
     }
 
     if (attr & FILE_ATTRIBUTE_DIRECTORY) {
-        // Stop virtualization while running svn status (same re-entrancy fix
-        // as DehydrateFiles). ForceHydrateOne works without virtualization
-        // since it reads full files, not placeholders.
+        // 运行 svn status 时停止虚拟化（与 DehydrateFiles 相同的重入修复）。
+        // ForceHydrateOne 不依赖虚拟化，因为它读取完整文件而非占位。
         StopVirtualizing();
         std::wstring err;
-        Log(L"HydrateFile: enumerating clean files for '" + relBs + L"'...");
+        Log(L"HydrateFile：为 '" + relBs + L"' 枚举未修改文件...");
         auto all = m_svn.EnumerateCleanFiles(m_root, relBs, true, err);
-        Log(L"HydrateFile: got " + std::to_wstring(all.size()) + L" candidates");
+        Log(L"HydrateFile：得到 " + std::to_wstring(all.size()) + L" 个候选");
         int n = 0;
         std::wstring prefix = relBs + L"\\";
         ULONGLONG startTime = GetTickCount64();
@@ -537,22 +525,22 @@ bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& repo
             }
             ULONGLONG now = GetTickCount64();
             if (processed % 2000 == 0 || now - lastLogTime >= 5000) {
-                Log(L"HydrateFile: " + std::to_wstring(processed) + L"/" +
-                    std::to_wstring(total) + L" (" +
-                    std::to_wstring((now - startTime) / 1000) + L"s elapsed), " +
-                    L"hydrated=" + std::to_wstring(n) + L", current: " + rb);
+                Log(L"HydrateFile：" + std::to_wstring(processed) + L"/" +
+                    std::to_wstring(total) + L"（已耗时 " +
+                    std::to_wstring((now - startTime) / 1000) + L" 秒），" +
+                    L"已水合=" + std::to_wstring(n) + L"，当前：" + rb);
                 lastLogTime = now;
             }
         }
         StartVirtualizing();
-        report = L"hydrated " + std::to_wstring(n) + L" file(s) under " + relBs;
+        report = L"已在 " + relBs + L" 下水合 " + std::to_wstring(n) + L" 个文件";
         return n >= 0;
     }
 
     if (ForceHydrateOne(full)) {
-        report = L"hydrated: " + relBs;
+        report = L"已水合：" + relBs;
         return true;
     }
-    report = L"failed to hydrate: " + relBs;
+    report = L"水合失败：" + relBs;
     return false;
 }

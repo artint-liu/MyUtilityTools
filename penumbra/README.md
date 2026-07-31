@@ -6,11 +6,17 @@
 将未修改的 SVN 文件转换为轻量占位文件以释放磁盘空间；当操作系统访问占位文件时，
 provider 自动调用 `svn cat` 从 SVN 仓库还原真实内容（透明水合）。
 
-## 工作原理
+## 单例运行模型
 
-- **provider 守护进程** 是 ProjFS 虚拟化上下文的唯一持有者，负责所有 ProjFS 操作
-  （水合回调、占位创建、目录枚举）。CLI 子命令（`free`/`unmount`/`status`/`hydrate`）
-  是瘦客户端，通过命名管道 `\\.\pipe\penumbra\<hash>` 与 provider 通信。
+penumbra 采用**单例 daemon**架构：系统上同时只运行一个 `penumbra` 后台守护进程，
+统一管理所有已挂载目录。CLI 子命令是瘦客户端，通过固定命名管道
+`\\.\pipe\penumbra` 与该 daemon 通信。
+
+挂载列表持久化在注册表 `HKCU\Software\penumbra`（值 `Mounts`，`REG_MULTI_SZ`）。
+daemon 启动时自动重新挂载注册表中所有路径。
+
+- **provider daemon** 是 ProjFS 虚拟化上下文的唯一持有者，负责所有 ProjFS 操作
+  （水合回调、占位创建、目录枚举），同时管理多个挂载根。
 - **释放空间**：`free` 递归扫描工作副本，对 `svn status` 判定为未修改（normal）的
   版本化文件，删除实文件并写入 ProjFS 占位（保留原 mtime/size/属性）。已修改、未版本化、
   目录等均跳过。非 SVN 目录不做任何处理。
@@ -40,20 +46,28 @@ msbuild penumbra.sln /p:Configuration=Release /p:Platform=x64
 ## 命令行用法
 
 ```
-penumbra mount <path> [-b|--background]
-    在 <path> 注册 ProjFS 实例并运行 provider。
-    默认前台阻塞（实时日志，Ctrl+C 退出）。-b：后台守护进程。
+penumbra
+    若有已配置的挂载路径，则启动 daemon；无则提示。daemon 已运行时仅报告状态。
 
-penumbra unmount <path>
-    停止 provider 并注销（先走管道 STOP，失败则按 PID 文件终止）。
+penumbra mount [path]
+    带 <path>：将其加入挂载列表。daemon 已运行则通知它挂载 <path>；否则启动 daemon
+    （启动时会挂载注册表中的全部路径）。不带 <path>：显示 daemon 状态并列出已配置
+    挂载路径，然后退出。
+
+penumbra umount <path>
+    从挂载列表移除 <path>。若仍存在占位（未水合）文件则拒绝，提示先用
+    'penumbra hydrate <path>' 还原；否则从列表删除并通知运行中的 daemon 停止虚拟化。
+
+penumbra quit
+    通知运行中的 daemon 退出（挂载列表保留，下次启动重新挂载）。
 
 penumbra free [path] [-r|--recursive] [-n|--dry-run]
     将未修改的 svn 文件转为占位以释放空间。默认路径为当前目录，默认递归。
-    非 SVN 目录直接跳过。-n：仅列出候选与可释放字节数，不改动。
-    实际转换要求 provider 已挂载（见下"典型工作流"）。
+    penumbra 自动查找覆盖 <path> 的挂载根。非 SVN 目录直接跳过。
+    -n：仅列出候选与可释放字节数，不改动。
 
 penumbra status [path]
-    查看 provider 运行状态与占位/水合统计。
+    查看 daemon 运行状态与占位/水合统计。
 
 penumbra hydrate <path>
     强制还原某个占位文件或目录（调试用）。
@@ -64,44 +78,55 @@ penumbra help
 ## 典型工作流
 
 ```powershell
-# 1) 后台挂载 provider（保持运行以服务占位访问）
-penumbra mount D:\repo -b
+# 1) 添加一个挂载目录并启动 daemon（首次：自动启动后台 daemon）
+penumbra mount D:\repo1
 
-# 2) 预览将释放的空间
-penumbra free D:\repo -n
+# 2) 再添加一个目录（daemon 已运行，仅通知它挂载新路径）
+penumbra mount D:\repo2
 
-# 3) 实际释放（未修改文件转为占位）
-penumbra free D:\repo
+# 3) 查看状态 / 列出所有挂载
+penumbra status
+penumbra mount
 
-# 4) 正常使用仓库；读取占位文件时自动从 svn 还原内容
-#    （编辑器打开、程序读取等触发透明水合）
+# 4) 预览将释放的空间
+penumbra free D:\repo1 -n
 
-# 5) 查看状态
-penumbra status D:\repo
+# 5) 实际释放（未修改文件转为占位）
+penumbra free D:\repo1
 
-# 6) 卸载
-penumbra unmount D:\repo
+# 6) 正常使用仓库；读取占位文件时自动从 svn 还原内容
+
+# 7) 移除一个挂载（需先还原占位）
+penumbra hydrate D:\repo1
+penumbra umount D:\repo1
+
+# 8) 退出 daemon（挂载列表保留）
+penumbra quit
+
+# 9) 下次直接运行（自动重新挂载所有已配置路径）
+penumbra
 ```
 
-前台调试模式（实时日志到控制台）：
-```powershell
-penumbra mount D:\repo      # 阻塞，Ctrl+C 停止
-```
-后台守护模式日志写入 `%TEMP%\penumbra-<hash>.log`。
+后台 daemon 日志写入 `%TEMP%\penumbra.log`，PID 锁文件为 `%TEMP%\penumbra.pid`。
 
 ## 设计说明
 
+- **单例 daemon**：一个进程管理多个挂载根，减少终端数量，"一站式"管理。所有 CLI
+  通过固定管道 `\\.\pipe\penumbra` 通信，命令 payload 首行携带目标挂载根。
+- **注册表持久化挂载列表**：`HKCU\Software\penumbra\Mounts`（`REG_MULTI_SZ`），
+  daemon 启动时自动重新挂载。
 - **只对文件做占位化**，目录保持真实，简化处理。
 - **保留原文件 mtime/size 至占位**：使普通 `svn status`（基于 mtime 快速检测）
   命中、不读取文件内容、不触发批量水合。
 - **水合用对齐缓冲**：`PrjAllocateAlignedBuffer` 分配 1MB 块，满足 ProjFS 的
   `WriteAlignment` 要求；`svn cat` 流式分块写入 `PrjWriteFileData`，避免大文件全量内存。
-- **目录枚举回显磁盘**：provider 实现枚举回调，返回磁盘实际条目（占位 + 实文件 + 目录），
-  ProjFS 与磁盘 full 文件按名合并去重，确保占位文件在目录列表中正常可见
-  （`svn status` 等依赖目录枚举的操作不会误判占位为缺失）。
-- **free 要求 provider 已挂载**：占位文件需要 provider 才能被访问；若在未挂载时生成占位，
-  文件将不可访问。因此 `free` 在 provider 未运行时会提示先 `mount`。
-  （`-n` 干跑仅需 svn，不要求挂载。）
+- **目录枚举回显磁盘**：penumbra 的后备存储即虚拟化根本身（SVN 工作副本），所有
+  条目（占位/实文件/目录）都在磁盘上，provider 的枚举回调直接返回 `S_OK`，ProjFS
+  自动把磁盘本地项合并进枚举结果（本地项优先），避免回调内访问虚拟化根导致的重入死锁。
+- **free 要求 daemon 已挂载**：占位文件需要 provider 才能被访问；若 daemon 未运行，
+  `free` 会提示先启动。`-n` 干跑仅需 svn，不要求挂载。
+- **umount 安全检查**：移除挂载前扫描该路径下的未水合占位文件，存在则拒绝并提示
+  先 `hydrate`，防止占位文件在 provider 停止后变得不可访问。
 
 ## 已知限制
 
@@ -110,7 +135,7 @@ penumbra mount D:\repo      # 阻塞，Ctrl+C 停止
   可能触发占位水合；普通 `svn status` 不会。
 - 已水合的占位再次 `free` 时，采用"删除 + 重建占位"方式；若文件被占用/锁定则跳过。
 - 水合还原的是 BASE 版本内容；仅未修改文件会被占位化，故与工作副本一致。
-- provider 停止后占位文件不可访问，需重新 `mount` 才能访问。
+- provider 停止后未水合占位文件不可访问，需重新启动 daemon（运行 `penumbra`）才能访问。
 - 仅支持 64 位（ProjFS 无 x86）。
 - 大仓库递归转换可能耗时数分钟（逐文件 delete + 写占位），有进度日志。
 
@@ -122,11 +147,12 @@ penumbra/
   src/
     main.cpp            CLI 解析与子命令分发
     pch.h/.cpp          预编译头
-    Protocol.h          命名管道 IPC 协议（帧/命令/状态）
-    Util.h/.cpp         路径规范化/FNV-1a hash/日志/PID锁/providerId/管道帧IO
+    Protocol.h          命名管道 IPC 协议（帧/命令/状态/固定管道名）
+    Util.h/.cpp         路径规范化/FNV-1a hash/日志/PID锁/providerId/管道帧IO/
+                        注册表挂载列表/占位检测
     SvnClient.h/.cpp    svn.exe 包装（status --xml 解析、cat 流式、info size）
     ProjFsProvider.h/.cpp  ProjFS 生命周期/回调/占位化/水合/目录枚举
-    ProviderServer.h/.cpp  命名管道服务端 + daemon/前台主循环
-    ProviderClient.h/.cpp  CLI 侧管道客户端
-    Commands.h/.cpp     mount/unmount/free/status/hydrate/--daemon 实现
+    ProviderServer.h/.cpp  单例命名管道服务端 + daemon 主循环（多挂载根管理）
+    ProviderClient.h/.cpp  CLI 侧管道客户端（固定管道）
+    Commands.h/.cpp     mount/umount/quit/free/status/hydrate/--daemon 实现
 ```
