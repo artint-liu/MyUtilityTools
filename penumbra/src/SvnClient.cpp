@@ -314,70 +314,104 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
     args.push_back(target);
     std::wstring cmd = BuildCmdLine(m_svnExe, args);
 
-    Log(L"svn status：" + cmd);
-    std::string out;
+    Log(L"svn status（流式）：" + cmd);
+
+    std::wstring rootPrefix = svnRoot + L"\\";
+    size_t rootPrefixLen = rootPrefix.size();
+    int totalEntries = 0, normalEntries = 0;
+
+    // 处理一个完整的 <entry>...</entry> 块（通常几百字节）。
+    // 块很小，Utf8ToWide 绝不会因输入过大而失败。
+    auto processEntryBlock = [&](const std::string& blockUtf8) {
+        std::wstring xml = Utf8ToWide(blockUtf8);
+        if (xml.empty()) return;
+
+        std::wstring curPath, curItem;
+        bool inEntry = false;
+
+        XmlSaxParser parser;
+        parser.onStartElement = [&](const std::wstring& name,
+                                    const std::vector<XmlSaxParser::Attribute>& attrs) {
+            if (name == L"entry") {
+                inEntry = true;
+                curPath.clear();
+                curItem.clear();
+                for (const auto& a : attrs) {
+                    if (a.name == L"path") curPath = a.value;
+                }
+            } else if (name == L"wc-status" && inEntry) {
+                for (const auto& a : attrs) {
+                    if (a.name == L"item") curItem = a.value;
+                }
+            }
+        };
+        parser.onEndElement = [&](const std::wstring& name) {
+            if (name == L"entry" && inEntry) {
+                inEntry = false;
+                totalEntries++;
+                if (curItem == L"normal") {
+                    normalEntries++;
+                    // svn 报告绝对路径；去掉 svnRoot\ 前缀得到相对 svnRoot 的路径。
+                    // 反斜杠转正斜杠以与代码其余部分保持一致。
+                    if (!curPath.empty() &&
+                        _wcsnicmp(curPath.c_str(), rootPrefix.c_str(), rootPrefixLen) == 0) {
+                        std::wstring rel = curPath.substr(rootPrefixLen);
+                        for (auto& c : rel) if (c == L'\\') c = L'/';
+                        if (!rel.empty()) result.push_back(rel);
+                    } else if (!curPath.empty() &&
+                               _wcsicmp(curPath.c_str(), svnRoot.c_str()) != 0 &&
+                               curPath != L".") {
+                        // 相对路径（回退）。
+                        result.push_back(curPath);
+                    }
+                }
+            }
+        };
+        parser.parse(xml);
+    };
+
+    // 流式分块解析：逐块读取 stdout，仅缓冲当前 <entry>...</entry> 块。
+    // 避免 RunCapture 把整个输出（大仓库可达 GB 级）一次性读入内存，再经
+    // Utf8ToWide 整体转换时 MultiByteToWideChar 因输入过大返回 0（输出空串）。
+    // <entry> 不会嵌套，路径中的 < 已被 XML 转义为 &lt;，故以 "<entry" /
+    // "</entry>" 作为定界符是安全的。
+    std::string buf;
+    bool collecting = false;
+
+    auto streamCb = [&](const void* data, size_t len) -> bool {
+        buf.append(static_cast<const char*>(data), len);
+        for (;;) {
+            if (!collecting) {
+                size_t start = buf.find("<entry");
+                if (start == std::string::npos) {
+                    // 保留末尾 6 字节（"<entry" 长度），防标签跨块截断
+                    if (buf.size() > 6) buf.erase(0, buf.size() - 6);
+                    break;
+                }
+                collecting = true;
+                buf.erase(0, start);  // 丢弃 <entry 之前的无关内容
+            }
+            // collecting=true：buf 以 "<entry" 开头，搜索闭合标签
+            size_t end = buf.find("</entry>");
+            if (end == std::string::npos) break;  // 块未完成，等待更多数据
+            end += 8;  // 含 "</entry>"
+            processEntryBlock(std::string(buf, 0, end));
+            buf.erase(0, end);
+            collecting = false;
+        }
+        return true;
+    };
+
     DWORD code = 0;
-    if (!RunCapture(cmd, out, code)) {
+    if (!RunStream(cmd, streamCb, code)) {
         err = L"启动 svn status 失败";
         Log(L"svn status：启动失败");
         return result;
     }
-    Log(L"svn status：退出码 " + std::to_wstring(code) + L"，输出 " +
-        std::to_wstring(out.size()) + L" 字节");
+    Log(L"svn status：退出码 " + std::to_wstring(code));
     if (code != 0) {
         err = L"svn status 退出码 " + std::to_wstring(code);
     }
-
-    std::wstring xml = Utf8ToWide(out);
-
-    // 用轻量 SAX 风格解析器解析 XML。svn status --xml 可能在标签名与属性间插入
-    // 换行，路径可能是绝对路径。该解析器能稳健处理这些情况。
-    std::wstring rootPrefix = svnRoot + L"\\";
-    size_t rootPrefixLen = rootPrefix.size();
-
-    std::wstring curPath, curItem;
-    bool inEntry = false;
-    int totalEntries = 0, normalEntries = 0;
-
-    XmlSaxParser parser;
-    parser.onStartElement = [&](const std::wstring& name,
-                                const std::vector<XmlSaxParser::Attribute>& attrs) {
-        if (name == L"entry") {
-            inEntry = true;
-            curPath.clear();
-            curItem.clear();
-            for (const auto& a : attrs) {
-                if (a.name == L"path") curPath = a.value;
-            }
-        } else if (name == L"wc-status" && inEntry) {
-            for (const auto& a : attrs) {
-                if (a.name == L"item") curItem = a.value;
-            }
-        }
-    };
-    parser.onEndElement = [&](const std::wstring& name) {
-        if (name == L"entry" && inEntry) {
-            inEntry = false;
-            totalEntries++;
-            if (curItem == L"normal") {
-                normalEntries++;
-                // svn 报告绝对路径；去掉 svnRoot\ 前缀得到相对 svnRoot 的路径。
-                // 反斜杠转正斜杠以与代码其余部分保持一致。
-                if (!curPath.empty() &&
-                    _wcsnicmp(curPath.c_str(), rootPrefix.c_str(), rootPrefixLen) == 0) {
-                    std::wstring rel = curPath.substr(rootPrefixLen);
-                    for (auto& c : rel) if (c == L'\\') c = L'/';
-                    if (!rel.empty()) result.push_back(rel);
-                } else if (!curPath.empty() &&
-                           _wcsicmp(curPath.c_str(), svnRoot.c_str()) != 0 &&
-                           curPath != L".") {
-                    // 相对路径（回退）。
-                    result.push_back(curPath);
-                }
-            }
-        }
-    };
-    parser.parse(xml);
 
     Log(L"已解析 " + std::to_wstring(totalEntries) + L" 个条目，" +
         std::to_wstring(normalEntries) + L" 个 normal，结果中 " +

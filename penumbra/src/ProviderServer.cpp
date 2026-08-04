@@ -32,6 +32,19 @@ static void SplitFirstLine(const std::wstring& s, std::wstring& first, std::wstr
     }
 }
 
+// 向客户端写一个 IpcStatus::Progress 进度包。处理 free/hydrate 时每处理完一个
+// 文件就调用一次，让 CLI 实时打印该文件的处理结果，而非等整个命令结束。
+// 写失败时静默返回（最终响应仍会尝试写入）。
+static void WriteProgress(void* pipeVoid, const std::wstring& msg) {
+    IpcResponse p{ static_cast<uint32_t>(IpcStatus::Progress),
+                   static_cast<uint32_t>(msg.size() * sizeof(wchar_t)) };
+    if (!PipeWriteAll(pipeVoid, &p, sizeof(p))) return;
+    if (p.payloadLen > 0) {
+        auto bytes = WStringToBytes(msg);
+        PipeWriteAll(pipeVoid, bytes.data(), bytes.size());
+    }
+}
+
 ProviderServer::ProviderServer() {}
 ProviderServer::~ProviderServer() { RemoveAllMounts(); }
 
@@ -283,17 +296,20 @@ void ProviderServer::HandleClient(void* pipeVoid) {
             SplitFirstLine(rest, flag, rel);
             recursive = (flag == L"1");
             relPath = rel;
-            Log(L"Free：root='" + root + L"', relPath='" + relPath + L"', recursive=" +
-                std::to_wstring(recursive));
+            Log(L"Free：root='" + root + L"', relPath='" + relPath + L"', recursive=" + std::to_wstring(recursive));
             std::wstring norm = NormalizePath(root);
             std::lock_guard<std::mutex> lk(m_mutex);
             auto it = m_providers.find(norm);
-            if (it == m_providers.end()) {
+            if (it == m_providers.end())
+            {
                 respPayload = L"未挂载：" + norm + L"\n";
                 status = IpcStatus::Error;
-            } else {
+            }
+            else
+            {
                 std::wstring report;
-                bool ok = it->second->DehydrateFiles(relPath, recursive, report);
+                auto progress = [&](const std::wstring& msg) { WriteProgress(pipe, msg); };
+                bool ok = it->second->DehydrateFiles(relPath, recursive, report, progress);
                 respPayload = report;
                 status = ok ? IpcStatus::Ok : IpcStatus::Error;
                 Log(L"Free：完成，status=" + std::to_wstring((int)status));
@@ -311,7 +327,8 @@ void ProviderServer::HandleClient(void* pipeVoid) {
                 status = IpcStatus::Error;
             } else {
                 std::wstring report;
-                bool ok = it->second->HydrateFile(rel, report);
+                auto progress = [&](const std::wstring& msg) { WriteProgress(pipe, msg); };
+                bool ok = it->second->HydrateFile(rel, report, progress);
                 respPayload = report;
                 status = ok ? IpcStatus::Ok : IpcStatus::Error;
             }

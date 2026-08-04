@@ -118,6 +118,13 @@ void PrintMountList(const std::wstring& indent) {
     }
 }
 
+// 流式命令（free/hydrate）的进度回调：把单行进度消息打印到 stdout 并立即刷新，
+// 使每个文件的处理结果在产生时即显示，而非等整个命令结束。
+void PrintProgress(const std::wstring& msg) {
+    fwprintf(stdout, L"%s\n", msg.c_str());
+    fflush(stdout);
+}
+
 } // namespace
 
 int CmdDefault() {
@@ -311,7 +318,7 @@ int CmdFree(const std::wstring& path, bool recursive, bool dryRun) {
     std::wstring payload = root + L"\n" + std::wstring(recursive ? L"1" : L"0") + L"\n" + mountRel;
     IpcStatus st = IpcStatus::Error;
     std::wstring resp;
-    bool ok = c.Send(IpcCommand::Free, payload, st, resp);
+    bool ok = c.SendStreaming(IpcCommand::Free, payload, PrintProgress, st, resp);
     c.Close();
     fwprintf(stdout, L"%s", resp.c_str());
     return (ok && st == IpcStatus::Ok) ? 0 : 1;
@@ -373,7 +380,7 @@ int CmdHydrate(const std::wstring& path) {
     std::wstring payload = root + L"\n" + rel;
     IpcStatus st = IpcStatus::Error;
     std::wstring resp;
-    c.Send(IpcCommand::Hydrate, payload, st, resp);
+    c.SendStreaming(IpcCommand::Hydrate, payload, PrintProgress, st, resp);
     c.Close();
     fwprintf(stdout, L"%s\n", resp.c_str());
     return (st == IpcStatus::Ok) ? 0 : 1;

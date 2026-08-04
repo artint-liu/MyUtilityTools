@@ -5,6 +5,7 @@
 #include <map>
 #include <mutex>
 #include <atomic>
+#include <functional>
 #include "SvnClient.h"
 #include <projectedfslib.h>
 
@@ -27,12 +28,13 @@ public:
 
     // 将 `relPath`（相对于 root；空表示整个工作副本）下未修改的 svn 文件转为占位。
     // `recursive` 为 false 且 `relPath` 是目录时，仅释放其直接子文件；为 true 时
-    // 包含所有后代。`report` 接收可读的汇总。
-    bool DehydrateFiles(const std::wstring& relPath, bool recursive,
-                        std::wstring& report);
+    // 包含所有后代。`report` 接收可读的汇总。`progress`（可选）在每个文件处理完
+    // 后被调用一次，参数为单行人类可读描述（如 "[释放] path\file (1234 字节)"），
+    // 调用方据此向用户实时输出进度。
+    bool DehydrateFiles(const std::wstring& relPath, bool recursive, std::wstring& report, const std::function<void(const std::wstring&)>& progress = {});
 
-    // 按相对路径强制水合（还原）单个文件或目录。
-    bool HydrateFile(const std::wstring& relPath, std::wstring& report);
+    // 按相对路径强制水合（还原）单个文件或目录。`progress` 语义同 DehydrateFiles。
+    bool HydrateFile(const std::wstring& relPath, std::wstring& report, const std::function<void(const std::wstring&)>& progress = {});
 
     const std::wstring& Root() const { return m_root; }
     ProviderStats& Stats() { return m_stats; }

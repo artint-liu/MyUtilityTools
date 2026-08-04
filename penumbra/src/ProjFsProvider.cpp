@@ -20,6 +20,22 @@ std::wstring Hex32(unsigned long v) {
     return buf;
 }
 
+// 将字节数格式化为人类可读的形式（1024 进制，两位小数，自适应单位）。
+//   71297558365 -> "66.40GB"
+std::wstring FormatBytes(uint64_t bytes) {
+    static const wchar_t* units[] = { L"B", L"KB", L"MB", L"GB", L"TB", L"PB" };
+    if (bytes == 0) return L"0B";
+    double v = static_cast<double>(bytes);
+    int idx = 0;
+    while (v >= 1024.0 && idx < 5) {
+        v /= 1024.0;
+        ++idx;
+    }
+    wchar_t buf[64];
+    swprintf_s(buf, L"%.2f%s", v, units[idx]);
+    return buf;
+}
+
 // 从路径中提取卷根，使 GetVolumeInformationW 收到带末尾反斜杠的合法根路径
 //（向其传入深层子目录在某些配置下会返回 ERROR_INVALID_NAME (123)）。
 //   "C:\Users\foo\bar"  -> "C:\"
@@ -300,7 +316,7 @@ HRESULT CALLBACK ProjFsProvider::GetDirectoryEnumerationCb(
     return S_OK;
 }
 
-bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive, std::wstring& report) {
+bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive, std::wstring& report, const std::function<void(const std::wstring&)>& progress) {
     if (!m_nsCtx) {
         report = L"provider 未挂载";
         return false;
@@ -308,27 +324,18 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
 
     std::wstring scopeRel = ToBackslash(relPath);
 
-    // 临时停止 ProjFS 虚拟化，使 svn.exe 枚举目录时不触发 ProjFS 回调重入（否则
-    // 会死锁：枚举回调中对虚拟化根的 FindFirstFileW 会被 ProjFS 拦截并试图重入
-    // 回调）。svn status 完成后，再为释放循环重启虚拟化
-    //（PrjDeleteFile / PrjWritePlaceholderInfo 需要活动实例）。
-    Log(L"DehydrateFiles：为 svn status 临时停止虚拟化");
-    StopVirtualizing();
-
+    // 方案A 之后枚举回调直接返回 S_OK 不再调用 FindFirstFileW，svn status 在虚拟化
+    // 激活状态下不会再触发回调重入死锁。必须保持虚拟化运行：PrjStopVirtualizing 后
+    // 磁盘上残留的占位（reparse point）失去 provider 实例，svn 用 CreateFileW 打开
+    // 占位做 stat 会被 ProjFS 驱动拒绝 → svn 把占位标记为 missing 而非 normal →
+    // candidates 为空（已释放过的文件全部"消失"，递归 free 失效）。
     std::wstring err;
-    Log(L"DehydrateFiles：枚举未修改文件（scopeRel='" + scopeRel +
-        L"', recursive=" + std::to_wstring(recursive) + L"）...");
+    Log(L"DehydrateFiles：枚举未修改文件（scopeRel='" + scopeRel + L"', recursive=" + std::to_wstring(recursive) + L"）...");
     auto candidates = m_svn.EnumerateCleanFiles(m_root, scopeRel, recursive, err);
-    Log(L"DehydrateFiles：得到 " + std::to_wstring(candidates.size()) +
-        L" 个候选" + (err.empty() ? L"" : (L"，错误：" + err)));
+    Log(L"DehydrateFiles：得到 " + std::to_wstring(candidates.size()) + L" 个候选" + (err.empty() ? L"" : (L"，错误：" + err)));
+    
     if (!err.empty()) {
         report = L"svn status：" + err + L"\n";
-    }
-
-    Log(L"DehydrateFiles：重启虚拟化");
-    if (!StartVirtualizing()) {
-        report += L"错误：重启 ProjFS 虚拟化失败\n";
-        return false;
     }
 
     uint64_t freed = 0;
@@ -363,9 +370,11 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
 
         WIN32_FILE_ATTRIBUTE_DATA fad;
         if (!GetFileAttributesExW(full.c_str(), GetFileExInfoStandard, &fad)) {
+            DWORD attrErr = GetLastError();
             skipped++;
             m_stats.errors++;
             LogError(L"跳过（无属性）：" + relBs);
+            if (progress) progress(L"[错误] " + relBs + L" (无法读取属性: " + std::to_wstring(attrErr) + L")");
             continue;
         }
         // 跳过目录（svn status XML 常省略 kind="file"，故在此过滤）。
@@ -386,6 +395,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
             bool isFull = (state & PRJ_FILE_STATE_FULL) != 0;
             if (isPlaceholder && !isHydrated && !isFull) {
                 skipped++;
+                if (progress) progress(L"[跳过] " + relBs + L" (已是占位)");
                 continue;
             }
         }
@@ -411,6 +421,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
                 skipped++;
                 m_stats.errors++;
                 LogError(L"删除失败（" + std::to_wstring(e) + L"）：" + relBs);
+                if (progress) progress(L"[错误] " + relBs + L" (删除失败: " + std::to_wstring(e) + L")");
                 continue;
             }
         }
@@ -444,11 +455,13 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         if (FAILED(hr)) {
             m_stats.errors++;
             LogError(L"PrjWritePlaceholderInfo 失败 " + Hex32((unsigned long)hr) + L"：" + relBs);
+            if (progress) progress(L"[错误] " + relBs + L" (写占位失败: " + Hex32((unsigned long)hr) + L")");
             continue;
         }
 
         m_stats.dehydrated++;
         freed += sz.QuadPart;
+        if (progress) progress(L"[释放] " + relBs + L" (" + std::to_wstring(sz.QuadPart) + L" 字节)");
 
         // 进度日志：每 N 个文件或每 LOG_INTERVAL_MS 一次（取先到者）。对 10 万+
         // 文件这能保证用户看到持续活动，而非疑似卡住。
@@ -461,7 +474,7 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
                 L"已释放=" + std::to_wstring(m_stats.dehydrated.load()) +
                 L", 已跳过=" + std::to_wstring(skipped) +
                 L", 错误=" + std::to_wstring(m_stats.errors.load()) +
-                L", 释放=" + std::to_wstring(freed / (1024 * 1024)) + L"MB" +
+                L", 释放=" + FormatBytes(freed) +
                 L", 当前：" + relBs);
             lastLogTime = now;
         }
@@ -473,11 +486,11 @@ bool ProjFsProvider::DehydrateFiles(const std::wstring& relPath, bool recursive,
         std::to_wstring(skipped) + L" 已跳过，" +
         std::to_wstring(m_stats.errors.load()) + L" 错误");
 
-    report += L"候选：" + std::to_wstring(candidates.size()) + L"\n";
-    report += L"已释放：" + std::to_wstring(m_stats.dehydrated.load()) + L"\n";
-    report += L"已跳过：" + std::to_wstring(skipped) + L"\n";
-    report += L"错误：" + std::to_wstring(m_stats.errors.load()) + L"\n";
-    report += L"已释放字节：" + std::to_wstring(freed) + L"\n";
+    report += L"候选文件数：" + std::to_wstring(candidates.size()) + L" 个\n";
+    report += L"已释放文件：" + std::to_wstring(m_stats.dehydrated.load()) + L" 个\n";
+    report += L"已跳过文件：" + std::to_wstring(skipped) + L" 个\n";
+    report += L"错误数：" + std::to_wstring(m_stats.errors.load()) + L" 个\n";
+    report += L"已释放空间：" + FormatBytes(freed) + L"\n";
     return true;
 }
 
@@ -493,7 +506,7 @@ bool ProjFsProvider::ForceHydrateOne(const std::wstring& fullPath) {
     return true;
 }
 
-bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& report) {
+bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& report, const std::function<void(const std::wstring&)>& progress) {
     std::wstring relBs = ToBackslash(relPath);
     std::wstring full = m_root + L"\\" + relBs;
 
@@ -504,9 +517,9 @@ bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& repo
     }
 
     if (attr & FILE_ATTRIBUTE_DIRECTORY) {
-        // 运行 svn status 时停止虚拟化（与 DehydrateFiles 相同的重入修复）。
-        // ForceHydrateOne 不依赖虚拟化，因为它读取完整文件而非占位。
-        StopVirtualizing();
+        // 方案A 后枚举回调直接返回 S_OK，svn status 不再触发重入死锁，无需停止
+        // 虚拟化（停止反而会使已释放占位无法被 svn status 识别为 normal）。
+        // ForceHydrateOne 读取文件内容时 ProjFS 自动触发 GetFileDataCb 水合。
         std::wstring err;
         Log(L"HydrateFile：为 '" + relBs + L"' 枚举未修改文件...");
         auto all = m_svn.EnumerateCleanFiles(m_root, relBs, true, err);
@@ -521,7 +534,12 @@ bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& repo
             processed++;
             std::wstring rb = ToBackslash(r);
             if (rb == relBs || rb.rfind(prefix, 0) == 0) {
-                if (ForceHydrateOne(m_root + L"\\" + rb)) n++;
+                if (ForceHydrateOne(m_root + L"\\" + rb)) {
+                    n++;
+                    if (progress) progress(L"[水合] " + rb);
+                } else {
+                    if (progress) progress(L"[失败] " + rb);
+                }
             }
             ULONGLONG now = GetTickCount64();
             if (processed % 2000 == 0 || now - lastLogTime >= 5000) {
@@ -532,15 +550,16 @@ bool ProjFsProvider::HydrateFile(const std::wstring& relPath, std::wstring& repo
                 lastLogTime = now;
             }
         }
-        StartVirtualizing();
         report = L"已在 " + relBs + L" 下水合 " + std::to_wstring(n) + L" 个文件";
         return n >= 0;
     }
 
     if (ForceHydrateOne(full)) {
         report = L"已水合：" + relBs;
+        if (progress) progress(L"[水合] " + relBs);
         return true;
     }
     report = L"水合失败：" + relBs;
+    if (progress) progress(L"[失败] " + relBs);
     return false;
 }

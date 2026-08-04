@@ -26,6 +26,9 @@ enum class IpcStatus : uint32_t {
     Error       = 1,
     NotSvnRepo  = 2,
     SvnNotFound = 3,
+    // 流式进度消息：daemon 在处理 free/hydrate 过程中发送，客户端收到后立即
+    // 打印 payload 并继续读取，直到收到最终响应（Ok/Error/...）。
+    Progress    = 100,
 };
 
 #pragma pack(push, 1)

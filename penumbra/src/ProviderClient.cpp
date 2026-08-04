@@ -65,3 +65,33 @@ bool ProviderClient::Send(IpcCommand cmd, const std::wstring& payload,
     responsePayload = BytesToWString(rbuf.data(), resp.payloadLen);
     return true;
 }
+
+bool ProviderClient::SendStreaming(IpcCommand cmd, const std::wstring& payload,
+                                   const std::function<void(const std::wstring&)>& onProgress,
+                                   IpcStatus& status, std::wstring& responsePayload) {
+    if (!m_pipe) return false;
+
+    auto payloadBytes = WStringToBytes(payload);
+    IpcMessage msg{ static_cast<uint32_t>(cmd),
+                    static_cast<uint32_t>(payloadBytes.size()) };
+    if (!PipeWriteAll(m_pipe, &msg, sizeof(msg))) return false;
+    if (msg.payloadLen > 0 && !PipeWriteAll(m_pipe, payloadBytes.data(), payloadBytes.size()))
+        return false;
+
+    // 循环读取：Progress 包触发 onProgress 后继续读，直到收到最终响应。
+    for (;;) {
+        IpcResponse resp;
+        if (!PipeReadAll(m_pipe, &resp, sizeof(resp))) return false;
+        std::vector<uint8_t> rbuf(resp.payloadLen);
+        if (resp.payloadLen > 0 && !PipeReadAll(m_pipe, rbuf.data(), resp.payloadLen))
+            return false;
+
+        if (static_cast<IpcStatus>(resp.status) == IpcStatus::Progress) {
+            if (onProgress) onProgress(BytesToWString(rbuf.data(), resp.payloadLen));
+            continue;
+        }
+        status = static_cast<IpcStatus>(resp.status);
+        responsePayload = BytesToWString(rbuf.data(), resp.payloadLen);
+        return true;
+    }
+}
