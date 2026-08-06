@@ -1,0 +1,4 @@
+#include <windows.h>
+#include "resource.h"
+
+// 清单由链接器的清单工具合并 app.manifest 生成（避免与 .rc 重复嵌入）
