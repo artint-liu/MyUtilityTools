@@ -452,7 +452,9 @@ int MarkdownRenderer::GetTocBlockAtScrollTop() const {
     int best = -1;
     for (const auto& lb : m_layout) {
         if (lb.type != BlockType::Heading) continue;
-        if (lb.y <= m_scrollOffset + 4.0f) best = lb.blockIndex;
+        // 阈值需 >= ScrollToBlock 的顶部边距(8.0f)，否则点击跳转后目标标题位于
+        // scrollOffset+8 处不满足此条件，SyncTocTimer 会误选上一条标题覆盖点击高亮。
+        if (lb.y <= m_scrollOffset + 8.0f) best = lb.blockIndex;
         else break;
     }
     return best;

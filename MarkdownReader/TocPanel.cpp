@@ -9,18 +9,24 @@ TocPanel::~TocPanel() {
 void TocPanel::Cleanup() {
     if (m_font) { DeleteObject(m_font); m_font = nullptr; }
     if (m_fontBold) { DeleteObject(m_fontBold); m_fontBold = nullptr; }
+    if (m_fontTitle) { DeleteObject(m_fontTitle); m_fontTitle = nullptr; }
 }
 
 void TocPanel::CreateFonts() {
     if (m_font) return;
-    int size = -MulDiv(13 * 60, (int)m_dpi, 72 * 100);
+    int size = -MulDiv(15 * 60, (int)m_dpi, 72 * 100);
     m_font = CreateFontW(size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     m_fontBold = CreateFontW(size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    m_lineHeight = MulDiv(22 * 60, (int)m_dpi, 96 * 100);
+    int titleSize = -MulDiv(16 * 60, (int)m_dpi, 72 * 100);
+    m_fontTitle = CreateFontW(titleSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    m_lineHeight = MulDiv(40 * 60, (int)m_dpi, 96 * 100);
+    m_titleLineHeight = MulDiv(28 * 60, (int)m_dpi, 96 * 100);
 }
 
 void TocPanel::Init(HWND hwnd) {
@@ -66,12 +72,16 @@ void TocPanel::UpdateScroll() {
     SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
 }
 
+int TocPanel::TitleHeight() const {
+    return MulDiv(8, (int)m_dpi, 96) + m_titleLineHeight + MulDiv(4, (int)m_dpi, 96);
+}
+
 int TocPanel::IndentForLevel(int level) const {
     return m_padX + (level - 1) * MulDiv(14, (int)m_dpi, 96);
 }
 
 int TocPanel::ItemAtY(int yPx) const {
-    int titleH = m_lineHeight + MulDiv(4, (int)m_dpi, 96);
+    int titleH = TitleHeight();
     int y = yPx - titleH + m_scroll;
     if (y < 0) return -1;
     int idx = y / m_lineHeight;
@@ -177,10 +187,10 @@ void TocPanel::Paint() {
     FillRect(mem, &rcAll, bg);
     DeleteObject(bg);
 
-    int titleH = m_lineHeight + MulDiv(4, (int)m_dpi, 96);
+    int titleH = TitleHeight();
 
-    RECT rcTitle = { m_padX, MulDiv(8, (int)m_dpi, 96), w, MulDiv(8, (int)m_dpi, 96) + m_lineHeight };
-    HFONT oldFont = (HFONT)SelectObject(mem, m_fontBold);
+    RECT rcTitle = { m_padX, MulDiv(8, (int)m_dpi, 96), w, MulDiv(8, (int)m_dpi, 96) + m_titleLineHeight };
+    HFONT oldFont = (HFONT)SelectObject(mem, m_fontTitle);
     SetBkMode(mem, TRANSPARENT);
     SetTextColor(mem, RGB(0x24, 0x29, 0x2F));
     DrawTextW(mem, L"\u76EE\u5F55", -1, &rcTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);

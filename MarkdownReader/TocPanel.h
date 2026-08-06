@@ -37,9 +37,12 @@ private:
 
     HFONT m_font = nullptr;
     HFONT m_fontBold = nullptr;
+    HFONT m_fontTitle = nullptr;
+    int m_titleLineHeight = 30;
 
     void CreateFonts();
     void UpdateScroll();
     int ItemAtY(int yPx) const;
     int IndentForLevel(int level) const;
+    int TitleHeight() const;
 };
