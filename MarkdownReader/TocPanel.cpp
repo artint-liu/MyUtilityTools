@@ -43,17 +43,63 @@ void TocPanel::Init(HWND hwnd) {
     m_dpi = GetDpiForWindow(hwnd);
     if (m_dpi == 0) m_dpi = 96;
     m_padX = MulDiv(10, (int)m_dpi, 96);
+    m_arrowSize = MulDiv(10, (int)m_dpi, 96);
+    m_arrowSlot = MulDiv(16, (int)m_dpi, 96);
     CreateFonts();
 }
 
 void TocPanel::SetEntries(const std::vector<Document::TocEntry>& entries) {
     m_entries = entries;
+    BuildTree();
+    RebuildVisible();
     m_selected = -1;
     m_hover = -1;
     m_scroll = 0;
-    m_totalHeight = (int)m_entries.size() * m_lineHeight;
     UpdateScroll();
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void TocPanel::BuildTree() {
+    m_nodes.clear();
+    m_nodes.reserve(m_entries.size());
+    std::vector<int> levelStack;   // 维护每层最后一个节点在 m_nodes 的下标
+    for (int i = 0; i < (int)m_entries.size(); ++i) {
+        int lvl = m_entries[i].level;
+        TocNode node;
+        node.entryIndex = i;
+        node.level = lvl;
+        node.depth = (std::max)(0, lvl - 1);
+
+        // 找到深度小于当前层级的栈顶作为父节点
+        while (!levelStack.empty() &&
+               m_nodes[levelStack.back()].level >= lvl) {
+            levelStack.pop_back();
+        }
+        if (!levelStack.empty()) {
+            int p = levelStack.back();
+            node.parent = p;
+            m_nodes[p].hasChildren = true;
+        }
+        m_nodes.push_back(node);
+        levelStack.push_back((int)m_nodes.size() - 1);
+    }
+}
+
+void TocPanel::RebuildVisible() {
+    m_visible.clear();
+    m_visible.reserve(m_nodes.size());
+    for (int i = 0; i < (int)m_nodes.size(); ++i) {
+        // 跳过被折叠祖先隐藏的节点
+        if (m_nodes[i].parent >= 0) {
+            int p = m_nodes[i].parent;
+            while (p >= 0) {
+                if (m_nodes[p].collapsed) { p = -2; break; }
+                p = m_nodes[p].parent;
+            }
+            if (p == -2) continue;
+        }
+        m_visible.push_back(i);
+    }
 }
 
 void TocPanel::Resize(int widthPx, int heightPx) {
@@ -64,7 +110,7 @@ void TocPanel::Resize(int widthPx, int heightPx) {
 }
 
 void TocPanel::UpdateScroll() {
-    m_totalHeight = (int)m_entries.size() * m_lineHeight;
+    m_totalHeight = (int)m_visible.size() * m_lineHeight;
     if (!m_hwnd) return;
     int maxScroll = m_totalHeight - m_heightPx;
     if (maxScroll < 0) maxScroll = 0;
@@ -86,7 +132,14 @@ int TocPanel::TitleHeight() const {
 }
 
 int TocPanel::IndentForLevel(int level) const {
-    return m_padX + (level - 1) * MulDiv(14, (int)m_dpi, 96);
+    int depth = (std::max)(0, level - 1);
+    // 每行缩进 = 基础 padding + 深度步进 + 箭头槽位
+    return m_padX + depth * MulDiv(14, (int)m_dpi, 96) + m_arrowSlot;
+}
+
+int TocPanel::ArrowXForDepth(int depth) const {
+    // 箭头绘制在该深度的箭头槽位中心
+    return m_padX + depth * MulDiv(14, (int)m_dpi, 96) + m_arrowSlot / 2;
 }
 
 int TocPanel::ItemAtY(int yPx) const {
@@ -94,19 +147,33 @@ int TocPanel::ItemAtY(int yPx) const {
     int y = yPx - titleH + m_scroll;
     if (y < 0) return -1;
     int idx = y / m_lineHeight;
-    if (idx < 0 || idx >= (int)m_entries.size()) return -1;
-    return idx;
+    if (idx < 0 || idx >= (int)m_visible.size()) return -1;
+    return m_visible[idx];
 }
 
 void TocPanel::OnLButtonDown(int xPx, int yPx) {
-    int idx = ItemAtY(yPx);
-    if (idx >= 0) {
-        m_selected = idx;
-        InvalidateRect(m_hwnd, nullptr, FALSE);
-        HWND parent = GetParent(m_hwnd);
-        if (parent) {
-            PostMessageW(parent, WM_APP_TOC_SELECT, (WPARAM)m_entries[idx].blockIndex, 0);
+    int nodeIdx = ItemAtY(yPx);
+    if (nodeIdx < 0) return;
+
+    TocNode& node = m_nodes[nodeIdx];
+    if (node.hasChildren) {
+        // 箭头区域：以 ArrowX 为中心、m_arrowSize 为宽
+        int ax = ArrowXForDepth(node.depth);
+        if (xPx >= ax - m_arrowSize / 2 && xPx <= ax + m_arrowSize / 2) {
+            node.collapsed = !node.collapsed;
+            RebuildVisible();
+            UpdateScroll();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+            return;
         }
+    }
+
+    m_selected = nodeIdx;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+    HWND parent = GetParent(m_hwnd);
+    if (parent) {
+        PostMessageW(parent, WM_APP_TOC_SELECT,
+            (WPARAM)m_entries[node.entryIndex].blockIndex, 0);
     }
 }
 
@@ -210,8 +277,9 @@ void TocPanel::Paint() {
     SelectClipRgn(mem, clip);
 
     int startY = titleH - m_scroll;
-    for (int i = 0; i < (int)m_entries.size(); ++i) {
-        int y = startY + i * m_lineHeight;
+    for (int row = 0; row < (int)m_visible.size(); ++row) {
+        int i = m_visible[row];
+        int y = startY + row * m_lineHeight;
         if (y + m_lineHeight < titleH) continue;
         if (y > h) break;
 
@@ -230,13 +298,41 @@ void TocPanel::Paint() {
             DeleteObject(hv);
         }
 
-        if (m_entries[i].level == 1) SelectObject(mem, m_fontBold);
+        const TocNode& node = m_nodes[i];
+        const Document::TocEntry& e = m_entries[node.entryIndex];
+
+        // 折叠箭头：略粗线条的 chevron，钝角观感
+        // 折叠（向右）：长宽对调，瘦高 V 形；展开（向下）：扁宽 V 形
+        if (node.hasChildren) {
+            int ax = ArrowXForDepth(node.depth);
+            int ay = y + m_lineHeight / 2;
+            int dxWide = m_arrowSize / 2;     // 水平半跨度（宽）
+            int dyWide = m_arrowSize / 4 + 1; // 竖直半跨度（扁）
+            int weight = (std::max)(2, MulDiv(2, (int)m_dpi, 96));
+            HPEN arrowPen = CreatePen(PS_SOLID, weight, RGB(0x8A, 0x94, 0xA6));
+            HPEN prevPen = (HPEN)SelectObject(mem, arrowPen);
+            if (node.collapsed) {
+                // 指向右：瘦高 V 形（水平窄、竖直高）
+                MoveToEx(mem, ax - dyWide, ay - dxWide, nullptr);
+                LineTo(mem, ax + dyWide, ay);
+                LineTo(mem, ax - dyWide, ay + dxWide);
+            } else {
+                // 指向下：扁宽 V 形 ⌄
+                MoveToEx(mem, ax - dxWide, ay - dyWide, nullptr);
+                LineTo(mem, ax, ay + dyWide);
+                LineTo(mem, ax + dxWide, ay - dyWide);
+            }
+            SelectObject(mem, prevPen);
+            DeleteObject(arrowPen);
+        }
+
+        if (e.level == 1) SelectObject(mem, m_fontBold);
         else SelectObject(mem, m_font);
 
         SetTextColor(mem, RGB(0x1F, 0x23, 0x28));
-        int x = IndentForLevel(m_entries[i].level);
+        int x = IndentForLevel(e.level);
         RECT rcText = { x, y, w - m_padX, y + m_lineHeight };
-        std::wstring label = m_entries[i].text;
+        std::wstring label = e.text;
         DrawTextW(mem, label.c_str(), (int)label.size(), &rcText,
             DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
