@@ -26,6 +26,7 @@ void MarkdownRenderer::DiscardDeviceResources() {
     m_brBar.Reset(); m_brHr.Reset(); m_brCodeBg.Reset();
     m_brTableBorder.Reset(); m_brTableHeaderBg.Reset();
     m_brSelection.Reset(); m_brCopyBtnBg.Reset(); m_brCopyBtnText.Reset();
+    m_brSearchHit.Reset(); m_brSearchCurrent.Reset();
     m_fmtBtn.Reset();
     m_effLink.Reset(); m_effCode.Reset();
 }
@@ -83,6 +84,8 @@ void MarkdownRenderer::CreateDeviceResources() {
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xCCE8FF), m_brSelection.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xEAEEF2), m_brCopyBtnBg.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0x57606A), m_brCopyBtnText.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xFFE666), m_brSearchHit.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xFF9900), m_brSearchCurrent.GetAddressOf());
         m_effLink.Attach(new ColorEffect(m_brLink.Get()));
         m_effCode.Attach(new ColorEffect(m_brCode.Get()));
     }
@@ -137,6 +140,10 @@ void MarkdownRenderer::SetDocument(const Document& doc) {
     BuildLayout();
     m_scrollOffset = 0;
     UpdateScrollInfo();
+    // 文档变更后，若有搜索查询则重新搜索（命中位置随新文档变化）
+    if (!m_searchQuery.empty()) {
+        SearchInDocument(m_searchQuery, m_searchCaseSensitive);
+    }
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -557,6 +564,10 @@ void MarkdownRenderer::Render() {
             if (HasSelection()) {
                 DrawSelectionForBlock(lb, top);
             }
+            // 搜索命中高亮（在单元格文字下方）
+            if (!m_searchMatches.empty()) {
+                DrawSearchHits(lb, top);
+            }
             // 绘制单元格文字（在高亮之上）
             yRow = yBase;
             for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
@@ -581,6 +592,10 @@ void MarkdownRenderer::Render() {
         // 选取高亮（在文本下方；表格已在上方分支内绘制）
         if (HasSelection() && lb.type != BlockType::Table) {
             DrawSelectionForBlock(lb, top);
+        }
+        // 搜索命中高亮（在文本下方）
+        if (!m_searchMatches.empty() && lb.type != BlockType::Table) {
+            DrawSearchHits(lb, top);
         }
         if (lb.layout) {
             RenderContext ctx{ m_rt.Get(), m_dc.Get(), defBrush };
@@ -1162,5 +1177,191 @@ void MarkdownRenderer::DrawCopyButton(const LayoutBlock& lb, float top) {
         m_brCopyBtnText->SetColor(copied ? D2D1::ColorF(0x1A7F37) : D2D1::ColorF(0x57606A));
         RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brCopyBtnText.Get() };
         textLay->Draw(&ctx, m_textRenderer.Get(), btn.left, btn.top);
+    }
+}
+
+// ==================== 搜索 ====================
+
+void MarkdownRenderer::SearchInDocument(const std::wstring& query, bool caseSensitive) {
+    m_searchQuery = query;
+    m_searchCaseSensitive = caseSensitive;
+    m_searchMatches.clear();
+    m_currentMatch = -1;
+
+    if (query.empty()) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
+    std::wstring q = query;
+    std::wstring qLower;
+    if (!caseSensitive) {
+        qLower = query;
+        for (auto& c : qLower) c = (wchar_t)towlower(c);
+    }
+
+    for (const auto& lb : m_layout) {
+        if (lb.fullText.empty()) continue;
+        const std::wstring& text = lb.fullText;
+        if (caseSensitive) {
+            size_t pos = 0;
+            while ((pos = text.find(q, pos)) != std::wstring::npos) {
+                m_searchMatches.push_back({ lb.blockIndex, (UINT32)pos, (UINT32)q.size() });
+                pos += q.size();
+            }
+        } else {
+            std::wstring textLower = text;
+            for (auto& c : textLower) c = (wchar_t)towlower(c);
+            size_t pos = 0;
+            while ((pos = textLower.find(qLower, pos)) != std::wstring::npos) {
+                m_searchMatches.push_back({ lb.blockIndex, (UINT32)pos, (UINT32)q.size() });
+                pos += q.size();
+            }
+        }
+    }
+
+    if (!m_searchMatches.empty()) {
+        m_currentMatch = 0;
+        ScrollToCurrentMatch();
+    }
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::FindNext() {
+    if (m_searchMatches.empty()) return;
+    m_currentMatch = (m_currentMatch + 1) % (int)m_searchMatches.size();
+    ScrollToCurrentMatch();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::FindPrev() {
+    if (m_searchMatches.empty()) return;
+    m_currentMatch = (m_currentMatch - 1 + (int)m_searchMatches.size()) % (int)m_searchMatches.size();
+    ScrollToCurrentMatch();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::ClearSearch() {
+    m_searchQuery.clear();
+    m_searchMatches.clear();
+    m_currentMatch = -1;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::GetMatchRects(const LayoutBlock& lb, UINT32 pos, UINT32 len, float top,
+                                      std::vector<D2D1_RECT_F>& out) const {
+    // 表格：拆分到对应单元格
+    if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
+        const auto& colWidths = lb.tableColWidths;
+        std::vector<float> colX(colWidths.size());
+        float accX = kPadding;
+        for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = accX; accX += colWidths[c]; }
+        float yRow = top + lb.marginTop;
+        for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
+            float rh = lb.tableRowHeights[ri];
+            for (size_t c = 0; c < lb.tableCells[ri].size(); ++c) {
+                const auto& cell = lb.tableCells[ri][c];
+                if (!cell.layout) { continue; }
+                UINT32 cellStart = 0, cellEnd = 0;
+                for (const auto& tr : lb.tableTextRanges) {
+                    if (tr.row == ri && tr.col == c) { cellStart = tr.start; cellEnd = tr.end; break; }
+                }
+                UINT32 cs = (pos > cellStart) ? pos : cellStart;
+                UINT32 ce = (pos + len < cellEnd) ? (pos + len) : cellEnd;
+                if (cs >= ce) { continue; }
+                float cx;
+                if (cell.align == TableAlign::Center)
+                    cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
+                else if (cell.align == TableAlign::Right)
+                    cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
+                else
+                    cx = colX[c] + kTableCellPadX;
+                float cy = yRow + kTableCellPadY;
+                std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
+                UINT32 actual = 0;
+                HRESULT hr = cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
+                    cx, cy, metrics.data(), 32, &actual);
+                if (hr == E_NOT_SUFFICIENT_BUFFER && actual > 32) {
+                    metrics.resize(actual);
+                    cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
+                        cx, cy, metrics.data(), actual, &actual);
+                }
+                if (SUCCEEDED(hr)) {
+                    for (UINT32 i = 0; i < actual; ++i) {
+                        out.push_back(D2D1::RectF(metrics[i].left, metrics[i].top,
+                            metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
+                    }
+                }
+            }
+            yRow += rh;
+        }
+        return;
+    }
+
+    // 普通文本块
+    if (!lb.layout) return;
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
+    UINT32 actual = 0;
+    HRESULT hr = lb.layout->HitTestTextRange(pos, len,
+        lb.textX, top + lb.textTopRel, metrics.data(), 32, &actual);
+    if (hr == E_NOT_SUFFICIENT_BUFFER && actual > 32) {
+        metrics.resize(actual);
+        lb.layout->HitTestTextRange(pos, len,
+            lb.textX, top + lb.textTopRel, metrics.data(), actual, &actual);
+    }
+    if (SUCCEEDED(hr)) {
+        for (UINT32 i = 0; i < actual; ++i) {
+            out.push_back(D2D1::RectF(metrics[i].left, metrics[i].top,
+                metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
+        }
+    }
+}
+
+void MarkdownRenderer::DrawSearchHits(const LayoutBlock& lb, float top) {
+    if (!m_brSearchHit || !m_brSearchCurrent) return;
+    for (int i = 0; i < (int)m_searchMatches.size(); ++i) {
+        const auto& m = m_searchMatches[i];
+        if (m.blockIndex != lb.blockIndex) continue;
+        std::vector<D2D1_RECT_F> rects;
+        GetMatchRects(lb, m.textPos, m.length, top, rects);
+        ID2D1SolidColorBrush* br = (i == m_currentMatch) ? m_brSearchCurrent.Get() : m_brSearchHit.Get();
+        for (const auto& r : rects) {
+            m_rt->FillRectangle(r, br);
+        }
+    }
+}
+
+void MarkdownRenderer::ScrollToCurrentMatch() {
+    if (m_currentMatch < 0 || m_currentMatch >= (int)m_searchMatches.size()) return;
+    const auto& m = m_searchMatches[m_currentMatch];
+    for (const auto& lb : m_layout) {
+        if (lb.blockIndex != m.blockIndex) continue;
+        // 用文档坐标（top = lb.y）计算命中矩形，得到其在文档中的 y
+        std::vector<D2D1_RECT_F> rects;
+        GetMatchRects(lb, m.textPos, m.length, lb.y, rects);
+        float margin = 40.0f;
+        if (rects.empty()) {
+            // 回退：滚动到块顶
+            if (lb.y < m_scrollOffset || lb.y + lb.height > m_scrollOffset + m_viewHeight) {
+                m_scrollOffset = lb.y - 8.0f;
+                ClampScroll();
+                UpdateScrollInfo();
+            }
+            return;
+        }
+        float matchTop = rects[0].top;
+        float matchBottom = rects[0].bottom;
+        for (const auto& r : rects) {
+            if (r.top < matchTop) matchTop = r.top;
+            if (r.bottom > matchBottom) matchBottom = r.bottom;
+        }
+        if (matchTop < m_scrollOffset + margin) {
+            m_scrollOffset = matchTop - margin;
+        } else if (matchBottom > m_scrollOffset + m_viewHeight - margin) {
+            m_scrollOffset = matchBottom - m_viewHeight + margin;
+        }
+        ClampScroll();
+        UpdateScrollInfo();
+        return;
     }
 }

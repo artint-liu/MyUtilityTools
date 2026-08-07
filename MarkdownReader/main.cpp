@@ -98,6 +98,20 @@ struct FrameState {
     int splitter = 5;
     bool dragging = false;
     bool tocVisible = true;
+
+    // 搜索栏
+    HWND hSearchBg = nullptr;       // 背景面板（白底带边）
+    HWND hSearchEdit = nullptr;
+    HWND hSearchCase = nullptr;    // 大小写敏感切换按钮
+    HWND hSearchLabel = nullptr;   // "x/y"
+    HWND hSearchPrev = nullptr;
+    HWND hSearchNext = nullptr;
+    HWND hSearchClose = nullptr;
+    bool searchBarVisible = false;
+    bool searchCaseSensitive = false;
+    WNDPROC searchEditOrigProc = nullptr;
+    HFONT hSearchFont = nullptr;
+    HFONT hSearchFontBold = nullptr;
 };
 
 static UINT g_dpi = 96;
@@ -128,6 +142,9 @@ static bool ForwardWheelToCursor(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 static const wchar_t* PathFileName(const std::wstring& p);
 static std::wstring ToLower(std::wstring s);
 static bool IsMarkdownExt(const std::wstring& path);
+static void UpdateSearchLabel(FrameState* fs);
+static void LayoutChildren(FrameState* fs, int cx, int cy);
+static void BringSearchBarToTop(FrameState* fs);
 
 // ---- 读取文件为宽字符（支持 UTF-8 BOM / UTF-16 LE BOM / UTF-8 / ANSI） ----
 static bool ReadFileToWide(const std::wstring& path, std::wstring& out) {
@@ -178,6 +195,7 @@ static void LoadFileIntoFrame(FrameState* fs, const std::wstring& path) {
     fs->doc = ParseMarkdown(content);
     if (fs->renderer) fs->renderer->SetDocument(fs->doc);
     if (fs->toc) fs->toc->SetEntries(fs->doc.toc);
+    if (fs->searchBarVisible) UpdateSearchLabel(fs);
 
     // 标题
     std::wstring title = L"MarkdownReader";
@@ -200,6 +218,174 @@ static void LayoutChildren(FrameState* fs, int cx, int cy) {
         ShowWindow(fs->hToc, SW_HIDE);
         MoveWindow(fs->hContent, 0, 0, cx, cy, TRUE);
     }
+    // 搜索栏浮于内容区右上角
+    if (fs->searchBarVisible) {
+        int barW = Scale(330);
+        int barH = Scale(30);
+        int topMargin = Scale(8);
+        int rightMargin = Scale(24); // 避开内容区垂直滚动条
+        int btnW = Scale(26);
+        int labelW = Scale(50);
+        int caseW = Scale(34);
+        int editW = barW - labelW - caseW - btnW * 3;
+        int x = cx - barW - rightMargin;
+        int y = topMargin;
+        if (editW < Scale(80)) editW = Scale(80);
+        // 背景面板覆盖整个栏
+        MoveWindow(fs->hSearchBg, x - 1, y - 1, barW + 2, barH + 2, TRUE);
+        int px = x;
+        MoveWindow(fs->hSearchEdit, px, y, editW, barH, TRUE); px += editW;
+        MoveWindow(fs->hSearchLabel, px, y, labelW, barH, TRUE); px += labelW;
+        MoveWindow(fs->hSearchCase, px, y, caseW, barH, TRUE); px += caseW;
+        MoveWindow(fs->hSearchPrev, px, y, btnW, barH, TRUE); px += btnW;
+        MoveWindow(fs->hSearchNext, px, y, btnW, barH, TRUE); px += btnW;
+        MoveWindow(fs->hSearchClose, px, y, btnW, barH, TRUE);
+        // 内容窗口 resize 后可能被提到顶部，这里把搜索栏重新置顶
+        BringSearchBarToTop(fs);
+    }
+}
+
+// ---- 搜索栏 ----
+static void RunSearch(FrameState* fs) {
+    if (!fs || !fs->renderer) return;
+    wchar_t buf[512] = { 0 };
+    GetWindowTextW(fs->hSearchEdit, buf, 512);
+    fs->renderer->SearchInDocument(buf, fs->searchCaseSensitive);
+}
+
+static void UpdateSearchLabel(FrameState* fs) {
+    if (!fs || !fs->hSearchLabel) return;
+    wchar_t buf[512] = { 0 };
+    GetWindowTextW(fs->hSearchEdit, buf, 512);
+    std::wstring q = buf;
+    size_t total = fs->renderer ? fs->renderer->GetSearchMatchCount() : 0;
+    int cur = fs->renderer ? fs->renderer->GetCurrentSearchIndex() : -1;
+    wchar_t out[32];
+    if (q.empty()) {
+        out[0] = 0;
+    } else if (total == 0) {
+        swprintf_s(out, L"0/0");
+    } else {
+        swprintf_s(out, L"%d/%zu", cur + 1, total);
+    }
+    SetWindowTextW(fs->hSearchLabel, out);
+}
+
+static void ShowSearchBar(FrameState* fs) {
+    if (!fs || !fs->hSearchEdit) return;
+    fs->searchBarVisible = true;
+    RECT rc; GetClientRect(GetParent(fs->hSearchEdit), &rc);
+    LayoutChildren(fs, rc.right, rc.bottom);
+    if (fs->hSearchBg) ShowWindow(fs->hSearchBg, SW_SHOW);
+    ShowWindow(fs->hSearchEdit, SW_SHOW);
+    ShowWindow(fs->hSearchLabel, SW_SHOW);
+    ShowWindow(fs->hSearchCase, SW_SHOW);
+    ShowWindow(fs->hSearchPrev, SW_SHOW);
+    ShowWindow(fs->hSearchNext, SW_SHOW);
+    ShowWindow(fs->hSearchClose, SW_SHOW);
+    InvalidateRect(GetParent(fs->hSearchEdit), nullptr, FALSE);
+    BringSearchBarToTop(fs);
+    SetFocus(fs->hSearchEdit);
+    SendMessageW(fs->hSearchEdit, EM_SETSEL, 0, -1);
+    RunSearch(fs);
+    UpdateSearchLabel(fs);
+}
+
+static void HideSearchBar(FrameState* fs) {
+    if (!fs) return;
+    fs->searchBarVisible = false;
+    if (fs->hSearchBg) ShowWindow(fs->hSearchBg, SW_HIDE);
+    if (fs->hSearchEdit) ShowWindow(fs->hSearchEdit, SW_HIDE);
+    if (fs->hSearchLabel) ShowWindow(fs->hSearchLabel, SW_HIDE);
+    if (fs->hSearchCase) ShowWindow(fs->hSearchCase, SW_HIDE);
+    if (fs->hSearchPrev) ShowWindow(fs->hSearchPrev, SW_HIDE);
+    if (fs->hSearchNext) ShowWindow(fs->hSearchNext, SW_HIDE);
+    if (fs->hSearchClose) ShowWindow(fs->hSearchClose, SW_HIDE);
+    if (fs->renderer) fs->renderer->ClearSearch();
+    if (fs->hContent) SetFocus(fs->hContent);
+    InvalidateRect(GetParent(fs->hSearchEdit), nullptr, FALSE);
+}
+
+static LRESULT CALLBACK SearchEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    HWND frame = GetParent(hwnd);
+    FrameState* fs = frame ? (FrameState*)GetWindowLongPtrW(frame, GWLP_USERDATA) : nullptr;
+    if (msg == WM_KEYDOWN) {
+        if (wParam == VK_RETURN) {
+            bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (fs && fs->renderer) {
+                if (shift) fs->renderer->FindPrev(); else fs->renderer->FindNext();
+                UpdateSearchLabel(fs);
+                SendMessageW(hwnd, EM_SETSEL, 0, -1);
+            }
+            return 0;
+        }
+        if (wParam == VK_ESCAPE) {
+            if (fs) HideSearchBar(fs);
+            return 0;
+        }
+        if (wParam == VK_F3) {
+            bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (fs && fs->renderer) {
+                if (shift) fs->renderer->FindPrev(); else fs->renderer->FindNext();
+                UpdateSearchLabel(fs);
+            }
+            return 0;
+        }
+    }
+    WNDPROC orig = fs ? fs->searchEditOrigProc : nullptr;
+    if (orig) return CallWindowProcW(orig, hwnd, msg, wParam, lParam);
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+static HFONT CreateUiFont(UINT dpi, bool bold = false) {
+    int h = -MulDiv(9, (int)dpi, 72);
+    return CreateFontW(h, 0, 0, 0, bold ? FW_SEMIBOLD : FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+}
+
+static void CreateSearchBarControls(HWND frame, HINSTANCE hInst, FrameState* fs) {
+    // 不可见创建，后续 ShowSearchBar 时再显示
+    DWORD hidden = WS_CHILD;
+    // 背景面板（先创建，位于最底层；控件在其之上）。WS_EX_STATICEDGE 提供细边框
+    fs->hSearchBg = CreateWindowExW(WS_EX_STATICEDGE, L"STATIC", L"",
+        hidden, 0, 0, 0, 0,
+        frame, nullptr, hInst, nullptr);
+    // 编辑框：无边框，融入白底背景
+    fs->hSearchEdit = CreateWindowExW(0, L"EDIT", L"",
+        hidden | ES_AUTOHSCROLL, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
+    // 加左右内边距，让文字不贴边
+    SendMessageW(fs->hSearchEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+        MAKELONG(Scale(6), Scale(6)));
+    fs->hSearchLabel = CreateWindowExW(0, L"STATIC", L"",
+        hidden | SS_CENTER | SS_CENTERIMAGE, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_LABEL, hInst, nullptr);
+    // Aa 大小写按钮：BS_PUSHLIKE|BS_CHECKBOX 让按钮保持按下/弹起状态
+    fs->hSearchCase = CreateWindowExW(0, L"BUTTON", L"Aa",
+        hidden | BS_CHECKBOX | BS_PUSHLIKE, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_CASE, hInst, nullptr);
+    fs->hSearchPrev = CreateWindowExW(0, L"BUTTON", L"\u25B2",
+        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_PREV, hInst, nullptr);
+    fs->hSearchNext = CreateWindowExW(0, L"BUTTON", L"\u25BC",
+        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_NEXT, hInst, nullptr);
+    fs->hSearchClose = CreateWindowExW(0, L"BUTTON", L"\u2715",
+        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
+        frame, (HMENU)IDC_SEARCH_CLOSE, hInst, nullptr);
+    // 子类化编辑框以拦截 Enter/Esc/F3
+    fs->searchEditOrigProc = (WNDPROC)SetWindowLongPtrW(fs->hSearchEdit, GWLP_WNDPROC, (LONG_PTR)SearchEditProc);
+}
+
+// 把搜索栏控件提到 Z 序顶端，避免被内容窗口覆盖
+static void BringSearchBarToTop(FrameState* fs) {
+    if (!fs) return;
+    HWND ctrls[] = { fs->hSearchBg, fs->hSearchEdit, fs->hSearchLabel,
+                     fs->hSearchCase, fs->hSearchPrev, fs->hSearchNext, fs->hSearchClose };
+    for (HWND h : ctrls) {
+        if (h) SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
 }
 
 // ---- 内容窗口 ----
@@ -218,6 +404,9 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     case WM_PAINT:
         if (r) r->Render();
         else { PAINTSTRUCT ps; BeginPaint(hwnd, &ps); EndPaint(hwnd, &ps); }
+        // D2D HWND RenderTarget 不尊重 WS_CLIPSIBLINGS，会画到浮于其上的搜索栏区域。
+        // 绘制完成后同步通知框架重绘搜索栏控件，覆盖回 D2D 内容。
+        SendMessageW(GetParent(hwnd), WM_APP_REFRESH_SEARCHBAR, 0, 0);
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -363,9 +552,11 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         fs->tocWidth = Scale(fs->tocWidth);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)fs);
 
-        fs->hToc = CreateWindowExW(0, kTocClass, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL,
+        fs->hToc = CreateWindowExW(0, kTocClass, L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, nullptr, cs->hInstance, nullptr);
-        fs->hContent = CreateWindowExW(0, kContentClass, L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL,
+        fs->hContent = CreateWindowExW(0, kContentClass, L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_CLIPSIBLINGS,
             0, 0, 0, 0, hwnd, nullptr, cs->hInstance, nullptr);
         fs->toc = (TocPanel*)GetWindowLongPtrW(fs->hToc, GWLP_USERDATA);
         fs->renderer = (MarkdownRenderer*)GetWindowLongPtrW(fs->hContent, GWLP_USERDATA);
@@ -379,10 +570,24 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT, L"\u9000\u51FA");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFile, L"\u6587\u4EF6(&F)");
+        HMENU hEdit = CreatePopupMenu();
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND, L"\u67E5\u627E...\tCtrl+F");
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_NEXT, L"\u67E5\u627E\u4E0B\u4E00\u4E2A\tF3");
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_PREV, L"\u67E5\u627E\u4E0A\u4E00\u4E2A\tShift+F3");
+        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hEdit, L"\u7F16\u8F91(&E)");
         HMENU hView = CreatePopupMenu();
         AppendMenuW(hView, MF_STRING, IDM_VIEW_TOC, L"\u663E\u793A/\u9690\u85CF\u76EE\u5F55\tF9");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hView, L"\u89C6\u56FE(&V)");
         SetMenu(hwnd, hMenu);
+
+        // 搜索栏控件
+        fs->hSearchFont = CreateUiFont(g_dpi);
+        fs->hSearchFontBold = CreateUiFont(g_dpi, true);
+        CreateSearchBarControls(hwnd, cs->hInstance, fs);
+        for (HWND h : { fs->hSearchEdit, fs->hSearchLabel, fs->hSearchCase,
+                        fs->hSearchPrev, fs->hSearchNext, fs->hSearchClose }) {
+            SendMessageW(h, WM_SETFONT, (WPARAM)fs->hSearchFont, TRUE);
+        }
 
         // 接受文件拖拽
         DragAcceptFiles(hwnd, TRUE);
@@ -506,9 +711,82 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
+        case IDM_EDIT_FIND:
+            if (fs) ShowSearchBar(fs);
+            return 0;
+        case IDM_EDIT_FIND_NEXT:
+            if (fs && fs->searchBarVisible && fs->renderer) {
+                fs->renderer->FindNext();
+                UpdateSearchLabel(fs);
+            }
+            return 0;
+        case IDM_EDIT_FIND_PREV:
+            if (fs && fs->searchBarVisible && fs->renderer) {
+                fs->renderer->FindPrev();
+                UpdateSearchLabel(fs);
+            }
+            return 0;
+        case IDC_SEARCH_EDIT:
+            if (HIWORD(wParam) == EN_CHANGE && fs) {
+                RunSearch(fs);
+                UpdateSearchLabel(fs);
+            }
+            return 0;
+        case IDC_SEARCH_NEXT:
+            if (fs && fs->renderer) {
+                fs->renderer->FindNext();
+                UpdateSearchLabel(fs);
+                SetFocus(fs->hSearchEdit);
+            }
+            return 0;
+        case IDC_SEARCH_PREV:
+            if (fs && fs->renderer) {
+                fs->renderer->FindPrev();
+                UpdateSearchLabel(fs);
+                SetFocus(fs->hSearchEdit);
+            }
+            return 0;
+        case IDC_SEARCH_CLOSE:
+            if (fs) HideSearchBar(fs);
+            return 0;
+        case IDC_SEARCH_CASE:
+            if (fs) {
+                // BS_PUSHLIKE|BS_CHECKBOX 点击后自动切换，读取实际状态
+                LRESULT checked = SendMessageW(fs->hSearchCase, BM_GETCHECK, 0, 0);
+                fs->searchCaseSensitive = (checked == BST_CHECKED);
+                RunSearch(fs);
+                UpdateSearchLabel(fs);
+                SetFocus(fs->hSearchEdit);
+            }
+            return 0;
         }
         break;
     }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        HWND hCtl = (HWND)lParam;
+        if (fs && (hCtl == fs->hSearchBg || hCtl == fs->hSearchLabel)) {
+            SetBkColor(hdc, RGB(0xFF, 0xFF, 0xFF));
+            SetTextColor(hdc, RGB(0x57, 0x60, 0x6A));
+            SetBkMode(hdc, OPAQUE);
+            return (LRESULT)GetStockObject(WHITE_BRUSH);
+        }
+        break;
+    }
+    case WM_APP_REFRESH_SEARCHBAR:
+        // 内容窗口 D2D 绘制完成，立即重绘可见的搜索栏控件覆盖回去
+        if (fs && fs->searchBarVisible) {
+            HWND ctrls[] = { fs->hSearchBg, fs->hSearchLabel, fs->hSearchCase,
+                             fs->hSearchPrev, fs->hSearchNext, fs->hSearchClose,
+                             fs->hSearchEdit };
+            for (HWND h : ctrls) {
+                if (h && IsWindowVisible(h)) {
+                    InvalidateRect(h, nullptr, TRUE);
+                    UpdateWindow(h);
+                }
+            }
+        }
+        return 0;
     case WM_APP_TOC_SELECT:
         if (fs && fs->renderer) {
             fs->renderer->ScrollToBlock((int)wParam);
@@ -545,6 +823,19 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         RECT* rc = (RECT*)lParam;
         SetWindowPos(hwnd, nullptr, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top,
             SWP_NOZORDER | SWP_NOACTIVATE);
+        // 搜索栏字体随 DPI 重建
+        if (fs && fs->hSearchFont) {
+            if (fs->hSearchFontBold) { DeleteObject(fs->hSearchFontBold); fs->hSearchFontBold = nullptr; }
+            DeleteObject(fs->hSearchFont);
+            fs->hSearchFont = CreateUiFont(g_dpi);
+            fs->hSearchFontBold = CreateUiFont(g_dpi, true);
+            for (HWND h : { fs->hSearchEdit, fs->hSearchLabel, fs->hSearchCase,
+                            fs->hSearchPrev, fs->hSearchNext, fs->hSearchClose }) {
+                SendMessageW(h, WM_SETFONT, (WPARAM)fs->hSearchFont, TRUE);
+            }
+            RECT r2; GetClientRect(hwnd, &r2);
+            LayoutChildren(fs, r2.right, r2.bottom);
+        }
         return 0;
     }
     case WM_MOUSEWHEEL:
@@ -561,6 +852,10 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_DESTROY:
+        if (fs) {
+            if (fs->hSearchFont) { DeleteObject(fs->hSearchFont); fs->hSearchFont = nullptr; }
+            if (fs->hSearchFontBold) { DeleteObject(fs->hSearchFontBold); fs->hSearchFontBold = nullptr; }
+        }
         delete fs;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         PostQuitMessage(0);
@@ -671,7 +966,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     RegisterClasses(hInstance);
 
     HWND hwnd = CreateWindowExW(0, kFrameClass, L"MarkdownReader",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, Scale(1100), Scale(760),
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, Scale(1100), Scale(760),
         nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
 
@@ -692,9 +987,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     ACCEL acc[] = {
         { FCONTROL | FVIRTKEY, 'O', IDM_FILE_OPEN },
         { FCONTROL | FVIRTKEY, 'S', IDM_FILE_SAVE_HTML },
+        { FCONTROL | FVIRTKEY, 'F', IDM_EDIT_FIND },
+        { FVIRTKEY, VK_F3, IDM_EDIT_FIND_NEXT },
+        { FSHIFT | FVIRTKEY, VK_F3, IDM_EDIT_FIND_PREV },
         { FVIRTKEY, VK_F9, IDM_VIEW_TOC },
     };
-    HACCEL hAccel = CreateAcceleratorTableW(acc, 3);
+    HACCEL hAccel = CreateAcceleratorTableW(acc, 6);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {

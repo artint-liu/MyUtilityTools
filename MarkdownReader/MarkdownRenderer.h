@@ -36,6 +36,15 @@ public:
 
     int  GetTocBlockAtScrollTop() const; // 供目录高亮当前章节
 
+    // ---- 搜索 ----
+    void SearchInDocument(const std::wstring& query, bool caseSensitive);
+    void FindNext();
+    void FindPrev();
+    void ClearSearch();
+    size_t GetSearchMatchCount() const { return m_searchMatches.size(); }
+    int    GetCurrentSearchIndex() const { return m_currentMatch; }
+    bool   HasSearchQuery() const { return !m_searchQuery.empty(); }
+
 private:
     struct LayoutBlock {
         int blockIndex = 0;
@@ -127,6 +136,19 @@ private:
     int m_pressingCopy = -1;
     int m_copiedBlockIndex = -1;
     DWORD m_copiedTick = 0;
+
+    // ---- 搜索 ----
+    struct SearchMatch { int blockIndex = 0; UINT32 textPos = 0; UINT32 length = 0; };
+    std::vector<SearchMatch> m_searchMatches;
+    int m_currentMatch = -1;
+    std::wstring m_searchQuery;
+    bool m_searchCaseSensitive = false;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSearchHit;     // 命中高亮（黄）
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSearchCurrent; // 当前命中（橙）
+    void DrawSearchHits(const LayoutBlock& lb, float top);
+    void GetMatchRects(const LayoutBlock& lb, UINT32 pos, UINT32 len, float top,
+                       std::vector<D2D1_RECT_F>& out) const;
+    void ScrollToCurrentMatch();
 
     static constexpr float kPadding = 24.0f;
     static constexpr float kCodePad = 10.0f;
