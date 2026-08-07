@@ -20,6 +20,7 @@
 static const wchar_t* kFrameClass = L"MarkdownReaderFrame";
 static const wchar_t* kTocClass   = L"MarkdownReaderToc";
 static const wchar_t* kContentClass = L"MarkdownReaderContent";
+const wchar_t* kTooltipClass = L"MarkdownReaderTooltip";  // 链接 Tooltip 弹出窗口类（见 Common.h）
 
 // ---- 框架状态 ----
 struct FrameState {
@@ -47,11 +48,126 @@ struct FrameState {
     WNDPROC searchEditOrigProc = nullptr;
     HFONT hSearchFont = nullptr;
     HFONT hSearchFontBold = nullptr;
+
+    // ESC 退出选项（持久化到注册表）
+    bool escExit = false;
+
+    // 最近打开文件子菜单句柄（动态填充）
+    HMENU hRecentMenu = nullptr;
+    // 最近文件列表缓存（与菜单项顺序一致，点击时取用）
+    std::vector<std::wstring> recentCache;
 };
 
 static UINT g_dpi = 96;
 
 static int Scale(int v) { return MulDiv(v, (int)g_dpi, 96); }
+
+// ---- 注册表：最近打开文件 & 选项 ----
+const wchar_t* kRegRoot     = L"Software\\MarkdownReader";
+const wchar_t* kRegRecentKey = L"Software\\MarkdownReader\\RecentFiles";
+const wchar_t* kRegOptKey    = L"Software\\MarkdownReader\\Options";
+
+std::vector<std::wstring> RegLoadRecentFiles() {
+    std::vector<std::wstring> out;
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegRecentKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return out;
+    DWORD idx = 0;
+    wchar_t name[64];
+    DWORD nameSz = _countof(name);
+    DWORD type = 0;
+    wchar_t val[MAX_PATH] = { 0 };
+    DWORD valSz = sizeof(val);
+    while (RegEnumValueW(hKey, idx, name, &nameSz, nullptr, &type,
+                         (LPBYTE)val, &valSz) == ERROR_SUCCESS) {
+        if (type == REG_SZ && val[0] != 0) out.push_back(val);
+        ++idx;
+        nameSz = _countof(name);
+        valSz = sizeof(val);
+    }
+    RegCloseKey(hKey);
+    return out;
+}
+
+void RegAddRecentFile(const std::wstring& path) {
+    if (path.empty()) return;
+    auto list = RegLoadRecentFiles();
+    // 去重：移除已存在的相同路径（忽略大小写）
+    for (auto it = list.begin(); it != list.end();) {
+        if (_wcsicmp(it->c_str(), path.c_str()) == 0) it = list.erase(it);
+        else ++it;
+    }
+    // 置顶
+    list.insert(list.begin(), path);
+    if ((int)list.size() > kMaxRecentFiles) list.resize(kMaxRecentFiles);
+
+    // 整个键重建，保证顺序（file0 最新）
+    RegDeleteKeyW(HKEY_CURRENT_USER, kRegRecentKey);
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegRecentKey, 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS)
+        return;
+    for (size_t i = 0; i < list.size(); ++i) {
+        std::wstring name = L"file" + std::to_wstring(i);
+        RegSetValueExW(hKey, name.c_str(), 0, REG_SZ,
+                       (const BYTE*)list[i].c_str(),
+                       (DWORD)((list[i].size() + 1) * sizeof(wchar_t)));
+    }
+    RegCloseKey(hKey);
+}
+
+void RegClearRecentFiles() {
+    // 删除整键后重建空键，确保彻底清空
+    RegDeleteKeyW(HKEY_CURRENT_USER, kRegRecentKey);
+    HKEY hKey = nullptr;
+    RegCreateKeyExW(HKEY_CURRENT_USER, kRegRecentKey, 0, nullptr,
+                    REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr);
+    if (hKey) RegCloseKey(hKey);
+}
+
+bool RegLoadEscExit() {
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegOptKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+    DWORD val = 0, sz = sizeof(val);
+    LONG r = RegQueryValueExW(hKey, L"EscExit", nullptr, nullptr, (LPBYTE)&val, &sz);
+    RegCloseKey(hKey);
+    return (r == ERROR_SUCCESS && val != 0);
+}
+
+void RegSaveEscExit(bool enable) {
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegOptKey, 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS)
+        return;
+    DWORD val = enable ? 1 : 0;
+    RegSetValueExW(hKey, L"EscExit", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+    RegCloseKey(hKey);
+}
+
+// 重建"最近打开"子菜单内容；同时把列表缓存到 fs（点击时按需取用）
+static void RefreshRecentMenu(FrameState* fs) {
+    if (!fs || !fs->hRecentMenu) return;
+    // 清空旧项
+    int n = GetMenuItemCount(fs->hRecentMenu);
+    while (n > 0) { DeleteMenu(fs->hRecentMenu, 0, MF_BYPOSITION); --n; }
+
+    auto list = RegLoadRecentFiles();
+    fs->recentCache = list;
+    if (list.empty()) {
+        AppendMenuW(fs->hRecentMenu, MF_STRING | MF_GRAYED, 0, L"（无记录）");
+        return;
+    }
+    int id = IDM_RECENT_FIRST;
+    for (const auto& p : list) {
+        if (id > IDM_RECENT_LAST) break;
+        // 显示文件名 + 完整路径（路径较长时截断处理由系统菜单自身处理）
+        std::wstring label = p;
+        AppendMenuW(fs->hRecentMenu, MF_STRING, id, label.c_str());
+        ++id;
+    }
+}
+
 
 // WM_MOUSEWHEEL 默认发送给焦点窗口，而非光标下的窗口。
 // DefWindowProc 只会向上转发给父窗口，不会向下转发给光标下的子窗口。
@@ -74,6 +190,7 @@ static bool IsMarkdownExt(const std::wstring& path);
 static void UpdateSearchLabel(FrameState* fs);
 static void LayoutChildren(FrameState* fs, int cx, int cy);
 static void BringSearchBarToTop(FrameState* fs);
+static void RefreshRecentMenu(FrameState* fs);
 
 // ---- 读取文件为宽字符（支持 UTF-8 BOM / UTF-16 LE BOM / UTF-8 / ANSI） ----
 static bool ReadFileToWide(const std::wstring& path, std::wstring& out) {
@@ -121,8 +238,12 @@ static void LoadFileIntoFrame(FrameState* fs, const std::wstring& path) {
         return;
     }
     fs->currentFile = path;
+    RegAddRecentFile(path);
     fs->doc = ParseMarkdown(content);
-    if (fs->renderer) fs->renderer->SetDocument(fs->doc);
+    if (fs->renderer) {
+        fs->renderer->SetDocument(fs->doc);
+        fs->renderer->SetCurrentFile(path);
+    }
     if (fs->toc) fs->toc->SetEntries(fs->doc.toc);
     if (fs->searchBarVisible) UpdateSearchLabel(fs);
 
@@ -249,6 +370,8 @@ static LRESULT CALLBACK SearchEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
             return 0;
         }
         if (wParam == VK_ESCAPE) {
+            // ESC 退出选项开启时，任意界面 ESC 直接退出
+            if (fs && fs->escExit) { DestroyWindow(frame); return 0; }
             if (fs) HideSearchBar(fs);
             return 0;
         }
@@ -321,6 +444,8 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         // D2D HWND RenderTarget 不尊重 WS_CLIPSIBLINGS，会画到浮于其上的搜索栏区域。
         // 绘制完成后同步通知框架重绘搜索栏控件，覆盖回 D2D 内容。
         SendMessageW(GetParent(hwnd), WM_APP_REFRESH_SEARCHBAR, 0, 0);
+        // 同样把链接 Tooltip 提到最前并重绘，避免被 D2D 后续绘制覆盖。
+        if (r) r->RefreshTooltip();
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -332,6 +457,11 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (r) r->HandleMouseWheel(wParam);
         return 0;
     case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            HWND frame = GetParent(hwnd);
+            FrameState* ffs = frame ? (FrameState*)GetWindowLongPtrW(frame, GWLP_USERDATA) : nullptr;
+            if (ffs && ffs->escExit) { DestroyWindow(frame); return 0; }
+        }
         if (wParam == 'C' && (GetKeyState(VK_CONTROL) & 0x8000)) {
             if (r) r->CopySelection();
             return 0;
@@ -429,6 +559,13 @@ static LRESULT CALLBACK TocWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         if (ForwardWheelToCursor(hwnd, wParam, lParam)) return 0;
         if (t) t->OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            HWND frame = GetParent(hwnd);
+            FrameState* ffs = frame ? (FrameState*)GetWindowLongPtrW(frame, GWLP_USERDATA) : nullptr;
+            if (ffs && ffs->escExit) { DestroyWindow(frame); return 0; }
+        }
+        return 0;
     case WM_LBUTTONDOWN:
         if (t) t->OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
@@ -474,9 +611,19 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         // 菜单
         HMENU hMenu = CreateMenu();
         HMENU hFile = CreatePopupMenu();
+        // 分类 1：打开 / 保存为 HTML
         AppendMenuW(hFile, MF_STRING, IDM_FILE_OPEN, L"打开...\tCtrl+O");
-        AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(hFile, MF_STRING, IDM_FILE_SAVE_HTML, L"保存为 HTML...\tCtrl+S");
+        AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
+        // 分类 2：最近打开 / 清空记录
+        // 最近打开文件（动态填充，先放占位子菜单）
+        HMENU hRecent = CreatePopupMenu();
+        AppendMenuW(hFile, MF_POPUP, (UINT_PTR)hRecent, L"最近打开");
+        fs->hRecentMenu = hRecent;
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_CLEAR_RECENT, L"清空最近打开记录");
+        AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
+        // 其它选项
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_ESC_EXIT, L"ESC 退出程序");
         AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT, L"退出");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFile, L"文件(&F)");
@@ -489,6 +636,10 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         AppendMenuW(hView, MF_STRING, IDM_VIEW_TOC, L"显示/隐藏目录\tF9");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hView, L"视图(&V)");
         SetMenu(hwnd, hMenu);
+
+        // 加载持久化选项 & 最近文件
+        fs->escExit = RegLoadEscExit();
+        RefreshRecentMenu(fs);
 
         // 搜索栏控件
         fs->hSearchFont = CreateUiFont(g_dpi);
@@ -531,6 +682,25 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
         }
         break;
+    }
+    case WM_INITMENUPOPUP: {
+        // 任意菜单弹出时：刷新最近文件列表 & ESC 退出勾选状态
+        if (fs) {
+            if (fs->hRecentMenu) RefreshRecentMenu(fs);
+            HMENU hFileMenu = GetSubMenu(GetMenu(hwnd), 0);
+            if (hFileMenu) {
+                int cnt = GetMenuItemCount(hFileMenu);
+                for (int i = 0; i < cnt; ++i) {
+                    if (GetMenuItemID(hFileMenu, i) == IDM_FILE_ESC_EXIT) {
+                        CheckMenuItem(hFileMenu, i,
+                            fs->escExit ? MF_BYPOSITION | MF_CHECKED
+                                        : MF_BYPOSITION | MF_UNCHECKED);
+                        break;
+                    }
+                }
+            }
+        }
+        return 0;
     }
     case WM_LBUTTONDOWN:
         if (fs && fs->tocVisible) {
@@ -578,6 +748,29 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         case IDM_FILE_EXIT:
             DestroyWindow(hwnd);
             return 0;
+        case IDM_FILE_CLEAR_RECENT: {
+            RegClearRecentFiles();
+            RefreshRecentMenu(fs);
+            return 0;
+        }
+        case IDM_FILE_ESC_EXIT: {
+            fs->escExit = !fs->escExit;
+            RegSaveEscExit(fs->escExit);
+            return 0;
+        }
+        default: {
+            // 最近文件：id 落在 [IDM_RECENT_FIRST, IDM_RECENT_LAST]
+            int id = LOWORD(wParam);
+            if (id >= IDM_RECENT_FIRST && id <= IDM_RECENT_LAST) {
+                int idx = id - IDM_RECENT_FIRST;
+                if (fs && idx >= 0 && idx < (int)fs->recentCache.size()) {
+                    std::wstring path = fs->recentCache[idx];
+                    if (!path.empty()) LoadFileIntoFrame(fs, path);
+                }
+                return 0;
+            }
+            break;
+        }
         case IDM_FILE_SAVE_HTML: {
             if (fs->doc.blocks.empty()) {
                 MessageBoxW(hwnd, L"当前没有可导出的文档，请先打开 Markdown 文件。",
@@ -752,6 +945,12 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         // 焦点在 Frame 上时（如刚启动未点击子窗口），转发给光标下的子窗口
         if (ForwardWheelToCursor(hwnd, wParam, lParam)) return 0;
         return 0;
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE && fs && fs->escExit) {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        break;
     case WM_GETMINMAXINFO: {
         MINMAXINFO* mmi = (MINMAXINFO*)lParam;
         mmi->ptMinTrackSize.x = Scale(480);
@@ -799,6 +998,15 @@ static void RegisterClasses(HINSTANCE hInst) {
 
     wc.lpfnWndProc = TocWndProc;
     wc.lpszClassName = kTocClass;
+    RegisterClassExW(&wc);
+
+    // 链接 Tooltip 弹出窗口（自绘，GDI）
+    wc.lpfnWndProc = MarkdownRenderer::TooltipWndProc;
+    wc.lpszClassName = kTooltipClass;
+    wc.style = 0;
+    wc.hbrBackground = nullptr;
+    wc.hIcon = nullptr;
+    wc.hIconSm = nullptr;
     RegisterClassExW(&wc);
 }
 

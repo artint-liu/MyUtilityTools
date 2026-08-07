@@ -15,6 +15,9 @@ public:
 
     void Init(HWND hwnd);
     void SetDocument(const Document& doc);
+    // 当前打开的文档路径（用于解析 Markdown 链接中的相对路径）。
+    // 设为空表示无对应文件，此时相对链接按本地文件解析会失败而走默认打开。
+    void SetCurrentFile(const std::wstring& path) { m_currentFile = path; }
     void Resize(int widthPx, int heightPx);
     void Render();
     void OnDpiChanged(UINT dpi);
@@ -44,6 +47,16 @@ public:
     size_t GetSearchMatchCount() const { return m_searchMatches.size(); }
     int    GetCurrentSearchIndex() const { return m_currentMatch; }
     bool   HasSearchQuery() const { return !m_searchQuery.empty(); }
+
+    // 链接 Tooltip：在鼠标位置显示指向 url 的 tooltip；url 为空则隐藏。
+    void ShowLinkTooltip(const std::wstring& url, int cursorX, int cursorY);
+    // 隐藏链接 Tooltip
+    void HideLinkTooltip();
+    // D2D 绘制完成后刷新 Tooltip（置顶+重绘），避免被 D2D 覆盖
+    void RefreshTooltip() const;
+
+    // Tooltip 弹出窗口过程（需为 public 以便 main.cpp 注册窗口类时取地址）
+    static LRESULT CALLBACK TooltipWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 private:
     struct LayoutBlock {
@@ -117,6 +130,7 @@ private:
     Microsoft::WRL::ComPtr<CustomTextRenderer> m_textRenderer;
 
     Document m_doc;
+    std::wstring m_currentFile;  // 当前文档路径（解析相对链接用）
     std::vector<LayoutBlock> m_layout;
     float m_totalHeight = 0;   // DIP
     float m_scrollOffset = 0;  // DIP
@@ -147,6 +161,19 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSearchCurrent; // 当前命中（橙）
     void DrawSearchHits(const LayoutBlock& lb, float top);
     void ScrollToCurrentMatch();
+
+    // ---- 链接 Tooltip ----
+    HWND m_tooltipHwnd = nullptr;     // 自绘 Tooltip 弹出窗口
+    std::wstring m_tooltipUrl;        // 当前显示/最后显示的链接 URL
+    std::wstring m_tooltipText;       // 当前 Tooltip 要显示的文本（= m_tooltipUrl）
+    bool m_tooltipVisible = false;
+    int  m_tooltipX = 0, m_tooltipY = 0; // 屏幕坐标（光标右下方）
+    int  m_tooltipW = 0, m_tooltipH = 0; // 像素尺寸
+    int  m_lastCursorX = 0, m_lastCursorY = 0; // 最近一次光标位置（像素），用于滚动后同步 Tooltip
+    void CreateTooltipWindow();
+    void MeasureTooltip(const std::wstring& text);
+    // 依据 m_lastCursorX/Y 重新命中链接并更新 Tooltip（滚动后调用以保证 URL/位置正确）
+    void UpdateLinkTooltipAtCursor();
 
     static constexpr float kPadding = 24.0f;
     static constexpr float kCodePad = 10.0f;
@@ -188,6 +215,8 @@ private:
     // 允许的最大滚动偏移：末尾留白使最后一个块可滚到视口顶部
     float MaxScroll() const;
     std::wstring HitTestLink(int xPx, int yPx) const;
+    // 判断 url 是否为本地 Markdown 文件；若是，输出解析后的绝对路径到 outPath。
+    bool IsLocalMarkdown(const std::wstring& url, std::wstring& outPath) const;
     bool HitTestText(int xPx, int yPx, int* blockIdx, UINT32* textPos) const;
     int  HitTestCopyButton(int xPx, int yPx) const;
     void CopyBlockText(int blockIdx);

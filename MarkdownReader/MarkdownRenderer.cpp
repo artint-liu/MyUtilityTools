@@ -1,7 +1,9 @@
 #include "MarkdownRenderer.h"
+#include "Common.h"
 #include "FontManager.h"
 #include <algorithm>
 #include <shellapi.h>
+#include <shlwapi.h>
 #include <cmath>
 #include <windowsx.h>
 
@@ -83,6 +85,10 @@ ComPtr<IDWriteTextLayout> MarkdownRenderer::CreateCopyButtonLayout(const wchar_t
 }
 
 MarkdownRenderer::~MarkdownRenderer() {
+    if (m_tooltipHwnd && IsWindow(m_tooltipHwnd)) {
+        DestroyWindow(m_tooltipHwnd);
+        m_tooltipHwnd = nullptr;
+    }
     DiscardDeviceResources();
 }
 
@@ -91,6 +97,8 @@ void MarkdownRenderer::Init(HWND hwnd) {
     m_dpi = GetDpiForWindow(hwnd);
     if (m_dpi == 0) m_dpi = 96;
     CreateDeviceResources();
+    // 创建链接 Tooltip 弹出窗口（作为内容窗口的子窗口，z 序在其之上，不会被 D2D 覆盖）
+    CreateTooltipWindow();
 }
 
 void MarkdownRenderer::DiscardDeviceResources() {
@@ -641,6 +649,8 @@ void MarkdownRenderer::ApplyScrollPos(SCROLLINFO& si, int oldPos) {
     m_scrollOffset = (float)si.nPos;
     ClampScroll();
     InvalidateRect(m_hwnd, nullptr, FALSE);
+    // 滚动后链接位置可能变化，同步更新悬停 Tooltip 的内容与位置
+    UpdateLinkTooltipAtCursor();
 }
 
 void MarkdownRenderer::HandleVScroll(WPARAM wParam) {
@@ -702,6 +712,7 @@ void MarkdownRenderer::ScrollToBlock(int blockIndex) {
             ClampScroll();
             UpdateScrollInfo();
             InvalidateRect(m_hwnd, nullptr, FALSE);
+            UpdateLinkTooltipAtCursor();
             return;
         }
     }
@@ -709,8 +720,93 @@ void MarkdownRenderer::ScrollToBlock(int blockIndex) {
 
 bool MarkdownRenderer::HandleClick(int xPx, int yPx) {
     std::wstring url = HitTestLink(xPx, yPx);
-    if (!url.empty()) {
+    if (url.empty()) return false;
+
+    // 判断是否为本地 Markdown 文件（相对路径基于当前文档目录解析）。
+    // 若是，则另起一个 MarkdownReader 进程打开它；否则按系统默认方式打开（如 http 链接）。
+    std::wstring mdPath;
+    if (IsLocalMarkdown(url, mdPath) && PathFileExistsW(mdPath.c_str())) {
+        wchar_t exePath[MAX_PATH] = { 0 };
+        DWORD n = GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) {
+            std::wstring cmd = std::wstring(L"\"") + exePath + L"\" \""
+                             + mdPath + L"\"";
+            STARTUPINFOW si = { sizeof(si) };
+            PROCESS_INFORMATION pi = { 0 };
+            if (CreateProcessW(exePath, (LPWSTR)cmd.c_str(), nullptr, nullptr,
+                               FALSE, 0, nullptr, nullptr, &si, &pi)) {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            } else {
+                // 启动失败则退回系统默认打开
+                ShellExecuteW(m_hwnd, L"open", mdPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+        } else {
+            ShellExecuteW(m_hwnd, L"open", mdPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        }
+    } else {
         ShellExecuteW(m_hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    return true;
+}
+
+// 判断 url 是否为本地 Markdown 文件。若是，输出解析后的绝对路径到 outPath。
+// 支持：绝对路径、"file://" 形式、以及基于当前文档目录的相对路径。
+bool MarkdownRenderer::IsLocalMarkdown(const std::wstring& url, std::wstring& outPath) const {
+    std::wstring u = url;
+    // 去除首尾空白与可能存在的引号
+    {
+        size_t a = u.find_first_not_of(L" \t\r\n\"'");
+        size_t b = u.find_last_not_of(L" \t\r\n\"'");
+        if (a == std::wstring::npos) return false;
+        u = u.substr(a, b - a + 1);
+    }
+    // 去除 file:// 前缀（仅本地，不含主机名）
+    if (u.size() >= 8 && _wcsnicmp(u.c_str(), L"file:///", 8) == 0) {
+        u = u.substr(8);                                  // file:///C:/a.md -> C:/a.md
+    } else if (u.size() >= 7 && _wcsnicmp(u.c_str(), L"file://", 7) == 0) {
+        u = u.substr(7);                                  // file://C:/a.md -> C:/a.md
+    }
+
+    // 含协议（http/https/ftp/mailto 等）视为非本地文件
+    if (u.find(L"://") != std::wstring::npos) return false;
+    if (u.find(L":/") != std::wstring::npos) {
+        // 形如 C:/... 的盘符路径，视为本地绝对路径
+    } else if (u.find(L"\\\\") == 0) {
+        // UNC 路径 \\server\share，视为本地/网络文件
+    } else {
+        // 相对路径（支持 ./readme.md、../readme.md、readme.md 等形式）：
+        // 优先基于当前文档所在目录解析，未打开文档时回退到进程当前工作目录。
+        std::wstring base;
+        if (!m_currentFile.empty()) {
+            wchar_t dir[MAX_PATH] = { 0 };
+            if (_wfullpath(dir, m_currentFile.c_str(), MAX_PATH)) {
+                std::wstring full(dir);
+                size_t pos = full.find_last_of(L"\\/");
+                if (pos != std::wstring::npos) base = full.substr(0, pos + 1);
+            }
+        }
+        if (base.empty()) {
+            wchar_t cwd[MAX_PATH] = { 0 };
+            if (GetCurrentDirectoryW(MAX_PATH, cwd) > 0) {
+                base = cwd;
+                if (!base.empty() && base.back() != L'\\' && base.back() != L'/')
+                    base += L"\\";
+            }
+        }
+        if (base.empty()) return false;
+        std::wstring full = base + u;
+        wchar_t abs[MAX_PATH] = { 0 };
+        if (!_wfullpath(abs, full.c_str(), MAX_PATH)) return false;
+        u = abs;
+    }
+
+    // 判定扩展名是否为 .md（含 .markdown 之外的常见变体）
+    size_t dot = u.find_last_of(L".");
+    if (dot == std::wstring::npos) return false;
+    std::wstring ext = u.substr(dot);
+    if (_wcsicmp(ext.c_str(), L".md") == 0) {
+        outPath = u;
         return true;
     }
     return false;
@@ -903,8 +999,172 @@ void MarkdownRenderer::ClearSelection() {
     m_selPosEnd = 0;
 }
 
+// ---------------- 链接 Tooltip ----------------
+// 自绘弹出窗口：显示鼠标所指链接的 URL。作为内容窗口的子窗口（WS_POPUP），
+// 位于 D2D 内容窗口之上，因此不会被 D2D 绘制覆盖。
+
+void MarkdownRenderer::CreateTooltipWindow() {
+    if (m_tooltipHwnd || !m_hwnd) return;
+
+    m_tooltipHwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        kTooltipClass, L"",
+        WS_POPUP | WS_CLIPSIBLINGS,
+        0, 0, 10, 10,
+        m_hwnd, nullptr, GetModuleHandleW(nullptr), this);
+    // 子窗口默认不可见，需要时由 ShowLinkTooltip 调用 ShowWindow。
+}
+
+LRESULT CALLBACK MarkdownRenderer::TooltipWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    MarkdownRenderer* self = nullptr;
+    if (msg == WM_NCCREATE) {
+        CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        self = reinterpret_cast<MarkdownRenderer*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    } else {
+        self = reinterpret_cast<MarkdownRenderer*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+    if (!self) return DefWindowProcW(hwnd, msg, wParam, lParam);
+
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        if (self && self->m_tooltipVisible) {
+            int w = self->m_tooltipW, h = self->m_tooltipH;
+            // 背景（浅黄）
+            HBRUSH bg = CreateSolidBrush(RGB(0xFF, 0xFF, 0xE0));
+            HBRUSH border = CreateSolidBrush(RGB(0x8A, 0x8A, 0x8A));
+            RECT rc = { 0, 0, w, h };
+            // 圆角矩形背景
+            HPEN oldPen = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
+            HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, bg);
+            RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 6, 6);
+            // 边框
+            SelectObject(hdc, border);
+            SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 6, 6);
+            SelectObject(hdc, oldPen);
+            SelectObject(hdc, oldBrush);
+            DeleteObject(bg);
+            DeleteObject(border);
+
+            // 文字
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(0x1F, 0x23, 0x28));
+            HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+            HFONT oldFont = (HFONT)SelectObject(hdc, hf);
+            RECT textRc = { 8, 5, w - 8, h - 5 };
+            DrawTextW(hdc, self->m_tooltipText.c_str(), -1, &textRc,
+                      DT_LEFT | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_NOPREFIX);
+            SelectObject(hdc, oldFont);
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
+
+void MarkdownRenderer::MeasureTooltip(const std::wstring& text) {
+    m_tooltipText = text;
+
+    // 用与绘制完全相同的 GDI 字体测量，避免 DWrite/GDI 字体不一致导致尺寸偏小。
+    HDC hdc = GetDC(m_hwnd);
+    if (!hdc) { m_tooltipW = 100; m_tooltipH = 22; return; }
+
+    int padX = 8, padY = 5;
+    int maxW = (int)(GetSystemMetrics(SM_CXSCREEN) * 0.8) - padX * 2;
+    if (maxW < 60) maxW = 60;
+
+    HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT old = (HFONT)SelectObject(hdc, hf);
+    RECT rc = { 0, 0, maxW, 10000 };
+    // DT_CALCRECT：只计算所需矩形不绘制；DT_WORDBREAK 让长 URL 自动换行（字符级）
+    DrawTextW(hdc, text.c_str(), -1, &rc,
+              DT_LEFT | DT_TOP | DT_WORDBREAK | DT_EDITCONTROL | DT_CALCRECT | DT_NOPREFIX);
+    SelectObject(hdc, old);
+    ReleaseDC(m_hwnd, hdc);
+
+    m_tooltipW = rc.right + padX * 2;
+    m_tooltipH = rc.bottom + padY * 2;
+    if (m_tooltipW < 40) m_tooltipW = 40;
+    if (m_tooltipH < 22) m_tooltipH = 22;
+}
+
+void MarkdownRenderer::UpdateLinkTooltipAtCursor() {
+    std::wstring linkUrl = HitTestLink(m_lastCursorX, m_lastCursorY);
+    if (!linkUrl.empty()) {
+        ShowLinkTooltip(linkUrl, m_lastCursorX, m_lastCursorY);
+    } else {
+        HideLinkTooltip();
+    }
+}
+
+void MarkdownRenderer::ShowLinkTooltip(const std::wstring& url, int cursorX, int cursorY) {
+    if (url.empty()) { HideLinkTooltip(); return; }
+
+    if (!m_tooltipHwnd) CreateTooltipWindow();
+    if (!m_tooltipHwnd) return;
+
+    // 文本变化才重新测量
+    if (url != m_tooltipUrl) {
+        m_tooltipUrl = url;
+        MeasureTooltip(url);
+    }
+
+    // 计算屏幕坐标（光标右下方，避免遮挡光标）
+    POINT pt = { cursorX, cursorY };
+    ClientToScreen(m_hwnd, &pt);
+    // 获取系统鼠标指针尺寸（用户设置了超大指针时会放大），据此避让热区
+    int cursorW = GetSystemMetrics(SM_CXCURSOR);
+    int cursorH = GetSystemMetrics(SM_CYCURSOR);
+    if (cursorW <= 0) cursorW = 32;
+    if (cursorH <= 0) cursorH = 32;
+    int gap = 4; // 额外间距
+    int x = pt.x + cursorW + gap;
+    int y = pt.y + cursorH + gap;
+
+    // 防止超出屏幕右/下边界
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    if (x + m_tooltipW > screenW) x = pt.x - gap - m_tooltipW;
+    if (y + m_tooltipH > screenH) y = pt.y - gap - m_tooltipH;
+    // 若指针本身已靠近右/下边缘，仍可能被指针盖住，则退回到指针左侧/上方并再加间距
+    if (x + m_tooltipW > screenW) x = screenW - m_tooltipW;
+    if (y + m_tooltipH > screenH) y = screenH - m_tooltipH;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    m_tooltipX = x;
+    m_tooltipY = y;
+    m_tooltipVisible = true;
+    SetWindowPos(m_tooltipHwnd, HWND_TOPMOST, x, y, m_tooltipW, m_tooltipH,
+                 SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    InvalidateRect(m_tooltipHwnd, nullptr, TRUE);
+}
+
+void MarkdownRenderer::HideLinkTooltip() {
+    if (m_tooltipHwnd && m_tooltipVisible) {
+        m_tooltipVisible = false;
+        ShowWindow(m_tooltipHwnd, SW_HIDE);
+    }
+}
+
+void MarkdownRenderer::RefreshTooltip() const {
+    if (m_tooltipHwnd && m_tooltipVisible) {
+        // 把 Tooltip 提到最前并重绘，避免 D2D 后续绘制把它盖住。
+        SetWindowPos(m_tooltipHwnd, HWND_TOPMOST, m_tooltipX, m_tooltipY,
+                     m_tooltipW, m_tooltipH,
+                     SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        InvalidateRect(m_tooltipHwnd, nullptr, TRUE);
+    }
+}
+
 void MarkdownRenderer::ClearHover() {
     m_hoverCopyBlock = -1;
+    HideLinkTooltip();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -966,6 +1226,15 @@ void MarkdownRenderer::OnMouseMove(int xPx, int yPx) {
             }
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
+    }
+
+    // 鼠标悬停链接 → 显示 URL Tooltip（拖拽选取时不显示）
+    if (m_selecting) {
+        HideLinkTooltip();
+    } else {
+        m_lastCursorX = xPx;
+        m_lastCursorY = yPx;
+        UpdateLinkTooltipAtCursor();
     }
 }
 

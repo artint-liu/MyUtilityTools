@@ -12,6 +12,12 @@
 #define IDM_EDIT_FIND_NEXT  1006
 #define IDM_EDIT_FIND_PREV  1007
 
+// 最近打开文件菜单占位（点击动态插入，故预留一段 id 区间）
+#define IDM_RECENT_FIRST    1100
+#define IDM_RECENT_LAST     1199   // 最多 100 条（注册表最多 50 条，足够）
+#define IDM_FILE_CLEAR_RECENT 1200
+#define IDM_FILE_ESC_EXIT   1201   // ESC 退出选项（勾选框）
+
 // 搜索栏控件 id
 #define IDC_SEARCH_EDIT     2001
 #define IDC_SEARCH_CASE     2002
