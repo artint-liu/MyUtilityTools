@@ -237,6 +237,9 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (r) r->HandleKeyDown(wParam);
         return 0;
     case WM_LBUTTONDOWN:
+        // 显式获取焦点，否则 return 0 会跳过 DefWindowProc 的默认 SetFocus，
+        // 导致划词后 Ctrl+C 的 WM_KEYDOWN 收不到（焦点留在其他子窗口）。
+        SetFocus(hwnd);
         if (r) r->OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
     case WM_MOUSEMOVE:
@@ -252,6 +255,20 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     case WM_LBUTTONUP:
         if (r) r->OnLButtonUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
+    case WM_RBUTTONUP: {
+        // 右键菜单：提供复制选取文本的入口（不依赖键盘焦点）
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ClientToScreen(hwnd, &pt);
+        HMENU hMenu = CreatePopupMenu();
+        bool hasSel = r && r->HasSelection();
+        AppendMenuW(hMenu, hasSel ? MF_STRING : (MF_STRING | MF_GRAYED),
+            1, L"\u590d\u5236\u9009\u4e2d\u6587\u672c\tCtrl+C");
+        int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
+            pt.x, pt.y, 0, hwnd, nullptr);
+        DestroyMenu(hMenu);
+        if (cmd == 1 && r) r->CopySelection();
+        return 0;
+    }
     case WM_SETCURSOR:
         if ((HWND)wParam == hwnd && r) {
             POINT pt;

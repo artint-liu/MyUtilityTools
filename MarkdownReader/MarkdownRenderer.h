@@ -69,9 +69,11 @@ private:
             TableAlign align = TableAlign::Left;
             std::vector<LinkRange> linkRanges; // 单元格内链接
         };
+        struct TableTextRange { UINT32 start = 0; UINT32 end = 0; size_t row = 0; size_t col = 0; };
         std::vector<float> tableColWidths;
         std::vector<float> tableRowHeights;
         std::vector<std::vector<TableCellLayout>> tableCells; // [row][col]
+        std::vector<TableTextRange> tableTextRanges; // 每个单元格在 fullText 中的范围
     };
 
     HWND m_hwnd = nullptr;
