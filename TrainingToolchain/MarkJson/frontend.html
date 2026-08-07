@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JSON 训练数据标记工具</title>
+<style>
+:root {
+  --bg-0: #0D1117;
+  --bg-1: #1E1E1E;
+  --bg-2: #252526;
+  --bg-3: #2D2D30;
+  --border: #3C3C3C;
+  --text-0: #E0E0E0;
+  --text-1: #D4D4D4;
+  --text-2: #CCCCCC;
+  --text-dim: #808080;
+  --primary: #007ACC;
+  --primary-2: #1E90FF;
+  --primary-3: #4FC3F7;
+  --pass: #4CAF50;
+  --reject: #F44336;
+  --skip: #9E9E9E;
+  --key: #569CD6;
+  --str: #6A9955;
+  --num: #CE9178;
+  --bool: #C586C0;
+  --glow-green: rgba(76,175,80,0.45);
+  --glow-red: rgba(244,67,54,0.45);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: Consolas, 'Courier New', monospace;
+  background: radial-gradient(circle at 20% 0%, #161b22 0%, var(--bg-0) 55%);
+  color: var(--text-1);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+}
+/* ===== 顶部状态栏 ===== */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 18px;
+  background: linear-gradient(180deg, rgba(36,41,47,0.9), rgba(13,17,23,0.85));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(8px);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.progress-wrap { flex: 1; min-width: 120px; }
+.progress-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.progress-meta .fname { color: var(--text-dim); max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-bar { height: 8px; border-radius: 6px; background: var(--bg-3); overflow: hidden; box-shadow: inset 0 0 4px rgba(0,0,0,0.5); }
+.progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--primary), var(--primary-3));
+  border-radius: 6px; transition: width 0.35s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 0 10px rgba(79,195,247,0.6);
+}
+.stats { display: flex; gap: 10px; flex-shrink: 0; }
+.stat-card {
+  padding: 6px 12px; border-radius: 8px; text-align: center; min-width: 60px;
+  background: var(--bg-2); border: 1px solid var(--border);
+}
+.stat-card .label { font-size: 10px; color: var(--text-dim); letter-spacing: .5px; }
+.stat-card .value { font-size: 18px; font-weight: 600; margin-top: 2px; }
+.stat-pass .value { color: var(--pass); }
+.stat-reject .value { color: var(--reject); }
+.stat-rate .value { color: var(--primary-3); }
+
+/* ===== 主内容区 ===== */
+.main { flex: 1; overflow-y: auto; padding: 22px; display: flex; justify-content: center; }
+.sample-card {
+  width: 100%; max-width: 960px;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 26px 28px 22px; position: relative;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+  transition: transform .3s ease, opacity .3s ease, box-shadow .3s ease;
+}
+.sample-card.swipe-pass { transform: translateX(40px); opacity: 0; box-shadow: 0 0 40px var(--glow-green); }
+.sample-card.swipe-reject { transform: translateX(-40px); opacity: 0; box-shadow: 0 0 40px var(--glow-red); }
+.index-badge {
+  position: absolute; top: -12px; right: 18px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  color: #fff; font-size: 12px; font-weight: 600;
+  padding: 4px 12px; border-radius: 20px;
+  box-shadow: 0 2px 10px rgba(0,122,204,0.6);
+}
+.status-badge {
+  position: absolute; top: -12px; left: 18px;
+  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
+  border: 1px solid var(--border);
+}
+.status-badge.pass { background: rgba(76,175,80,0.18); color: var(--pass); }
+.status-badge.reject { background: rgba(244,67,54,0.18); color: var(--reject); }
+.status-badge.unmarked { background: rgba(128,128,128,0.1); color: var(--text-dim); }
+
+/* ===== 字段渲染（键值卡片） ===== */
+.fields { display: flex; flex-direction: column; gap: 16px; max-height: 62vh; overflow-y: auto; padding-right: 8px; }
+.field { border-left: 3px solid var(--primary); padding: 8px 0 8px 14px; }
+.field-key {
+  display: inline-block; font-size: 12px; font-weight: 600; color: var(--key);
+  background: rgba(86,156,214,0.12); padding: 2px 10px; border-radius: 6px; margin-bottom: 8px;
+  letter-spacing: .3px;
+}
+.field-val { font-size: 13px; line-height: 1.7; color: var(--text-0); padding-left: 4px; word-break: break-word; }
+.field-val.str { color: var(--str); white-space: pre-wrap; }
+.field-val.bool { color: var(--bool); font-weight: 600; }
+.field-val.null { color: var(--text-dim); font-style: italic; }
+.field-val.obj, .field-val.arr { color: var(--text-2); }
+/* 数值列表 */
+.num-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.num-chip {
+  background: rgba(206,145,120,0.14); color: var(--num); border: 1px solid rgba(206,145,120,0.3);
+  padding: 2px 9px; border-radius: 6px; font-size: 12px; font-family: inherit;
+}
+.nested-key { color: var(--key); opacity: .85; font-weight: 600; }
+.parse-error {
+  color: var(--reject); padding: 14px; border: 1px dashed var(--reject);
+  border-radius: 8px; background: rgba(244,67,54,0.08); line-height: 1.7;
+}
+
+/* ===== 底部操作栏 ===== */
+.actionbar {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  padding: 14px 18px; border-top: 1px solid var(--border);
+  background: linear-gradient(0deg, rgba(36,41,47,0.95), rgba(13,17,23,0.85));
+  backdrop-filter: blur(8px); flex-shrink: 0; position: relative;
+}
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 26px; border: none; border-radius: 10px;
+  font-family: inherit; font-size: 15px; font-weight: 600; color: #fff;
+  cursor: pointer; transition: transform .12s ease, box-shadow .2s ease, filter .2s ease;
+  letter-spacing: .5px;
+}
+.btn .keyhint { font-size: 11px; opacity: .8; background: rgba(255,255,255,0.18); padding: 1px 7px; border-radius: 5px; }
+.btn:hover { transform: scale(1.05); filter: brightness(1.08); }
+.btn:active { transform: scale(0.97); }
+.btn-pass { background: linear-gradient(135deg, #43a047, var(--pass)); box-shadow: 0 4px 14px rgba(76,175,80,0.35); }
+.btn-pass:hover { box-shadow: 0 6px 22px var(--glow-green); }
+.btn-reject { background: linear-gradient(135deg, #e53935, var(--reject)); box-shadow: 0 4px 14px rgba(244,67,54,0.35); }
+.btn-reject:hover { box-shadow: 0 6px 22px var(--glow-red); }
+.btn-nav {
+  background: var(--bg-3); color: var(--text-1); padding: 10px 18px; font-size: 14px;
+  border: 1px solid var(--border);
+}
+.btn-nav:hover { background: var(--bg-2); box-shadow: 0 0 12px rgba(79,195,247,0.3); }
+.help-btn {
+  position: absolute; left: 18px; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--bg-3); color: var(--primary-3); border: 1px solid var(--border);
+  cursor: pointer; font-size: 16px; font-weight: 700; transition: all .2s;
+}
+.help-btn:hover { background: var(--primary); color: #fff; box-shadow: 0 0 12px rgba(79,195,247,0.5); }
+.help-pop {
+  position: absolute; bottom: 64px; left: 18px; display: none;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 18px; font-size: 12px; line-height: 1.9; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  z-index: 50; min-width: 220px;
+}
+.help-pop.show { display: block; animation: popIn .2s ease; }
+.help-pop b { color: var(--primary-3); }
+.help-pop kbd {
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 7px; color: var(--text-0); font-family: inherit;
+}
+.file-select {
+  margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.file-select select {
+  background: var(--bg-3); color: var(--text-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; font-family: inherit; font-size: 12px; max-width: 240px;
+}
+.file-select .open-label { font-size: 11px; color: var(--text-dim); cursor: pointer; text-decoration: underline; }
+.file-select .open-label:hover { color: var(--primary-3); }
+.open-btn {
+  background: linear-gradient(135deg, #1f6feb, var(--primary-3));
+  color: #fff; padding: 9px 16px; font-size: 13px; font-weight: 600;
+  border: 1px solid var(--primary-3);
+  border-radius: 8px; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(31,111,235,0.35);
+}
+.open-btn:hover { box-shadow: 0 6px 22px var(--glow-blue); filter: brightness(1.08); }
+.open-btn:active { transform: translateY(1px); }
+@keyframes popIn { from { opacity: 0; transform: translateY(8px);} to {opacity:1; transform:none;} }
+
+/* ===== Toast ===== */
+.toast-stack { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.toast {
+  padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  background: var(--bg-2); color: var(--text-0); border: 1px solid var(--border);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5); animation: toastIn .3s ease;
+}
+.toast.ok { border-color: var(--pass); color: #a5d6a7; }
+.toast.err { border-color: var(--reject); color: #ef9a9a; }
+@keyframes toastIn { from {opacity:0; transform: translateY(-12px);} to {opacity:1; transform:none;} }
+
+/* ===== 拖拽打开遮罩 ===== */
+.drop-overlay {
+  position: fixed; inset: 0; z-index: 300; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0,122,204,0.18); border: 4px dashed var(--primary-3);
+  backdrop-filter: blur(3px);
+}
+.drop-overlay.show { display: flex; }
+.drop-overlay .drop-inner {
+  text-align: center; color: var(--primary-3); font-size: 20px; font-weight: 600;
+}
+.drop-overlay .drop-inner small { display: block; margin-top: 8px; color: var(--text-2); font-size: 13px; font-weight: 400; }
+
+/* ===== 加载/遮罩 ===== */
+.overlay {
+  position: fixed; inset: 0; background: rgba(13,17,23,0.92); z-index: 200;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+}
+.overlay.hidden { display: none; }
+/* 未加载数据时的空闲态：弱遮挡 + 不拦截点击，允许操作下方 UI / 拖拽 */
+.overlay.idle {
+  background: rgba(13,17,23,0.55);
+  pointer-events: none;
+  backdrop-filter: none;
+}
+.overlay.idle .spinner { display: none; }
+.overlay.idle .overlay-btn { pointer-events: auto; }
+.spinner {
+  width: 46px; height: 46px; border: 4px solid var(--bg-3);
+  border-top-color: var(--primary-3); border-radius: 50%; animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.overlay .msg { color: var(--text-2); font-size: 14px; text-align: center; max-width: 460px; line-height: 1.7; white-space: pre-line; }
+/* 打开中遮罩：强遮挡 + 拦截一切点击，spinner 显示 */
+.overlay.opening {
+  background: rgba(13,17,23,0.94);
+  cursor: progress;
+  backdrop-filter: blur(3px);
+}
+.overlay.opening .spinner { display: block; }
+.overlay-btn {
+  margin-top: 6px; padding: 11px 22px; border: none; border-radius: 10px; cursor: pointer;
+  font-family: inherit; font-size: 14px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, #1f6feb, var(--primary-3));
+  box-shadow: 0 4px 14px rgba(31,111,235,0.35);
+}
+.overlay-btn:hover { filter: brightness(1.08); box-shadow: 0 6px 22px var(--glow-blue); }
+/* 历史文件列表面板 */
+.history-panel {
+  margin-top: 10px; width: 100%; max-width: 480px;
+  background: rgba(30,30,30,0.6); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; pointer-events: auto;
+}
+.history-title { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; letter-spacing: .5px; }
+.history-list { display: flex; flex-direction: column; gap: 8px; max-height: 40vh; overflow-y: auto; }
+.history-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border);
+  transition: all .15s ease;
+}
+.history-item:hover { background: var(--bg-3); border-color: var(--primary-3); box-shadow: 0 0 12px rgba(79,195,247,0.3); }
+.history-item .hist-icon { color: var(--primary-3); font-size: 14px; flex-shrink: 0; }
+.history-item .hist-name { color: var(--text-0); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-item .hist-path { color: var(--text-dim); font-size: 11px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; text-align: right; flex-shrink: 0; }
+.history-empty { color: var(--text-dim); font-size: 12px; text-align: center; padding: 8px 0; }
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="progress-wrap">
+      <div class="progress-meta">
+        <span class="fname" id="fname">未加载数据（可将文件拖拽到此处打开）</span>
+        <span id="progressText">第 0 / 0 条</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+    <div class="stats">
+      <div class="stat-card stat-pass"><div class="label">通过</div><div class="value" id="statPass">0</div></div>
+      <div class="stat-card stat-reject"><div class="label">拒绝</div><div class="value" id="statReject">0</div></div>
+      <div class="stat-card stat-rate"><div class="label">通过率</div><div class="value" id="statRate">--</div></div>
+    </div>
+    <div class="file-select">
+      <select id="fileSelect"><option value="">历史文件…</option></select>
+      <span class="open-btn" id="openLabel">📂 打开文件</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="sample-card" id="sampleCard">
+      <div class="index-badge" id="indexBadge">#0</div>
+      <div class="status-badge unmarked" id="statusBadge">未标记</div>
+      <div class="fields" id="fields"></div>
+    </div>
+  </div>
+
+  <div class="actionbar">
+    <div class="help-btn" id="helpBtn">?</div>
+    <div class="help-pop" id="helpPop">
+      <div><b>键盘快捷键</b></div>
+      <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝</div>
+      <div><kbd>→</kbd> / 下一条 跳过 &nbsp; <kbd>←</kbd> 上一条</div>
+      <div><kbd>Ctrl/⌘+S</kbd> 存盘</div>
+      <div style="margin-top:6px;color:var(--text-dim)">可将 .json/.jsonl 文件拖入窗口打开</div>
+    </div>
+    <button class="btn btn-nav" id="prevBtn">← 上一条</button>
+    <button class="btn btn-pass" id="passBtn">✓ 通过 <span class="keyhint">空格</span></button>
+    <button class="btn btn-reject" id="rejectBtn">✗ 拒绝 <span class="keyhint">N</span></button>
+    <button class="btn btn-nav" id="nextBtn">跳过 / 下一条 →</button>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-inner">释放以打开 JSON / JSONL 文件<small>支持 .json 与 .jsonl 格式</small></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="spinner"></div>
+    <div class="msg" id="overlayMsg">正在加载数据索引…</div>
+    <span class="overlay-btn" id="overlayOpenBtn" style="display:none">📂 打开文件</span>
+    <div class="history-panel" id="historyPanel" style="display:none">
+      <div class="history-title">最近打开的文件</div>
+      <div class="history-list" id="historyList"></div>
+    </div>
+  </div>
+
+  <!-- 隐藏的文件选择器 -->
+  <input type="file" id="fileInput" accept=".json,.jsonl" style="display:none" />
+
+<script>
+"use strict";
+const API = "";
+let currentIndex = 0;
+let total = 0;
+let isAnimating = false;
+// 打开/加载文件期间为 true：拦截所有按键与按钮操作，避免大文件加载耗时中状态错乱
+let isBusy = false;
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- 打开中遮罩（拦截操作） ----------
+// 显示「正在打开文件」全屏遮罩，并锁定 isBusy，禁止一切按键/按钮交互
+function showOpening(msg) {
+  isBusy = true;
+  const ov = $("overlay");
+  ov.classList.remove("hidden", "idle");
+  ov.classList.add("opening");
+  $("overlayMsg").textContent = msg || "正在打开文件，请稍候…";
+  $("overlayOpenBtn").style.display = "none";
+  $("historyPanel").style.display = "none";
+}
+// 隐藏打开遮罩并解锁
+function hideOpening() {
+  isBusy = false;
+  const ov = $("overlay");
+  ov.classList.remove("opening");
+}
+
+// ---------- Toast ----------
+function toast(msg, type) {
+  const el = document.createElement("div");
+  el.className = "toast " + (type || "");
+  el.textContent = msg;
+  $("toastStack").appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity .3s";
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), 300);
+  }, 2600);
+}
+
+// ---------- 工具 ----------
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// 判断是否为「纯数值列表」（数组内所有元素均为 number）
+function isNumericArray(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return false;
+  return arr.every((v) => typeof v === "number" && isFinite(v));
+}
+
+// 渲染单个值，返回 HTML 字符串
+function renderValue(val) {
+  if (val === null) return '<span class="field-val null">null</span>';
+  const t = typeof val;
+  if (t === "string") {
+    // 多行文本保留换行
+    return '<span class="field-val str">' + escapeHtml(val) + "</span>";
+  }
+  if (t === "number") {
+    return '<span class="field-val num">' + escapeHtml(val) + "</span>";
+  }
+  if (t === "boolean") {
+    return '<span class="field-val bool">' + (val ? "true" : "false") + "</span>";
+  }
+  if (Array.isArray(val)) {
+    if (isNumericArray(val)) {
+      // 数值列表：用 chip 平铺显示
+      const chips = val.map((n) => '<span class="num-chip">' + escapeHtml(n) + "</span>").join("");
+      return '<div class="field-val num-list">' + chips + "</div>";
+    }
+    // 普通数组：逐元素渲染（字符串/布尔/数值 inline，对象则缩进显示）
+    const items = val.map((item) => {
+      if (item !== null && typeof item === "object") {
+        return '<div style="margin:4px 0 4px 14px;border-left:2px solid var(--border);padding-left:10px">' + renderValue(item) + "</div>";
+      }
+      return '<div style="margin:3px 0 3px 14px">' + renderValue(item) + "</div>";
+    }).join("");
+    return '<div class="field-val arr">' + items + "</div>";
+  }
+  if (t === "object") {
+    // 嵌套对象：逐字段渲染（键名带前缀）
+    return renderFields(val, true);
+  }
+  return '<span class="field-val">' + escapeHtml(String(val)) + "</span>";
+}
+
+// 渲染字段集合（键值卡片列表）
+function renderFields(obj, nested) {
+  let html = "";
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    const keyLabel = nested
+      ? '<span class="nested-key">' + escapeHtml(key) + "</span>"
+      : escapeHtml(key);
+    html += '<div class="field">';
+    html += '<span class="field-key">' + keyLabel + "</span>";
+    html += renderValue(val);
+    html += "</div>";
+  }
+  return html;
+}
+
+// ---------- 渲染样本 ----------
+function renderSample(sample) {
+  currentIndex = sample.index;
+  total = sample.total;
+  $("indexBadge").textContent = "#" + sample.index;
+  $("fname").textContent = (window.__dataFile || "").split(/[\\/]/).pop() || "数据";
+  updateStatusBadge(sample.status);
+  const container = $("fields");
+  if (sample.data && sample.data.__parse_error__) {
+    container.innerHTML = '<div class="parse-error">⚠ 该样本解析失败（可能是损坏的 JSON 行），无法显示内容。</div>';
+  } else if (sample.data && typeof sample.data === "object") {
+    container.innerHTML = renderFields(sample.data, false);
+  } else {
+    container.innerHTML = '<div class="parse-error">样本内容为空或格式异常。</div>';
+  }
+  updateProgressUI();
+}
+
+function updateStatusBadge(status) {
+  const el = $("statusBadge");
+  el.className = "status-badge " + (status === "reject" ? "reject" : status === "pass" ? "pass" : "unmarked");
+  const map = { pass: "已通过", reject: "已拒绝", unmarked: "未标记" };
+  el.textContent = map[status] || "未标记";
+}
+
+function updateProgressUI() {
+  const position = total > 0 ? currentIndex + 1 : 0;
+  const pct = total > 0 ? (position / total) * 100 : 0;
+  $("progressFill").style.width = pct.toFixed(1) + "%";
+  $("progressText").textContent = "第 " + position + " / " + total + " 条";
+}
+
+function updateStats(s) {
+  $("statPass").textContent = s.pass_count;
+  $("statReject").textContent = s.reject_count;
+  const passed = s.pass_count + s.reject_count;
+  $("statRate").textContent = passed > 0 ? ((s.pass_count / passed) * 100).toFixed(0) + "%" : "--";
+}
+
+// ---------- API ----------
+async function getStatus() {
+  const r = await fetch(API + "/api/status");
+  if (!r.ok) throw new Error("status " + r.status);
+  return r.json();
+}
+async function getSample(idx) {
+  const r = await fetch(API + "/api/sample/" + idx);
+  if (!r.ok) throw new Error("sample " + r.status);
+  return r.json();
+}
+async function mark(idx, status) {
+  const r = await fetch(API + "/api/mark", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ index: idx, status: status }),
+  });
+  if (!r.ok) throw new Error("mark " + r.status);
+  return r.json();
+}
+async function save() {
+  await fetch(API + "/api/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+}
+async function heartbeat() {
+  try { await fetch(API + "/api/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) {}
+}
+async function openFile(path) {
+  const r = await fetch(API + "/api/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: path }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function getFiles() {
+  const r = await fetch(API + "/api/files");
+  if (!r.ok) throw new Error("files " + r.status);
+  return r.json();
+}
+
+// ---------- 文件历史 UI ----------
+async function refreshFileHistory() {
+  try {
+    const data = await getFiles();
+    const sel = $("fileSelect");
+    const cur = (window.__dataFile || "").toLowerCase();
+    sel.innerHTML = '<option value="">历史文件…</option>';
+    (data.files || []).forEach((f) => {
+      const opt = document.createElement("option");
+      opt.value = f;
+      opt.textContent = f.split(/[\\/]/).pop();
+      if (f.toLowerCase() === cur) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) {}
+}
+
+// ---------- 加载流程 ----------
+async function loadInitial() {
+  try {
+    const st = await getStatus();
+    window.__dataFile = st.data_file;
+    updateStats(st);
+    const idx = st.current_index || 0;
+    const sample = await getSample(idx);
+    renderSample(sample);
+    $("overlay").classList.add("hidden");
+    await refreshFileHistory();
+  } catch (e) {
+    const ov = $("overlay");
+    ov.classList.remove("hidden");
+    ov.classList.add("idle");
+    $("overlayMsg").textContent = "尚未加载数据：将 .json/.jsonl 文件拖入窗口，或点击下方「📂 打开文件」按钮。";
+    $("overlayOpenBtn").style.display = "";
+    renderHistoryPanel();
+  }
+}
+
+// 在空闲遮罩中渲染历史文件列表
+async function renderHistoryPanel() {
+  try {
+    const data = await getFiles();
+    const files = data.files || [];
+    const panel = $("historyPanel");
+    const list = $("historyList");
+    list.innerHTML = "";
+    if (files.length === 0) {
+      list.innerHTML = '<div class="history-empty">暂无历史文件记录</div>';
+    } else {
+      files.forEach((f) => {
+        const item = document.createElement("div");
+        item.className = "history-item";
+        const name = f.split(/[\\/]/).pop();
+        item.innerHTML =
+          '<span class="hist-icon">📄</span>' +
+          '<span class="hist-name" title="' + escapeHtml(f) + '">' + escapeHtml(name) + "</span>" +
+          '<span class="hist-path">' + escapeHtml(f) + "</span>";
+        item.onclick = () => openAndLoad(f);
+        list.appendChild(item);
+      });
+    }
+    panel.style.display = "";
+  } catch (e) {}
+}
+
+// ---------- 标记 + 自动跳转 ----------
+async function doMark(status) {
+  if (isAnimating || isBusy) return;
+  isAnimating = true;
+  const card = $("sampleCard");
+  const cls = status === "pass" ? "swipe-pass" : "swipe-reject";
+  card.classList.add(cls);
+  try {
+    await mark(currentIndex, status);
+    const st = await getStatus();
+    updateStats(st);
+  } catch (e) {
+    toast("标记失败: " + e.message, "err");
+  }
+  setTimeout(async () => {
+    card.classList.remove(cls);
+    if (currentIndex + 1 < total) {
+      try {
+        const next = await getSample(currentIndex + 1);
+        renderSample(next);
+      } catch (e) { toast("加载失败: " + e.message, "err"); }
+    } else {
+      toast("已是最后一条", "ok");
+    }
+    isAnimating = false;
+  }, 300);
+}
+
+// 跳过 / 下一条：仅翻页不标记
+async function skipNext() {
+  if (isAnimating) return;
+  if (currentIndex + 1 < total) {
+    try {
+      const next = await getSample(currentIndex + 1);
+      renderSample(next);
+    } catch (e) { toast("加载失败: " + e.message, "err"); }
+  } else {
+    toast("已是最后一条", "ok");
+  }
+}
+
+async function goTo(idx) {
+  if (isAnimating) return;
+  if (idx < 0 || idx >= total) { toast("已到边界", "ok"); return; }
+  try {
+    const sample = await getSample(idx);
+    renderSample(sample);
+  } catch (e) { toast("加载失败: " + e.message, "err"); }
+}
+
+// 打开文件并加载到上次进度位置
+async function openAndLoad(path) {
+  if (isBusy) return;
+  showOpening("正在打开文件：\n" + path.split(/[\\/]/).pop() + "\n（构建索引可能需要一些时间，请勿重复操作）");
+  try {
+    const res = await openFile(path);
+    window.__dataFile = path;
+    await refreshFileHistory();
+    const target = res.current_index || 0;
+    const sample = await getSample(target);
+    renderSample(sample);
+    $("overlay").classList.add("hidden");
+    toast("已打开: " + path.split(/[\\/]/).pop(), "ok");
+  } catch (e) {
+    toast("打开失败: " + e.message, "err");
+  } finally {
+    hideOpening();
+  }
+}
+
+// 通过上传（拖拽/选择）打开文件
+async function uploadAndLoad(file) {
+  if (isBusy) return;
+  showOpening("正在打开文件：\n" + file.name + "\n（构建索引可能需要一些时间，请勿重复操作）");
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(API + "/api/upload", { method: "POST", body: fd });
+    if (!r.ok) throw new Error(await r.text());
+    const res = await r.json();
+    window.__dataFile = res.files && res.files[0] ? res.files[0] : "";
+    await refreshFileHistory();
+    const target = res.current_index || 0;
+    const sample = await getSample(target);
+    renderSample(sample);
+    $("overlay").classList.add("hidden");
+    toast("已打开: " + file.name, "ok");
+  } catch (e) {
+    toast("打开失败: " + e.message, "err");
+  } finally {
+    hideOpening();
+  }
+}
+
+// ---------- 事件绑定 ----------
+$("passBtn").onclick = () => doMark("pass");
+$("rejectBtn").onclick = () => doMark("reject");
+$("nextBtn").onclick = () => skipNext();
+$("prevBtn").onclick = () => goTo(currentIndex - 1);
+
+$("helpBtn").onclick = (e) => { e.stopPropagation(); $("helpPop").classList.toggle("show"); };
+document.addEventListener("click", () => $("helpPop").classList.remove("show"));
+
+// 历史文件下拉
+$("fileSelect").onchange = (e) => {
+  const v = e.target.value;
+  if (v) openAndLoad(v);
+};
+// 打开文件按钮（选择本地文件）
+$("openLabel").onclick = () => $("fileInput").click();
+$("overlayOpenBtn").onclick = () => $("fileInput").click();
+$("fileInput").onchange = (e) => {
+  const f = e.target.files[0];
+  if (f) uploadAndLoad(f);
+  e.target.value = "";
+};
+
+// 拖拽打开
+const dropOverlay = $("dropOverlay");
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
+    e.preventDefault(); dragDepth++; dropOverlay.classList.add("show");
+  }
+});
+window.addEventListener("dragover", (e) => { if (dropOverlay.classList.contains("show")) e.preventDefault(); });
+window.addEventListener("dragleave", (e) => {
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) dropOverlay.classList.remove("show");
+});
+window.addEventListener("drop", (e) => {
+  e.preventDefault(); dragDepth = 0; dropOverlay.classList.remove("show");
+  const files = e.dataTransfer.files;
+  if (files && files.length) {
+    const f = files[0];
+    const name = f.name.toLowerCase();
+    if (name.endsWith(".json") || name.endsWith(".jsonl")) {
+      uploadAndLoad(f);
+    } else {
+      toast("仅支持 .json / .jsonl 文件", "err");
+    }
+  }
+});
+
+// 键盘
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+  const key = e.key;
+  if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === "s") {
+    e.preventDefault(); save().then(() => toast("已存盘", "ok")); return;
+  }
+  if (isAnimating || isBusy) return;
+  if (key === " " || key === "Spacebar") { e.preventDefault(); doMark("pass"); }
+  else if (key === "n" || key === "N") doMark("reject");
+  else if (key === "ArrowLeft") { e.preventDefault(); goTo(currentIndex - 1); }
+  else if (key === "ArrowRight") { e.preventDefault(); skipNext(); }
+});
+
+// 关闭/刷新前存盘
+window.addEventListener("beforeunload", () => { save(); });
+// 心跳保活（每 20 秒）
+setInterval(heartbeat, 20000);
+
+loadInitial();
+</script>
+</body>
+</html>

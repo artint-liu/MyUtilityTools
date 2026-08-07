@@ -1,0 +1,35 @@
+[
+  {
+    "id": 1,
+    "instruction": "解释什么是光合作用",
+    "input": "",
+    "output": "光合作用是植物利用光能将二氧化碳和水转化为有机物和氧气的过程。",
+    "meta": { "source": "textbook", "score": 0.95 }
+  },
+  {
+    "id": 2,
+    "question": "1+1等于多少？",
+    "answer": "2",
+    "tags": ["math", "easy"],
+    "verified": true
+  },
+  {
+    "id": 3,
+    "prompt": "写一首关于春天的诗",
+    "completion": "春风拂面暖，柳绿映清波。",
+    "temperature": 0.7,
+    "note": null
+  },
+  {
+    "id": 4,
+    "text": "这是一条损坏附近有引号 \" 未闭合的数据",
+    "label": "spam"
+  },
+  {
+    "id": 5,
+    "system": "你是一个助手",
+    "user": "你好",
+    "assistant": "你好！有什么可以帮你？",
+    "history": [["a", "b"], ["c", "d"]]
+  }
+]

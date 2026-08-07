@@ -1,0 +1,13 @@
+# 上传的临时文件（拖拽/选择打开）
+uploads/
+
+# 索引与进度缓存
+*.index
+*.progress.json
+.filehistory.json
+
+# Python
+__pycache__/
+*.pyc
+server.log
+server.err
