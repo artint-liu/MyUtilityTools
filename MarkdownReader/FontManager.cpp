@@ -1,5 +1,4 @@
 #include "FontManager.h"
-#include "Common.h"
 #include <dwrite_2.h>
 #include <dwrite_3.h>
 #include <windows.h>
@@ -276,8 +275,7 @@ void FontManager::LoadFonts() {
 
     // ---- GDI：进程私有加载，使 CreateFontW 可用相同 family name ----
     for (const auto& path : files) {
-        int added = AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr);
-        WheelLog(L"FontMgr AddFontResource '%ls' -> added=%d", path.c_str(), added);
+        AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr);
     }
 
     // DWrite 取到的 family name 可能以 '.' 开头（如 ".PingFang SC"），
@@ -289,6 +287,4 @@ void FontManager::LoadFonts() {
     };
     m_tocFamilyGdi = stripLeadingDot(m_tocFamily);
 
-    WheelLog(L"FontMgr cfgBody='%ls' cfgToc='%ls' bodyFam='%ls' tocFam='%ls' tocFamGdi='%ls'",
-        m_cfgBody.c_str(), m_cfgToc.c_str(), m_bodyFamily.c_str(), m_tocFamily.c_str(), m_tocFamilyGdi.c_str());
 }

@@ -1,5 +1,4 @@
 #include "MarkdownRenderer.h"
-#include "Common.h"
 #include "FontManager.h"
 #include <algorithm>
 #include <shellapi.h>
@@ -649,11 +648,8 @@ void MarkdownRenderer::HandleMouseWheel(WPARAM wParam) {
     // 用 float 计算避免 int(-delta) 与 UINT(lines) 混合运算时 int 被转为无符号导致溢出。
     // 方向约定与 TocPanel/HandleVScroll 一致：delta<0(向下滚)→scrollOffset 增大。
     float move = (float)delta * 18.0f * (float)lines / (float)WHEEL_DELTA;
-    float before = m_scrollOffset;
     m_scrollOffset -= move;
     ClampScroll();
-    WheelLog(L"Content.HandleMouseWheel delta=%d lines=%u move=%.1f scrollBefore=%.1f scrollAfter=%.1f totalH=%.1f viewH=%.1f hwnd=%ls",
-        delta, lines, move, before, m_scrollOffset, m_totalHeight, m_viewHeight, WheelWindowTag(m_hwnd));
     UpdateScrollInfo();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }

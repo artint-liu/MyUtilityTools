@@ -34,19 +34,6 @@ void TocPanel::CreateFonts() {
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, family);
 
-    // 诊断：GDI 实际选中的字体名（CreateFontW 可能因 family name 匹配失败而回退）
-    if (m_font && m_hwnd) {
-        HDC dc = GetDC(m_hwnd);
-        if (dc) {
-            HGDIOBJ old = SelectObject(dc, m_font);
-            wchar_t actual[LF_FACESIZE] = { 0 };
-            GetTextFaceW(dc, LF_FACESIZE, actual);
-            SelectObject(dc, old);
-            ReleaseDC(m_hwnd, dc);
-            WheelLog(L"TocFont DIAG: requested='%ls' actualGDI='%ls' famLen=%zu",
-                family, actual, fam.size());
-        }
-    }
     m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
     m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
 }
@@ -146,12 +133,9 @@ void TocPanel::OnMouseLeave() {
 void TocPanel::OnMouseWheel(int delta) {
     int maxScroll = m_totalHeight - m_heightPx;
     if (maxScroll < 0) maxScroll = 0;
-    int before = m_scroll;
     m_scroll -= delta * m_lineHeight / WHEEL_DELTA;
     if (m_scroll < 0) m_scroll = 0;
     if (m_scroll > maxScroll) m_scroll = maxScroll;
-    WheelLog(L"Toc.OnMouseWheel delta=%d lineH=%d scrollBefore=%d scrollAfter=%d max=%d totalH=%d viewH=%d hwnd=%ls",
-        delta, m_lineHeight, before, m_scroll, maxScroll, m_totalHeight, m_heightPx, WheelWindowTag(m_hwnd));
     UpdateScroll();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }

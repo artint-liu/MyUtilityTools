@@ -5,7 +5,6 @@
 #include <commctrl.h>
 #include <string>
 #include <vector>
-#include <stdarg.h>
 #include <stdio.h>
 #include "Common.h"
 #include "resource.h"
@@ -21,70 +20,6 @@
 static const wchar_t* kFrameClass = L"MarkdownReaderFrame";
 static const wchar_t* kTocClass   = L"MarkdownReaderToc";
 static const wchar_t* kContentClass = L"MarkdownReaderContent";
-
-// ---- 滚轮诊断日志 ----
-static wchar_t g_wheelLogPath[MAX_PATH] = { 0 };
-static CRITICAL_SECTION g_wheelLogCS;
-static bool g_wheelLogCSInited = false;
-
-const wchar_t* WheelWindowTag(HWND hwnd) {
-    if (!hwnd) return L"null";
-    wchar_t cls[64] = { 0 };
-    GetClassNameW(hwnd, cls, 64);
-    if (wcscmp(cls, kFrameClass) == 0) return L"Frame";
-    if (wcscmp(cls, kContentClass) == 0) return L"Content";
-    if (wcscmp(cls, kTocClass) == 0) return L"Toc";
-    static wchar_t other[32];
-    swprintf_s(other, L"Other:0x%p", (void*)hwnd);
-    return other;
-}
-
-void WheelLogInit(const wchar_t* dir) {
-    InitializeCriticalSection(&g_wheelLogCS);
-    g_wheelLogCSInited = true;
-    if (dir && *dir) {
-        swprintf_s(g_wheelLogPath, L"%s\\MarkdownReader_wheel.log", dir);
-    } else {
-        wchar_t tmp[MAX_PATH];
-        GetTempPathW(MAX_PATH, tmp);
-        swprintf_s(g_wheelLogPath, L"%sMarkdownReader_wheel.log", tmp);
-    }
-    // 清空旧日志
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, g_wheelLogPath, L"w, ccs=UTF-8") == 0 && fp) {
-        fputws(L"==== MarkdownReader wheel log started ====\r\n", fp);
-        fclose(fp);
-    }
-    WheelLog(L"WheelLogInit: logPath=%ls", g_wheelLogPath);
-}
-
-void WheelLog(const wchar_t* fmt, ...) {
-    if (!g_wheelLogPath[0]) return;
-    wchar_t body[1024];
-    va_list args; va_start(args, fmt);
-    int n = vswprintf_s(body, fmt, args);
-    va_end(args);
-    if (n < 0) n = 0;
-
-    wchar_t line[1200];
-    SYSTEMTIME st; GetLocalTime(&st);
-    int prefix = swprintf_s(line, L"[%02d:%02d:%02d.%03d tid=%lu] ",
-        st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, GetCurrentThreadId());
-    int m = swprintf_s(line + prefix, _countof(line) - prefix - 2, L"%s", body);
-    int len = prefix + (m > 0 ? m : 0);
-    line[len++] = L'\r';
-    line[len++] = L'\n';
-    line[len] = 0;
-
-    OutputDebugStringW(line);
-    EnterCriticalSection(&g_wheelLogCS);
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, g_wheelLogPath, L"a, ccs=UTF-8") == 0 && fp) {
-        fputws(line, fp);
-        fclose(fp);
-    }
-    LeaveCriticalSection(&g_wheelLogCS);
-}
 
 // ---- 框架状态 ----
 struct FrameState {
@@ -125,15 +60,9 @@ static int Scale(int v) { return MulDiv(v, (int)g_dpi, 96); }
 static bool ForwardWheelToCursor(HWND hwnd, WPARAM wParam, LPARAM lParam) {
     POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
     HWND hwndUnder = WindowFromPoint(pt);
-    int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-    HWND focus = GetFocus();
     if (hwndUnder == hwnd || hwndUnder == nullptr) {
-        WheelLog(L"FWD caller=%ls KEEP(delta=%d) cursorUnder=%ls focus=%ls",
-            WheelWindowTag(hwnd), delta, WheelWindowTag(hwndUnder), WheelWindowTag(focus));
         return false;
     }
-    WheelLog(L"FWD caller=%ls ->%ls(delta=%d) focus=%ls [转发]",
-        WheelWindowTag(hwnd), WheelWindowTag(hwndUnder), delta, WheelWindowTag(focus));
     SendMessageW(hwndUnder, WM_MOUSEWHEEL, wParam, lParam);
     return true;
 }
@@ -414,10 +343,8 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (r) r->HandleVScroll(wParam);
         return 0;
     case WM_MOUSEWHEEL:
-        WheelLog(L"Content RECV(delta=%d) focus=%ls cursorUnder=[见FWD]",
-            GET_WHEEL_DELTA_WPARAM(wParam), WheelWindowTag(GetFocus()));
         if (ForwardWheelToCursor(hwnd, wParam, lParam)) return 0;
-        if (r) { WheelLog(L"Content -> HandleMouseWheel(delta=%d)", GET_WHEEL_DELTA_WPARAM(wParam)); r->HandleMouseWheel(wParam); }
+        if (r) r->HandleMouseWheel(wParam);
         return 0;
     case WM_KEYDOWN:
         if (wParam == 'C' && (GetKeyState(VK_CONTROL) & 0x8000)) {
@@ -514,10 +441,8 @@ static LRESULT CALLBACK TocWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         if (t) t->HandleVScroll(wParam);
         return 0;
     case WM_MOUSEWHEEL:
-        WheelLog(L"Toc RECV(delta=%d) focus=%ls",
-            GET_WHEEL_DELTA_WPARAM(wParam), WheelWindowTag(GetFocus()));
         if (ForwardWheelToCursor(hwnd, wParam, lParam)) return 0;
-        if (t) { WheelLog(L"Toc -> OnMouseWheel(delta=%d)", GET_WHEEL_DELTA_WPARAM(wParam)); t->OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam)); }
+        if (t) t->OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam));
         return 0;
     case WM_LBUTTONDOWN:
         if (t) t->OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
@@ -839,11 +764,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_MOUSEWHEEL:
-        WheelLog(L"Frame RECV(delta=%d) focus=%ls",
-            GET_WHEEL_DELTA_WPARAM(wParam), WheelWindowTag(GetFocus()));
         // 焦点在 Frame 上时（如刚启动未点击子窗口），转发给光标下的子窗口
         if (ForwardWheelToCursor(hwnd, wParam, lParam)) return 0;
-        WheelLog(L"Frame -> 无转发(光标在Frame或无效)");
         return 0;
     case WM_GETMINMAXINFO: {
         MINMAXINFO* mmi = (MINMAXINFO*)lParam;
@@ -955,13 +877,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     g_dpi = GetDpiForSystem();
     if (g_dpi == 0) g_dpi = 96;
-
-    // 初始化滚轮诊断日志（写到 exe 所在目录）
-    wchar_t exeDir[MAX_PATH] = { 0 };
-    GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
-    wchar_t* slash = wcsrchr(exeDir, L'\\');
-    if (slash) *slash = 0;
-    WheelLogInit(exeDir);
 
     RegisterClasses(hInstance);
 

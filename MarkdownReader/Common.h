@@ -15,10 +15,4 @@
 // 避免 ID2D1HwndRenderTarget（不尊重 WS_CLIPSIBLINGS）覆盖搜索栏。wParam/lParam 未用。
 #define WM_APP_REFRESH_SEARCHBAR (WM_APP + 4)
 
-// ---- 滚轮诊断日志（定义在 main.cpp）----
-// 初始化日志文件（exeDir 用于定位写入目录，传 nullptr 则用 %TEMP%）
-void WheelLogInit(const wchar_t* dir);
-// 写一条日志（同时 OutputDebugStringW + 追加文件），带时间戳
-void WheelLog(const wchar_t* fmt, ...);
-// 返回窗口的可读标签："Frame"/"Content"/"Toc"/"Other:0x..."
-const wchar_t* WheelWindowTag(HWND hwnd);
+
