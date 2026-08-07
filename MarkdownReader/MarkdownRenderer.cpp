@@ -21,6 +21,7 @@ void MarkdownRenderer::Init(HWND hwnd) {
 
 void MarkdownRenderer::DiscardDeviceResources() {
     m_rt.Reset();
+    m_dc.Reset();
     m_brText.Reset(); m_brLink.Reset(); m_brCode.Reset(); m_brQuote.Reset();
     m_brBar.Reset(); m_brHr.Reset(); m_brCodeBg.Reset();
     m_brTableBorder.Reset(); m_brTableHeaderBg.Reset();
@@ -54,7 +55,7 @@ void MarkdownRenderer::CreateDeviceResources() {
         FontManager::Instance().LoadFonts();
     }
     if (!m_textRenderer) {
-        m_textRenderer.Attach(new CustomTextRenderer());
+        m_textRenderer.Attach(new CustomTextRenderer(m_dwrite.Get()));
     }
 
     if (m_d2d && m_hwnd && !m_rt) {
@@ -65,6 +66,8 @@ void MarkdownRenderer::CreateDeviceResources() {
         D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(
             m_hwnd, D2D1::SizeU((UINT32)m_widthPx, (UINT32)m_heightPx));
         m_d2d->CreateHwndRenderTarget(&props, &hwndProps, m_rt.GetAddressOf());
+        // HwndRenderTarget 实现了 ID2D1DeviceContext（D2D1.1），取出来供彩色字体绘制
+        if (m_rt) m_rt.As(&m_dc);
     }
 
     if (m_rt && !m_brText) {
@@ -510,7 +513,7 @@ void MarkdownRenderer::Render() {
             m_rt->FillRectangle(bar, m_brBar.Get());
         }
         if (lb.markerLayout) {
-            RenderContext ctx{ m_rt.Get(), defBrush };
+            RenderContext ctx{ m_rt.Get(), m_dc.Get(), defBrush };
             lb.markerLayout->Draw(&ctx, m_textRenderer.Get(), lb.markerX, top + lb.textTopRel);
         }
         if (lb.type == BlockType::HorizontalRule && m_brHr) {
@@ -569,7 +572,7 @@ void MarkdownRenderer::Render() {
                     else
                         cx = colX[c] + kTableCellPadX;
                     float cy = yRow + kTableCellPadY;
-                    RenderContext ctx{ m_rt.Get(), m_brText.Get() };
+                    RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brText.Get() };
                     cell.layout->Draw(&ctx, m_textRenderer.Get(), cx, cy);
                 }
                 yRow += rh;
@@ -580,7 +583,7 @@ void MarkdownRenderer::Render() {
             DrawSelectionForBlock(lb, top);
         }
         if (lb.layout) {
-            RenderContext ctx{ m_rt.Get(), defBrush };
+            RenderContext ctx{ m_rt.Get(), m_dc.Get(), defBrush };
             lb.layout->Draw(&ctx, m_textRenderer.Get(), lb.textX, top + lb.textTopRel);
         }
         // 复制按钮（在文本上方）
@@ -1157,7 +1160,7 @@ void MarkdownRenderer::DrawCopyButton(const LayoutBlock& lb, float top) {
     }
     if (textLay) {
         m_brCopyBtnText->SetColor(copied ? D2D1::ColorF(0x1A7F37) : D2D1::ColorF(0x57606A));
-        RenderContext ctx{ m_rt.Get(), m_brCopyBtnText.Get() };
+        RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brCopyBtnText.Get() };
         textLay->Draw(&ctx, m_textRenderer.Get(), btn.left, btn.top);
     }
 }

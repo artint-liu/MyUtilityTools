@@ -1,11 +1,16 @@
 #pragma once
 #include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
+#include <dwrite_3.h>
 #include <wrl/client.h>
 
 // 传递给自定义渲染器的上下文
+// dc 为 rt 的 ID2D1DeviceContext 接口（HwndRenderTarget 已实现），用于彩色字体绘制；
+// 若 QI 失败则为 nullptr，渲染器回退到 rt 的普通单色绘制。
 struct RenderContext {
     ID2D1RenderTarget* rt = nullptr;
+    ID2D1DeviceContext* dc = nullptr;
     ID2D1SolidColorBrush* defaultBrush = nullptr;
 };
 
@@ -33,9 +38,12 @@ private:
     ULONG m_ref = 1;
 };
 
-// 自定义文本渲染器：支持 per-range 颜色、下划线、删除线
+// 自定义文本渲染器：支持 per-range 颜色、下划线、删除线、彩色字体（emoji 等）
 class CustomTextRenderer : public IDWriteTextRenderer {
 public:
+    // factory 用于 QI 出 IDWriteFactory4/2 以枚举彩色字形层；可传 nullptr 则关闭彩色字体支持。
+    explicit CustomTextRenderer(IDWriteFactory* factory = nullptr);
+
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_ref); }
     ULONG STDMETHODCALLTYPE Release() override {
@@ -58,5 +66,11 @@ public:
 
 private:
     static ID2D1SolidColorBrush* ResolveBrush(void* clientDrawingContext, IUnknown* effect);
+    // 逐层绘制彩色字形（IDWriteFactory4 / IDWriteFactory2 两种枚举器）
+    HRESULT DrawColorLayers(ID2D1DeviceContext* dc, IDWriteColorGlyphRunEnumerator1* en, ID2D1SolidColorBrush* fgBrush);
+    HRESULT DrawColorLayers(ID2D1DeviceContext* dc, IDWriteColorGlyphRunEnumerator* en, ID2D1SolidColorBrush* fgBrush, DWRITE_MEASURING_MODE measuringMode);
+
     ULONG m_ref = 1;
+    Microsoft::WRL::ComPtr<IDWriteFactory4> m_dwrite4; // Win10 1709+，支持 COLR/SVG/位图
+    Microsoft::WRL::ComPtr<IDWriteFactory2> m_dwrite2; // Win8.1+，仅 COLR，作为回退
 };

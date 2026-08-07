@@ -1,5 +1,6 @@
 #pragma once
 #include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 #include <string>
@@ -82,6 +83,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Factory> m_d2d;
     Microsoft::WRL::ComPtr<IDWriteFactory> m_dwrite;
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> m_rt;
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> m_dc;  // m_rt 的 D2D1.1 接口，用于彩色字体绘制
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtBody;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtHeading[6];
