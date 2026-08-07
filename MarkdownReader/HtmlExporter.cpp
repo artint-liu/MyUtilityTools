@@ -5,32 +5,42 @@
 
 namespace {
 
+// 把单个 BMP 字符编码为 UTF-8 字节，写入 buf，返回字节数（1~3）。
+// 文档在内存中为 UTF-16，此处不处理代理对以外的情况（与原实现保持一致）。
+int EncodeUtf8(wchar_t c, char buf[3]) {
+    if (c < 0x80) {
+        buf[0] = (char)c;
+        return 1;
+    }
+    if (c < 0x800) {
+        buf[0] = (char)(0xC0 | (c >> 6));
+        buf[1] = (char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    buf[0] = (char)(0xE0 | (c >> 12));
+    buf[1] = (char)(0x80 | ((c >> 6) & 0x3F));
+    buf[2] = (char)(0x80 | (c & 0x3F));
+    return 3;
+}
+
+// 追加字符的 UTF-8 字节表示
+void AppendUtf8(std::string& out, wchar_t c) {
+    char buf[3];
+    out.append(buf, EncodeUtf8(c, buf));
+}
+
 // HTML 转义：& < > " '
 std::string EscapeHtml(const std::wstring& s) {
     std::string out;
     out.reserve(s.size() * 3);
     for (wchar_t c : s) {
         switch (c) {
-        case L'&': out += "&amp;"; break;
-        case L'<': out += "&lt;"; break;
-        case L'>': out += "&gt;"; break;
-        case L'"': out += "&quot;"; break;
-        case L'\'': out += "&#39;"; break;
-        default:
-            if (c < 0x80) {
-                out += (char)c;
-            } else {
-                // UTF-8 编码
-                if (c < 0x800) {
-                    out += (char)(0xC0 | (c >> 6));
-                    out += (char)(0x80 | (c & 0x3F));
-                } else {
-                    out += (char)(0xE0 | (c >> 12));
-                    out += (char)(0x80 | ((c >> 6) & 0x3F));
-                    out += (char)(0x80 | (c & 0x3F));
-                }
-            }
-            break;
+        case L'&':  out += "&amp;";  break;
+        case L'<':  out += "&lt;";   break;
+        case L'>':  out += "&gt;";   break;
+        case L'"':  out += "&quot;"; break;
+        case L'\'': out += "&#39;";  break;
+        default:    AppendUtf8(out, c); break;
         }
     }
     return out;
@@ -38,41 +48,30 @@ std::string EscapeHtml(const std::wstring& s) {
 
 // URL 中仅做最小转义（空格等），保留常规字符以增强可读性
 std::string EscapeUrl(const std::wstring& s) {
+    static const char kHex[] = "0123456789ABCDEF";
     std::string out;
     out.reserve(s.size() * 3);
     for (wchar_t c : s) {
+        // 会破坏 href="..." 或 Markdown 语法的 ASCII 字符需转义
+        switch (c) {
+        case L' ':  out += "%20"; continue;
+        case L'"':  out += "%22"; continue;
+        case L'<':  out += "%3C"; continue;
+        case L'>':  out += "%3E"; continue;
+        case L'`':  out += "%60"; continue;
+        default: break;
+        }
         if (c < 0x80) {
-            if (c == L' ') {
-                out += "%20";
-            } else if (c == L'"') {
-                out += "%22";
-            } else if (c == L'<') {
-                out += "%3C";
-            } else if (c == L'>') {
-                out += "%3E";
-            } else if (c == L'`') {
-                out += "%60";
-            } else {
-                out += (char)c;
-            }
-        } else {
-            // 非 ASCII 字符按 UTF-8 百分号编码
-            char buf[4] = { 0 };
-            int n = 0;
-            if (c < 0x800) {
-                buf[n++] = (char)(0xC0 | (c >> 6));
-                buf[n++] = (char)(0x80 | (c & 0x3F));
-            } else {
-                buf[n++] = (char)(0xE0 | (c >> 12));
-                buf[n++] = (char)(0x80 | ((c >> 6) & 0x3F));
-                buf[n++] = (char)(0x80 | (c & 0x3F));
-            }
-            for (int i = 0; i < n; ++i) {
-                static const char hex[] = "0123456789ABCDEF";
-                out += '%';
-                out += hex[(unsigned char)buf[i] >> 4];
-                out += hex[buf[i] & 0x0F];
-            }
+            out += (char)c;
+            continue;
+        }
+        // 非 ASCII 字符按 UTF-8 百分号编码
+        char buf[3];
+        const int n = EncodeUtf8(c, buf);
+        for (int i = 0; i < n; ++i) {
+            out += '%';
+            out += kHex[(unsigned char)buf[i] >> 4];
+            out += kHex[buf[i] & 0x0F];
         }
     }
     return out;
@@ -178,19 +177,21 @@ img{max-width:100%;}
     struct ListFrame { int level; bool ordered; };
     std::vector<ListFrame> listStack;
 
+    // 弹出栈顶列表：输出其闭合标签；若仍有外层列表，
+    // 还需闭合外层为容纳此子列表而保持打开的 <li>。
+    auto popList = [&]() {
+        html += listStack.back().ordered ? "</ol>\n" : "</ul>\n";
+        listStack.pop_back();
+        if (!listStack.empty()) html += "</li>\n";
+    };
+    // 压入新列表并输出开启标签
+    auto pushList = [&](int level, bool ordered) {
+        listStack.push_back({ level, ordered });
+        html += ordered ? "<ol>\n" : "<ul>\n";
+    };
+    // 关闭所有层级 >= targetLevel 的列表
     auto closeListsTo = [&](int targetLevel) {
-        while (!listStack.empty() && listStack.back().level >= targetLevel) {
-            html += listStack.back().ordered ? "</ol>\n" : "</ul>\n";
-            if (!listStack.empty()) {
-                // 关闭包裹当前列表的 <li>（仅当该层级非顶层）
-                // 顶层列表不包裹在 <li> 中
-            }
-            listStack.pop_back();
-            // 若仍有外层列表，关闭外层为容纳此子列表而开的 <li>
-            if (!listStack.empty()) {
-                html += "</li>\n";
-            }
-        }
+        while (!listStack.empty() && listStack.back().level >= targetLevel) popList();
     };
     auto closeAllLists = [&]() { closeListsTo(-1); };
 
@@ -238,38 +239,23 @@ img{max-width:100%;}
             break;
         }
         case BlockType::ListItem: {
-            int lvl = b.listLevel;
-            // 需要打开新列表或关闭到同级
+            const int lvl = b.listLevel;
             if (listStack.empty() || listStack.back().level < lvl) {
-                // 若已有外层列表，把上一个 <li> 留作容器（不闭合），插入子列表
-                if (!listStack.empty()) {
-                    // 上一个 <li> 仍打开，作为容器
-                }
-                listStack.push_back({ lvl, b.ordered });
-                html += b.ordered ? "<ol>\n" : "<ul>\n";
+                // 更深一层：上一个 <li> 保持打开，作为子列表的容器
+                pushList(lvl, b.ordered);
             } else {
-                // 关闭比当前深的列表，回到同级
-                while (!listStack.empty() && listStack.back().level > lvl) {
-                    html += listStack.back().ordered ? "</ol>\n" : "</ul>\n";
-                    listStack.pop_back();
-                    if (!listStack.empty()) html += "</li>\n";
-                }
-                // 同级或顶层：每项之间闭合上一个 <li>
-                if (!listStack.empty() && listStack.back().level == lvl) {
-                    if (listStack.back().ordered != b.ordered) {
-                        // 有序/无序切换：关闭旧开新
-                        html += listStack.back().ordered ? "</ol>\n" : "</ul>\n";
-                        listStack.pop_back();
-                        if (!listStack.empty()) html += "</li>\n";
-                        listStack.push_back({ lvl, b.ordered });
-                        html += b.ordered ? "<ol>\n" : "<ul>\n";
-                    } else {
-                        html += "</li>\n";
-                    }
+                // 关闭比当前更深的列表，回到同级
+                closeListsTo(lvl + 1);
+                if (listStack.empty() || listStack.back().level != lvl) {
+                    // 已退到顶层之外，重新开一个列表
+                    pushList(lvl, b.ordered);
+                } else if (listStack.back().ordered != b.ordered) {
+                    // 同级但有序/无序类型切换：关闭旧列表再开新的
+                    popList();
+                    pushList(lvl, b.ordered);
                 } else {
-                    // 顶层重新开列表
-                    listStack.push_back({ lvl, b.ordered });
-                    html += b.ordered ? "<ol>\n" : "<ul>\n";
+                    // 同级同类型：闭合上一个 <li>
+                    html += "</li>\n";
                 }
             }
             html += "<li>";
@@ -294,25 +280,20 @@ img{max-width:100%;}
                     html += "</thead>\n<tbody>\n";
                 }
                 html += "<tr>\n";
+                const char* tag = row.isHeader ? "th" : "td";
                 for (size_t ci = 0; ci < row.cells.size(); ++ci) {
-                    const TableCell& cell = row.cells[ci];
-                    std::string align;
+                    const char* align = "";
                     if (ci < b.columnAligns.size()) {
                         switch (b.columnAligns[ci]) {
-                        case TableAlign::Left:   align = " style=\"text-align:left\""; break;
+                        case TableAlign::Left:   align = " style=\"text-align:left\"";   break;
                         case TableAlign::Center: align = " style=\"text-align:center\""; break;
-                        case TableAlign::Right:  align = " style=\"text-align:right\""; break;
+                        case TableAlign::Right:  align = " style=\"text-align:right\"";  break;
+                        default: break;
                         }
                     }
-                    if (row.isHeader) {
-                        html += "<th"; html += align; html += '>';
-                        EmitRuns(cell.runs, html);
-                        html += "</th>\n";
-                    } else {
-                        html += "<td"; html += align; html += '>';
-                        EmitRuns(cell.runs, html);
-                        html += "</td>\n";
-                    }
+                    html += '<'; html += tag; html += align; html += '>';
+                    EmitRuns(row.cells[ci].runs, html);
+                    html += "</"; html += tag; html += ">\n";
                 }
                 html += "</tr>\n";
             }

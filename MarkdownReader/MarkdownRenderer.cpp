@@ -7,6 +7,81 @@
 
 using Microsoft::WRL::ComPtr;
 
+// ==================== 表格几何辅助 ====================
+
+std::vector<float> MarkdownRenderer::ComputeTableColX(const std::vector<float>& colWidths) {
+    std::vector<float> colX(colWidths.size());
+    float x = kPadding;
+    for (size_t c = 0; c < colWidths.size(); ++c) {
+        colX[c] = x;
+        x += colWidths[c];
+    }
+    return colX;
+}
+
+float MarkdownRenderer::TableCellTextX(const LayoutBlock::TableCellLayout& cell,
+                                       float colLeft, float colWidth) {
+    switch (cell.align) {
+    case TableAlign::Center: return colLeft + (colWidth - cell.contentW) * 0.5f;
+    case TableAlign::Right:  return colLeft + colWidth - kTableCellPadX - cell.contentW;
+    default:                 return colLeft + kTableCellPadX;
+    }
+}
+
+bool MarkdownRenderer::FindTableCellRange(const LayoutBlock& lb, size_t row, size_t col,
+                                          UINT32* start, UINT32* end) {
+    for (const auto& tr : lb.tableTextRanges) {
+        if (tr.row == row && tr.col == col) {
+            if (start) *start = tr.start;
+            if (end)   *end = tr.end;
+            return true;
+        }
+    }
+    return false;
+}
+
+// ==================== 行内样式 / 复制按钮 ====================
+
+void MarkdownRenderer::ApplyInlineStyles(IDWriteTextLayout* layout,
+                                         const std::vector<InlineRun*>& runs,
+                                         const std::vector<UINT32>& runStarts,
+                                         std::vector<LayoutBlock::LinkRange>& outLinks) {
+    if (!layout) return;
+    for (size_t i = 0; i < runs.size(); ++i) {
+        const InlineRun* run = runs[i];
+        const UINT32 start = runStarts[i];
+        const UINT32 length = (UINT32)run->text.size();
+        if (length == 0) continue;
+        const DWRITE_TEXT_RANGE r{ start, length };
+
+        if (run->bold)          layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, r);
+        if (run->italic)        layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
+        if (run->strikethrough) layout->SetStrikethrough(TRUE, r);
+        if (run->code) {
+            layout->SetFontFamilyName(FontManager::Instance().GetCodeFamily().c_str(), r);
+            layout->SetDrawingEffect(m_effCode.Get(), r);
+        }
+        if (!run->linkUrl.empty()) {
+            layout->SetUnderline(TRUE, r);
+            layout->SetDrawingEffect(m_effLink.Get(), r);
+            outLinks.push_back({ start, start + length, run->linkUrl });
+        }
+    }
+}
+
+ComPtr<IDWriteTextLayout> MarkdownRenderer::CreateCopyButtonLayout(const wchar_t* text, UINT32 len) const {
+    constexpr float kBtnW = 64.0f;
+    constexpr float kBtnH = 22.0f;
+    ComPtr<IDWriteTextLayout> layout;
+    if (!m_dwrite) return layout;
+    m_dwrite->CreateTextLayout(text, len, m_fmtBtn.Get(), kBtnW, kBtnH, layout.GetAddressOf());
+    if (layout) {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+    return layout;
+}
+
 MarkdownRenderer::~MarkdownRenderer() {
     DiscardDeviceResources();
 }
@@ -233,16 +308,7 @@ void MarkdownRenderer::BuildLayout() {
             lb.copyBtnRect = D2D1::RectF(
                 kPadding + m_contentWidth - 68.0f, lb.marginTop + 3.0f,
                 kPadding + m_contentWidth - 4.0f, lb.marginTop + 25.0f);
-            {
-                const wchar_t* btnText = L"复制";
-                ComPtr<IDWriteTextLayout> btnLay;
-                m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
-                if (btnLay) {
-                    btnLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    btnLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                }
-                lb.copyBtnLayout = btnLay;
-            }
+            lb.copyBtnLayout = CreateCopyButtonLayout(L"复制", 2);
             lb.y = m_totalHeight;
             m_totalHeight += lb.height;
             m_layout.push_back(std::move(lb));
@@ -312,14 +378,13 @@ void MarkdownRenderer::BuildLayout() {
                 for (size_t c = 0; c < ncols; ++c) {
                     const std::vector<InlineRun>* pruns = (c < row.cells.size()) ? &row.cells[c].runs : nullptr;
                     std::wstring text;
-                    struct R { UINT32 s, e; const InlineRun* run; };
-                    std::vector<R> ranges;
-                    UINT32 pos = 0;
+                    std::vector<InlineRun*> runPtrs;
+                    std::vector<UINT32> runStarts;
                     if (pruns) {
                         for (const auto& r : *pruns) {
-                            ranges.push_back({ pos, pos + (UINT32)r.text.size(), &r });
+                            runStarts.push_back((UINT32)text.size());
+                            runPtrs.push_back(const_cast<InlineRun*>(&r));
                             text += r.text;
-                            pos += (UINT32)r.text.size();
                         }
                     }
                     // 记录该单元格在 allText 中的范围（不含分隔符）
@@ -335,21 +400,7 @@ void MarkdownRenderer::BuildLayout() {
                     if (lay) {
                         if (row.isHeader) lay->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
                             DWRITE_TEXT_RANGE{ 0, (UINT32)text.size() });
-                        for (const auto& rr : ranges) {
-                            DWRITE_TEXT_RANGE r{ rr.s, rr.e - rr.s };
-                            if (rr.run->bold) lay->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, r);
-                            if (rr.run->italic) lay->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
-                            if (rr.run->strikethrough) lay->SetStrikethrough(TRUE, r);
-                            if (rr.run->code) {
-                                lay->SetFontFamilyName(FontManager::Instance().GetCodeFamily().c_str(), r);
-                                lay->SetDrawingEffect(m_effCode.Get(), r);
-                            }
-                            if (!rr.run->linkUrl.empty()) {
-                                lay->SetUnderline(TRUE, r);
-                                lay->SetDrawingEffect(m_effLink.Get(), r);
-                                cells[ri][c].linkRanges.push_back({ rr.s, rr.e, rr.run->linkUrl });
-                            }
-                        }
+                        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, cells[ri][c].linkRanges);
                     }
                     DWRITE_TEXT_METRICS m = {};
                     if (lay) lay->GetMetrics(&m);
@@ -426,37 +477,19 @@ void MarkdownRenderer::BuildLayout() {
         }
         if (maxW < 50) maxW = 50;
 
-        // 拼接行内文本并记录 range
+        // 拼接行内文本并记录每个 run 的起始位置
         std::wstring text;
-        struct R { UINT32 s, e; const InlineRun* run; };
-        std::vector<R> ranges;
-        UINT32 pos = 0;
+        std::vector<InlineRun*> runPtrs;
+        std::vector<UINT32> runStarts;
         for (const auto& r : b.runs) {
-            UINT32 s = pos;
+            runStarts.push_back((UINT32)text.size());
+            runPtrs.push_back(const_cast<InlineRun*>(&r));
             text += r.text;
-            pos += (UINT32)r.text.size();
-            ranges.push_back({ s, pos, &r });
         }
 
         ComPtr<IDWriteTextLayout> lay;
         m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt, maxW, 1e6f, lay.GetAddressOf());
-        if (lay) {
-            for (const auto& rr : ranges) {
-                DWRITE_TEXT_RANGE r{ rr.s, rr.e - rr.s };
-                if (rr.run->bold) lay->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, r);
-                if (rr.run->italic) lay->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
-                if (rr.run->strikethrough) lay->SetStrikethrough(TRUE, r);
-                if (rr.run->code) {
-                    lay->SetFontFamilyName(FontManager::Instance().GetCodeFamily().c_str(), r);
-                    lay->SetDrawingEffect(m_effCode.Get(), r);
-                }
-                if (!rr.run->linkUrl.empty()) {
-                    lay->SetUnderline(TRUE, r);
-                    lay->SetDrawingEffect(m_effLink.Get(), r);
-                    lb.linkRanges.push_back({ rr.s, rr.e, rr.run->linkUrl });
-                }
-            }
-        }
+        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, lb.linkRanges);
         DWRITE_TEXT_METRICS m = {};
         if (lay) lay->GetMetrics(&m);
         lb.layout = lay;
@@ -471,14 +504,7 @@ void MarkdownRenderer::BuildLayout() {
             lb.copyBtnRect = D2D1::RectF(
                 kPadding + m_contentWidth - 64.0f, marginTop,
                 kPadding + m_contentWidth, marginTop + 22.0f);
-            const wchar_t* btnText = L"复制";
-            ComPtr<IDWriteTextLayout> btnLay;
-            m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
-            if (btnLay) {
-                btnLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                btnLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            }
-            lb.copyBtnLayout = btnLay;
+            lb.copyBtnLayout = CreateCopyButtonLayout(L"复制", 2);
         }
         lb.y = m_totalHeight;
         m_totalHeight += lb.height;
@@ -533,11 +559,7 @@ void MarkdownRenderer::Render() {
             const auto& rowHeights = lb.tableRowHeights;
             float tableW = 0.0f;
             for (float w : colWidths) tableW += w;
-            std::vector<float> colX(colWidths.size());
-            {
-                float acc = kPadding;
-                for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = acc; acc += colWidths[c]; }
-            }
+            const std::vector<float> colX = ComputeTableColX(colWidths);
             float yRow = yBase;
             for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
                 float rh = rowHeights[ri];
@@ -574,14 +596,8 @@ void MarkdownRenderer::Render() {
                 for (size_t c = 0; c < lb.tableCells[ri].size(); ++c) {
                     const auto& cell = lb.tableCells[ri][c];
                     if (!cell.layout) continue;
-                    float cx;
-                    if (cell.align == TableAlign::Center)
-                        cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
-                    else if (cell.align == TableAlign::Right)
-                        cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
-                    else
-                        cx = colX[c] + kTableCellPadX;
-                    float cy = yRow + kTableCellPadY;
+                    const float cx = TableCellTextX(cell, colX[c], colWidths[c]);
+                    const float cy = yRow + kTableCellPadY;
                     RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brText.Get() };
                     cell.layout->Draw(&ctx, m_textRenderer.Get(), cx, cy);
                 }
@@ -615,29 +631,35 @@ void MarkdownRenderer::Render() {
     }
 }
 
+// 把 si.nPos 写回滚动条，并在位置确实变化时同步 m_scrollOffset 并请求重绘。
+// SetScrollInfo 会把 nPos 夹到合法范围，故写回后需重新读取。
+void MarkdownRenderer::ApplyScrollPos(SCROLLINFO& si, int oldPos) {
+    si.fMask = SIF_POS;
+    SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
+    GetScrollInfo(m_hwnd, SB_VERT, &si);
+    if (si.nPos == oldPos) return;
+    m_scrollOffset = (float)si.nPos;
+    ClampScroll();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
 void MarkdownRenderer::HandleVScroll(WPARAM wParam) {
+    constexpr int kLineStep = 20;
     SCROLLINFO si = {};
     si.cbSize = sizeof(si);
     si.fMask = SIF_ALL;
     GetScrollInfo(m_hwnd, SB_VERT, &si);
-    int oldPos = si.nPos;
-    int action = LOWORD(wParam);
-    switch (action) {
-    case SB_LINEUP: si.nPos -= 20; break;
-    case SB_LINEDOWN: si.nPos += 20; break;
-    case SB_PAGEUP: si.nPos -= (int)si.nPage; break;
+    const int oldPos = si.nPos;
+    switch (LOWORD(wParam)) {
+    case SB_LINEUP:   si.nPos -= kLineStep; break;
+    case SB_LINEDOWN: si.nPos += kLineStep; break;
+    case SB_PAGEUP:   si.nPos -= (int)si.nPage; break;
     case SB_PAGEDOWN: si.nPos += (int)si.nPage; break;
     case SB_THUMBTRACK:
     case SB_THUMBPOSITION: si.nPos = si.nTrackPos; break;
+    default: return;
     }
-    si.fMask = SIF_POS;
-    SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
-    GetScrollInfo(m_hwnd, SB_VERT, &si);
-    if (si.nPos != oldPos) {
-        m_scrollOffset = (float)si.nPos;
-        ClampScroll();
-        InvalidateRect(m_hwnd, nullptr, FALSE);
-    }
+    ApplyScrollPos(si, oldPos);
 }
 
 void MarkdownRenderer::HandleMouseWheel(WPARAM wParam) {
@@ -655,28 +677,22 @@ void MarkdownRenderer::HandleMouseWheel(WPARAM wParam) {
 }
 
 void MarkdownRenderer::HandleKeyDown(WPARAM wParam) {
+    constexpr int kArrowStep = 40;
     SCROLLINFO si = {};
     si.cbSize = sizeof(si);
     si.fMask = SIF_PAGE | SIF_POS | SIF_RANGE;
     GetScrollInfo(m_hwnd, SB_VERT, &si);
-    int oldPos = si.nPos;
+    const int oldPos = si.nPos;
     switch (wParam) {
-    case VK_DOWN: si.nPos += 40; break;
-    case VK_UP: si.nPos -= 40; break;
-    case VK_NEXT: si.nPos += (int)si.nPage; break;
+    case VK_DOWN:  si.nPos += kArrowStep; break;
+    case VK_UP:    si.nPos -= kArrowStep; break;
+    case VK_NEXT:  si.nPos += (int)si.nPage; break;
     case VK_PRIOR: si.nPos -= (int)si.nPage; break;
-    case VK_HOME: si.nPos = 0; break;
-    case VK_END: si.nPos = si.nMax; break;
+    case VK_HOME:  si.nPos = 0; break;
+    case VK_END:   si.nPos = si.nMax; break;
     default: return;
     }
-    si.fMask = SIF_POS;
-    SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
-    GetScrollInfo(m_hwnd, SB_VERT, &si);
-    if (si.nPos != oldPos) {
-        m_scrollOffset = (float)si.nPos;
-        ClampScroll();
-        InvalidateRect(m_hwnd, nullptr, FALSE);
-    }
+    ApplyScrollPos(si, oldPos);
 }
 
 void MarkdownRenderer::ScrollToBlock(int blockIndex) {
@@ -722,9 +738,7 @@ std::wstring MarkdownRenderer::HitTestLink(int xPx, int yPx) const {
         // 表格单元格链接
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
             const auto& colWidths = lb.tableColWidths;
-            std::vector<float> colX(colWidths.size());
-            float acc = kPadding;
-            for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = acc; acc += colWidths[c]; }
+            const std::vector<float> colX = ComputeTableColX(colWidths);
             float yRow = lb.y + lb.marginTop;
             for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
                 float rh = lb.tableRowHeights[ri];
@@ -733,13 +747,7 @@ std::wstring MarkdownRenderer::HitTestLink(int xPx, int yPx) const {
                         const auto& cell = lb.tableCells[ri][c];
                         if (cell.linkRanges.empty() || !cell.layout) continue;
                         if (xDip < colX[c] || xDip >= colX[c] + colWidths[c]) continue;
-                        float cx;
-                        if (cell.align == TableAlign::Center)
-                            cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
-                        else if (cell.align == TableAlign::Right)
-                            cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
-                        else
-                            cx = colX[c] + kTableCellPadX;
+                        const float cx = TableCellTextX(cell, colX[c], colWidths[c]);
                         float localX = xDip - cx;
                         float localY = yDip - (yRow + kTableCellPadY);
                         DWRITE_HIT_TEST_METRICS htm = {};
@@ -809,9 +817,7 @@ bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* text
         // 表格：定位到具体单元格
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
             const auto& colWidths = lb.tableColWidths;
-            std::vector<float> colX(colWidths.size());
-            float accX = kPadding;
-            for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = accX; accX += colWidths[c]; }
+            const std::vector<float> colX = ComputeTableColX(colWidths);
             float yRow = lb.y + lb.marginTop;
             for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
                 float rh = lb.tableRowHeights[ri];
@@ -820,13 +826,7 @@ bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* text
                         const auto& cell = lb.tableCells[ri][c];
                         if (!cell.layout) continue;
                         if (xDip < colX[c] || xDip >= colX[c] + colWidths[c]) continue;
-                        float cx;
-                        if (cell.align == TableAlign::Center)
-                            cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
-                        else if (cell.align == TableAlign::Right)
-                            cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
-                        else
-                            cx = colX[c] + kTableCellPadX;
+                        const float cx = TableCellTextX(cell, colX[c], colWidths[c]);
                         float localX = xDip - cx;
                         float localY = yDip - (yRow + kTableCellPadY);
                         DWRITE_HIT_TEST_METRICS htm = {};
@@ -834,9 +834,7 @@ bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* text
                         cell.layout->HitTestPoint(localX, localY, &isTrailing, &isInside, &htm);
                         // 查找该单元格在 fullText 中的起始位置
                         UINT32 cellStart = 0;
-                        for (const auto& tr : lb.tableTextRanges) {
-                            if (tr.row == ri && tr.col == c) { cellStart = tr.start; break; }
-                        }
+                        FindTableCellRange(lb, ri, c, &cellStart, nullptr);
                         *blockIdx = lb.blockIndex;
                         *textPos = cellStart + htm.textPosition + (isTrailing ? 1 : 0);
                         return true;
@@ -1059,85 +1057,77 @@ void MarkdownRenderer::CopyBlockText(int blockIdx) {
 
 // ==================== 选取高亮渲染 ====================
 
-void MarkdownRenderer::DrawSelectionForBlock(const LayoutBlock& lb, float top) {
-    int sBlk, eBlk;
-    UINT32 sPos, ePos;
-    GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
-    if (lb.blockIndex < sBlk || lb.blockIndex > eBlk) return;
-    if (lb.fullText.empty() || !m_brSelection) return;
-    UINT32 selStart = (lb.blockIndex == sBlk) ? sPos : 0;
-    UINT32 selEnd = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
-    if (selStart >= selEnd) return;
+// 收集某个文本范围在屏幕上占据的矩形。表格块会把范围按单元格切分后分别求解，
+// 普通块直接对整块布局求解。DrawSelectionForBlock / GetMatchRects 共用此实现。
+void MarkdownRenderer::CollectTextRangeRects(const LayoutBlock& lb, UINT32 pos, UINT32 len,
+                                             float top, std::vector<D2D1_RECT_F>& out) const {
+    // HitTestTextRange 的通用调用：缓冲不足时按需扩容重试，并把结果转成矩形追加到 out。
+    auto appendRects = [&out](IDWriteTextLayout* layout, UINT32 start, UINT32 count,
+                              float originX, float originY) {
+        if (!layout || count == 0) return;
+        constexpr UINT32 kInitialCap = 32;
+        std::vector<DWRITE_HIT_TEST_METRICS> metrics(kInitialCap);
+        UINT32 actual = 0;
+        HRESULT hr = layout->HitTestTextRange(start, count, originX, originY,
+            metrics.data(), kInitialCap, &actual);
+        if (hr == E_NOT_SUFFICIENT_BUFFER && actual > kInitialCap) {
+            metrics.resize(actual);
+            hr = layout->HitTestTextRange(start, count, originX, originY,
+                metrics.data(), actual, &actual);
+        }
+        if (FAILED(hr)) return;
+        for (UINT32 i = 0; i < actual; ++i) {
+            out.push_back(D2D1::RectF(metrics[i].left, metrics[i].top,
+                metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
+        }
+    };
 
-    // 表格：把全局选区拆分到各单元格分别绘制
+    const UINT32 rangeEnd = pos + len;
+
+    // 表格：把范围拆分到与之相交的各单元格
     if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
         const auto& colWidths = lb.tableColWidths;
-        std::vector<float> colX(colWidths.size());
-        float accX = kPadding;
-        for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = accX; accX += colWidths[c]; }
+        const std::vector<float> colX = ComputeTableColX(colWidths);
         float yRow = top + lb.marginTop;
         for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
-            float rh = lb.tableRowHeights[ri];
             for (size_t c = 0; c < lb.tableCells[ri].size(); ++c) {
                 const auto& cell = lb.tableCells[ri][c];
                 if (!cell.layout) continue;
-                // 查找该单元格在 fullText 中的范围
                 UINT32 cellStart = 0, cellEnd = 0;
-                for (const auto& tr : lb.tableTextRanges) {
-                    if (tr.row == ri && tr.col == c) { cellStart = tr.start; cellEnd = tr.end; break; }
-                }
-                UINT32 cs = (selStart > cellStart) ? selStart : cellStart;
-                UINT32 ce = (selEnd < cellEnd) ? selEnd : cellEnd;
-                if (cs >= ce) { continue; }
-                float cx;
-                if (cell.align == TableAlign::Center)
-                    cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
-                else if (cell.align == TableAlign::Right)
-                    cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
-                else
-                    cx = colX[c] + kTableCellPadX;
-                float cy = yRow + kTableCellPadY;
-                std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
-                UINT32 actualCount = 0;
-                HRESULT hr = cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
-                    cx, cy, metrics.data(), 32, &actualCount);
-                if (hr == E_NOT_SUFFICIENT_BUFFER && actualCount > 32) {
-                    metrics.resize(actualCount);
-                    hr = cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
-                        cx, cy, metrics.data(), actualCount, &actualCount);
-                }
-                if (SUCCEEDED(hr)) {
-                    for (UINT32 i = 0; i < actualCount; ++i) {
-                        m_rt->FillRectangle(
-                            D2D1::RectF(metrics[i].left, metrics[i].top,
-                                metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height),
-                            m_brSelection.Get());
-                    }
-                }
+                if (!FindTableCellRange(lb, ri, c, &cellStart, &cellEnd)) continue;
+                // 与单元格求交
+                const UINT32 cs = (pos > cellStart) ? pos : cellStart;
+                const UINT32 ce = (rangeEnd < cellEnd) ? rangeEnd : cellEnd;
+                if (cs >= ce) continue;
+                appendRects(cell.layout.Get(), cs - cellStart, ce - cs,
+                    TableCellTextX(cell, colX[c], colWidths[c]), yRow + kTableCellPadY);
             }
-            yRow += rh;
+            yRow += lb.tableRowHeights[ri];
         }
         return;
     }
 
     // 普通文本块
-    if (!lb.layout) return;
-    std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
-    UINT32 actualCount = 0;
-    HRESULT hr = lb.layout->HitTestTextRange(selStart, selEnd - selStart,
-        lb.textX, top + lb.textTopRel, metrics.data(), 32, &actualCount);
-    if (hr == E_NOT_SUFFICIENT_BUFFER && actualCount > 32) {
-        metrics.resize(actualCount);
-        hr = lb.layout->HitTestTextRange(selStart, selEnd - selStart,
-            lb.textX, top + lb.textTopRel, metrics.data(), actualCount, &actualCount);
-    }
-    if (SUCCEEDED(hr)) {
-        for (UINT32 i = 0; i < actualCount; ++i) {
-            m_rt->FillRectangle(
-                D2D1::RectF(metrics[i].left, metrics[i].top,
-                    metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height),
-                m_brSelection.Get());
-        }
+    appendRects(lb.layout.Get(), pos, len, lb.textX, top + lb.textTopRel);
+}
+
+void MarkdownRenderer::DrawSelectionForBlock(const LayoutBlock& lb, float top) {
+    if (lb.fullText.empty() || !m_brSelection) return;
+
+    int sBlk, eBlk;
+    UINT32 sPos, ePos;
+    GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
+    if (lb.blockIndex < sBlk || lb.blockIndex > eBlk) return;
+
+    // 中间的块整块选中，首/末块只选中被选区覆盖的部分
+    const UINT32 selStart = (lb.blockIndex == sBlk) ? sPos : 0;
+    const UINT32 selEnd = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
+    if (selStart >= selEnd) return;
+
+    std::vector<D2D1_RECT_F> rects;
+    CollectTextRangeRects(lb, selStart, selEnd - selStart, top, rects);
+    for (const auto& r : rects) {
+        m_rt->FillRectangle(r, m_brSelection.Get());
     }
 }
 
@@ -1148,27 +1138,16 @@ void MarkdownRenderer::DrawCopyButton(const LayoutBlock& lb, float top) {
     D2D1_RECT_F btn = lb.copyBtnRect;
     btn.top += top;
     btn.bottom += top;
-    bool hovered = (m_hoverCopyBlock == lb.blockIndex);
-    bool copied = (m_copiedBlockIndex == lb.blockIndex &&
-                   GetTickCount() - m_copiedTick < 2000);
+    const bool hovered = (m_hoverCopyBlock == lb.blockIndex);
+    // 复制成功后短暂显示"已复制"反馈
+    const bool copied = (m_copiedBlockIndex == lb.blockIndex &&
+                         GetTickCount() - m_copiedTick < kCopiedFeedbackMs);
     // 背景
     m_brCopyBtnBg->SetColor(hovered ? D2D1::ColorF(0xD0D7DE) : D2D1::ColorF(0xEAEEF2));
-    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(btn, 3.0f, 3.0f);
-    m_rt->FillRoundedRectangle(rr, m_brCopyBtnBg.Get());
-    // 文字
-    const wchar_t* text = copied ? L"已复制" : L"复制"; // 已复制 / 复制
-    UINT32 textLen = copied ? 3 : 2;
-    ComPtr<IDWriteTextLayout> textLay;
-    if (copied) {
-        m_dwrite->CreateTextLayout(text, textLen, m_fmtBtn.Get(),
-            btn.right - btn.left, btn.bottom - btn.top, textLay.GetAddressOf());
-        if (textLay) {
-            textLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            textLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        }
-    } else {
-        textLay = lb.copyBtnLayout;
-    }
+    m_rt->FillRoundedRectangle(D2D1::RoundedRect(btn, 3.0f, 3.0f), m_brCopyBtnBg.Get());
+    // 文字：常态复用预建布局，反馈态临时创建
+    ComPtr<IDWriteTextLayout> textLay =
+        copied ? CreateCopyButtonLayout(L"已复制", 3) : lb.copyBtnLayout;
     if (textLay) {
         m_brCopyBtnText->SetColor(copied ? D2D1::ColorF(0x1A7F37) : D2D1::ColorF(0x57606A));
         RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brCopyBtnText.Get() };
@@ -1189,30 +1168,20 @@ void MarkdownRenderer::SearchInDocument(const std::wstring& query, bool caseSens
         return;
     }
 
-    std::wstring q = query;
-    std::wstring qLower;
-    if (!caseSensitive) {
-        qLower = query;
-        for (auto& c : qLower) c = (wchar_t)towlower(c);
-    }
+    // 大小写不敏感时统一转小写后再匹配；下标在原串与小写串中一一对应。
+    auto toLower = [](std::wstring s) {
+        for (auto& c : s) c = (wchar_t)towlower(c);
+        return s;
+    };
+    const std::wstring needle = caseSensitive ? query : toLower(query);
+    const size_t needleLen = needle.size();
 
     for (const auto& lb : m_layout) {
         if (lb.fullText.empty()) continue;
-        const std::wstring& text = lb.fullText;
-        if (caseSensitive) {
-            size_t pos = 0;
-            while ((pos = text.find(q, pos)) != std::wstring::npos) {
-                m_searchMatches.push_back({ lb.blockIndex, (UINT32)pos, (UINT32)q.size() });
-                pos += q.size();
-            }
-        } else {
-            std::wstring textLower = text;
-            for (auto& c : textLower) c = (wchar_t)towlower(c);
-            size_t pos = 0;
-            while ((pos = textLower.find(qLower, pos)) != std::wstring::npos) {
-                m_searchMatches.push_back({ lb.blockIndex, (UINT32)pos, (UINT32)q.size() });
-                pos += q.size();
-            }
+        const std::wstring haystack = caseSensitive ? lb.fullText : toLower(lb.fullText);
+        for (size_t pos = haystack.find(needle); pos != std::wstring::npos;
+             pos = haystack.find(needle, pos + needleLen)) {
+            m_searchMatches.push_back({ lb.blockIndex, (UINT32)pos, (UINT32)needleLen });
         }
     }
 
@@ -1244,82 +1213,13 @@ void MarkdownRenderer::ClearSearch() {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
-void MarkdownRenderer::GetMatchRects(const LayoutBlock& lb, UINT32 pos, UINT32 len, float top,
-                                      std::vector<D2D1_RECT_F>& out) const {
-    // 表格：拆分到对应单元格
-    if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
-        const auto& colWidths = lb.tableColWidths;
-        std::vector<float> colX(colWidths.size());
-        float accX = kPadding;
-        for (size_t c = 0; c < colWidths.size(); ++c) { colX[c] = accX; accX += colWidths[c]; }
-        float yRow = top + lb.marginTop;
-        for (size_t ri = 0; ri < lb.tableCells.size(); ++ri) {
-            float rh = lb.tableRowHeights[ri];
-            for (size_t c = 0; c < lb.tableCells[ri].size(); ++c) {
-                const auto& cell = lb.tableCells[ri][c];
-                if (!cell.layout) { continue; }
-                UINT32 cellStart = 0, cellEnd = 0;
-                for (const auto& tr : lb.tableTextRanges) {
-                    if (tr.row == ri && tr.col == c) { cellStart = tr.start; cellEnd = tr.end; break; }
-                }
-                UINT32 cs = (pos > cellStart) ? pos : cellStart;
-                UINT32 ce = (pos + len < cellEnd) ? (pos + len) : cellEnd;
-                if (cs >= ce) { continue; }
-                float cx;
-                if (cell.align == TableAlign::Center)
-                    cx = colX[c] + (colWidths[c] - cell.contentW) * 0.5f;
-                else if (cell.align == TableAlign::Right)
-                    cx = colX[c] + colWidths[c] - kTableCellPadX - cell.contentW;
-                else
-                    cx = colX[c] + kTableCellPadX;
-                float cy = yRow + kTableCellPadY;
-                std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
-                UINT32 actual = 0;
-                HRESULT hr = cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
-                    cx, cy, metrics.data(), 32, &actual);
-                if (hr == E_NOT_SUFFICIENT_BUFFER && actual > 32) {
-                    metrics.resize(actual);
-                    cell.layout->HitTestTextRange(cs - cellStart, ce - cs,
-                        cx, cy, metrics.data(), actual, &actual);
-                }
-                if (SUCCEEDED(hr)) {
-                    for (UINT32 i = 0; i < actual; ++i) {
-                        out.push_back(D2D1::RectF(metrics[i].left, metrics[i].top,
-                            metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
-                    }
-                }
-            }
-            yRow += rh;
-        }
-        return;
-    }
-
-    // 普通文本块
-    if (!lb.layout) return;
-    std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
-    UINT32 actual = 0;
-    HRESULT hr = lb.layout->HitTestTextRange(pos, len,
-        lb.textX, top + lb.textTopRel, metrics.data(), 32, &actual);
-    if (hr == E_NOT_SUFFICIENT_BUFFER && actual > 32) {
-        metrics.resize(actual);
-        lb.layout->HitTestTextRange(pos, len,
-            lb.textX, top + lb.textTopRel, metrics.data(), actual, &actual);
-    }
-    if (SUCCEEDED(hr)) {
-        for (UINT32 i = 0; i < actual; ++i) {
-            out.push_back(D2D1::RectF(metrics[i].left, metrics[i].top,
-                metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
-        }
-    }
-}
-
 void MarkdownRenderer::DrawSearchHits(const LayoutBlock& lb, float top) {
     if (!m_brSearchHit || !m_brSearchCurrent) return;
     for (int i = 0; i < (int)m_searchMatches.size(); ++i) {
         const auto& m = m_searchMatches[i];
         if (m.blockIndex != lb.blockIndex) continue;
         std::vector<D2D1_RECT_F> rects;
-        GetMatchRects(lb, m.textPos, m.length, top, rects);
+        CollectTextRangeRects(lb, m.textPos, m.length, top, rects);
         ID2D1SolidColorBrush* br = (i == m_currentMatch) ? m_brSearchCurrent.Get() : m_brSearchHit.Get();
         for (const auto& r : rects) {
             m_rt->FillRectangle(r, br);
@@ -1334,7 +1234,7 @@ void MarkdownRenderer::ScrollToCurrentMatch() {
         if (lb.blockIndex != m.blockIndex) continue;
         // 用文档坐标（top = lb.y）计算命中矩形，得到其在文档中的 y
         std::vector<D2D1_RECT_F> rects;
-        GetMatchRects(lb, m.textPos, m.length, lb.y, rects);
+        CollectTextRangeRects(lb, m.textPos, m.length, lb.y, rects);
         float margin = 40.0f;
         if (rects.empty()) {
             // 回退：滚动到块顶

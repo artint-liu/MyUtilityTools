@@ -146,14 +146,37 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSearchHit;     // 命中高亮（黄）
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSearchCurrent; // 当前命中（橙）
     void DrawSearchHits(const LayoutBlock& lb, float top);
-    void GetMatchRects(const LayoutBlock& lb, UINT32 pos, UINT32 len, float top,
-                       std::vector<D2D1_RECT_F>& out) const;
     void ScrollToCurrentMatch();
 
     static constexpr float kPadding = 24.0f;
     static constexpr float kCodePad = 10.0f;
     static constexpr float kTableCellPadX = 8.0f;
     static constexpr float kTableCellPadY = 6.0f;
+    // "已复制"提示的显示时长（毫秒）
+    static constexpr DWORD kCopiedFeedbackMs = 2000;
+
+    // ---- 表格几何辅助 ----
+    // 各列左边界的绝对 x 坐标（DIP），colX[c] 为第 c 列左边线。
+    static std::vector<float> ComputeTableColX(const std::vector<float>& colWidths);
+    // 单元格内文字的绘制原点 x，按列对齐方式计算。
+    static float TableCellTextX(const LayoutBlock::TableCellLayout& cell, float colLeft, float colWidth);
+    // 单元格 (row,col) 的文本在 lb.fullText 中的范围；未找到时返回 false。
+    static bool FindTableCellRange(const LayoutBlock& lb, size_t row, size_t col,
+                                   UINT32* start, UINT32* end);
+
+    // 对文本布局套用行内样式（粗体/斜体/删除线/行内代码/链接）。
+    // 命中的链接会追加到 outLinks。
+    void ApplyInlineStyles(IDWriteTextLayout* layout,
+                           const std::vector<InlineRun*>& runs,
+                           const std::vector<UINT32>& runStarts,
+                           std::vector<LayoutBlock::LinkRange>& outLinks);
+    // 创建"复制"按钮的文字布局（居中对齐）。
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> CreateCopyButtonLayout(const wchar_t* text, UINT32 len) const;
+    // 收集 [pos,pos+len) 文本范围在屏幕上占据的矩形（自动处理表格分单元格的情况）。
+    void CollectTextRangeRects(const LayoutBlock& lb, UINT32 pos, UINT32 len, float top,
+                               std::vector<D2D1_RECT_F>& out) const;
+    // 以 SCROLLINFO 的当前位置提交滚动；位置有变化时重绘。
+    void ApplyScrollPos(SCROLLINFO& si, int oldPos);
 
     void CreateDeviceResources();
     void DiscardDeviceResources();

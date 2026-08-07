@@ -53,6 +53,13 @@ private:
     HFONT m_fontTitle = nullptr;
     int m_titleLineHeight = 30;
 
+    // 把 96 DPI 基准下的逻辑像素换算为当前 DPI 的物理像素
+    int Scaled(int px96) const { return MulDiv(px96, (int)m_dpi, 96); }
+    // 当前深度对应的水平缩进起点（不含箭头槽位）
+    int DepthOffset(int depth) const { return m_padX + depth * Scaled(14); }
+    // 把 m_scroll 夹到 [0, 最大滚动量]
+    void ClampScroll();
+
     void CreateFonts();
     void BuildTree();
     void RebuildVisible();

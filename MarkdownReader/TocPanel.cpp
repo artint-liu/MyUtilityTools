@@ -20,19 +20,21 @@ void TocPanel::CreateFonts() {
     FontManager::Instance().LoadFonts();
     const std::wstring& fam = FontManager::Instance().GetTocFamilyGdi();
     const wchar_t* family = fam.c_str();
-    int sizeBase = FontManager::Instance().GetTocSizePt();
-    int lineBase = FontManager::Instance().GetTocLineSpacing();
-    int size = -MulDiv(sizeBase * 60, (int)m_dpi, 72 * 100);
-    m_font = CreateFontW(size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, family);
-    m_fontBold = CreateFontW(size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, family);
-    int titleSize = -MulDiv((sizeBase + 1) * 60, (int)m_dpi, 72 * 100);
-    m_fontTitle = CreateFontW(titleSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, family);
+    const int sizeBase = FontManager::Instance().GetTocSizePt();
+    const int lineBase = FontManager::Instance().GetTocLineSpacing();
+
+    // 三种字体仅在字号/字重上不同，其余参数一致
+    auto makeFont = [family](int height, int weight) {
+        return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_SWISS, family);
+    };
+    // 磅值 -> 设备像素高度（负值表示字符高度而非单元格高度）
+    auto ptToHeight = [this](int pt) { return -MulDiv(pt * 60, (int)m_dpi, 72 * 100); };
+
+    m_font     = makeFont(ptToHeight(sizeBase), FW_NORMAL);
+    m_fontBold = makeFont(ptToHeight(sizeBase), FW_SEMIBOLD);
+    m_fontTitle = makeFont(ptToHeight(sizeBase + 1), FW_SEMIBOLD);
 
     m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
     m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
@@ -42,9 +44,9 @@ void TocPanel::Init(HWND hwnd) {
     m_hwnd = hwnd;
     m_dpi = GetDpiForWindow(hwnd);
     if (m_dpi == 0) m_dpi = 96;
-    m_padX = MulDiv(10, (int)m_dpi, 96);
-    m_arrowSize = MulDiv(10, (int)m_dpi, 96);
-    m_arrowSlot = MulDiv(16, (int)m_dpi, 96);
+    m_padX = Scaled(10);
+    m_arrowSize = Scaled(10);
+    m_arrowSlot = Scaled(16);
     CreateFonts();
 }
 
@@ -109,13 +111,15 @@ void TocPanel::Resize(int widthPx, int heightPx) {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void TocPanel::ClampScroll() {
+    const int maxScroll = (std::max)(0, m_totalHeight - m_heightPx);
+    m_scroll = (std::min)((std::max)(m_scroll, 0), maxScroll);
+}
+
 void TocPanel::UpdateScroll() {
     m_totalHeight = (int)m_visible.size() * m_lineHeight;
     if (!m_hwnd) return;
-    int maxScroll = m_totalHeight - m_heightPx;
-    if (maxScroll < 0) maxScroll = 0;
-    if (m_scroll < 0) m_scroll = 0;
-    if (m_scroll > maxScroll) m_scroll = maxScroll;
+    ClampScroll();
 
     SCROLLINFO si = {};
     si.cbSize = sizeof(si);
@@ -128,18 +132,17 @@ void TocPanel::UpdateScroll() {
 }
 
 int TocPanel::TitleHeight() const {
-    return MulDiv(8, (int)m_dpi, 96) + m_titleLineHeight + MulDiv(4, (int)m_dpi, 96);
+    return Scaled(8) + m_titleLineHeight + Scaled(4);
 }
 
 int TocPanel::IndentForLevel(int level) const {
-    int depth = (std::max)(0, level - 1);
     // 每行缩进 = 基础 padding + 深度步进 + 箭头槽位
-    return m_padX + depth * MulDiv(14, (int)m_dpi, 96) + m_arrowSlot;
+    return DepthOffset((std::max)(0, level - 1)) + m_arrowSlot;
 }
 
 int TocPanel::ArrowXForDepth(int depth) const {
     // 箭头绘制在该深度的箭头槽位中心
-    return m_padX + depth * MulDiv(14, (int)m_dpi, 96) + m_arrowSlot / 2;
+    return DepthOffset(depth) + m_arrowSlot / 2;
 }
 
 int TocPanel::ItemAtY(int yPx) const {
@@ -198,11 +201,8 @@ void TocPanel::OnMouseLeave() {
 }
 
 void TocPanel::OnMouseWheel(int delta) {
-    int maxScroll = m_totalHeight - m_heightPx;
-    if (maxScroll < 0) maxScroll = 0;
     m_scroll -= delta * m_lineHeight / WHEEL_DELTA;
-    if (m_scroll < 0) m_scroll = 0;
-    if (m_scroll > maxScroll) m_scroll = maxScroll;
+    ClampScroll();
     UpdateScroll();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -255,14 +255,20 @@ void TocPanel::Paint() {
     HBITMAP bmp = CreateCompatibleBitmap(hdc, w, h);
     HBITMAP oldBmp = (HBITMAP)SelectObject(mem, bmp);
 
+    // 用指定纯色填充矩形（画刷即用即弃）
+    auto fillRect = [mem](const RECT& rc, COLORREF color) {
+        HBRUSH brush = CreateSolidBrush(color);
+        FillRect(mem, &rc, brush);
+        DeleteObject(brush);
+    };
+
     RECT rcAll = { 0, 0, w, h };
-    HBRUSH bg = CreateSolidBrush(RGB(0xF6, 0xF8, 0xFA));
-    FillRect(mem, &rcAll, bg);
-    DeleteObject(bg);
+    fillRect(rcAll, RGB(0xF6, 0xF8, 0xFA));
 
     int titleH = TitleHeight();
 
-    RECT rcTitle = { m_padX, MulDiv(8, (int)m_dpi, 96), w, MulDiv(8, (int)m_dpi, 96) + m_titleLineHeight };
+    const int titleTop = Scaled(8);
+    RECT rcTitle = { m_padX, titleTop, w, titleTop + m_titleLineHeight };
     HFONT oldFont = (HFONT)SelectObject(mem, m_fontTitle);
     SetBkMode(mem, TRANSPARENT);
     SetTextColor(mem, RGB(0x24, 0x29, 0x2F));
@@ -285,17 +291,12 @@ void TocPanel::Paint() {
 
         RECT rcItem = { 0, y, w, y + m_lineHeight };
         if (i == m_selected) {
-            HBRUSH sel = CreateSolidBrush(RGB(0xDD, 0xEA, 0xFF));
-            FillRect(mem, &rcItem, sel);
-            DeleteObject(sel);
-            HBRUSH ind = CreateSolidBrush(RGB(0x09, 0x69, 0xDA));
-            RECT rcInd = { 0, y, MulDiv(3, (int)m_dpi, 96), y + m_lineHeight };
-            FillRect(mem, &rcInd, ind);
-            DeleteObject(ind);
+            fillRect(rcItem, RGB(0xDD, 0xEA, 0xFF));
+            // 选中项左侧的高亮竖条
+            RECT rcInd = { 0, y, Scaled(3), y + m_lineHeight };
+            fillRect(rcInd, RGB(0x09, 0x69, 0xDA));
         } else if (i == m_hover) {
-            HBRUSH hv = CreateSolidBrush(RGB(0xE4, 0xEA, 0xF0));
-            FillRect(mem, &rcItem, hv);
-            DeleteObject(hv);
+            fillRect(rcItem, RGB(0xE4, 0xEA, 0xF0));
         }
 
         const TocNode& node = m_nodes[i];
@@ -308,7 +309,7 @@ void TocPanel::Paint() {
             int ay = y + m_lineHeight / 2;
             int dxWide = m_arrowSize / 2;     // 水平半跨度（宽）
             int dyWide = m_arrowSize / 4 + 1; // 竖直半跨度（扁）
-            int weight = (std::max)(2, MulDiv(2, (int)m_dpi, 96));
+            int weight = (std::max)(2, Scaled(2));
             HPEN arrowPen = CreatePen(PS_SOLID, weight, RGB(0x8A, 0x94, 0xA6));
             HPEN prevPen = (HPEN)SelectObject(mem, arrowPen);
             if (node.collapsed) {
