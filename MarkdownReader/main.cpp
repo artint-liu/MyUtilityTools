@@ -11,6 +11,7 @@
 #include "resource.h"
 #include "MarkdownParser.h"
 #include "MarkdownRenderer.h"
+#include "HtmlExporter.h"
 #include "TocPanel.h"
 
 #pragma comment(lib, "user32.lib")
@@ -374,6 +375,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         HMENU hFile = CreatePopupMenu();
         AppendMenuW(hFile, MF_STRING, IDM_FILE_OPEN, L"\u6253\u5F00...\tCtrl+O");
         AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_SAVE_HTML, L"\u4FDD\u5B58\u4E3A HTML...\tCtrl+S");
+        AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT, L"\u9000\u51FA");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFile, L"\u6587\u4EF6(&F)");
         HMENU hView = CreatePopupMenu();
@@ -460,6 +463,41 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         case IDM_FILE_EXIT:
             DestroyWindow(hwnd);
             return 0;
+        case IDM_FILE_SAVE_HTML: {
+            if (fs->doc.blocks.empty()) {
+                MessageBoxW(hwnd, L"\u5F53\u524D\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u6587\u6863\uFF0C\u8BF7\u5148\u6253\u5F00 Markdown \u6587\u4EF6\u3002",
+                    L"MarkdownReader", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            wchar_t file[MAX_PATH] = { 0 };
+            // 默认文件名：沿用当前 md 文件名，扩展名改为 .html
+            if (!fs->currentFile.empty()) {
+                std::wstring base = fs->currentFile;
+                size_t dot = base.find_last_of(L'.');
+                if (dot != std::wstring::npos) base = base.substr(0, dot);
+                base += L".html";
+                wcsncpy_s(file, MAX_PATH, base.c_str(), _TRUNCATE);
+            }
+            OPENFILENAMEW ofn = {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = hwnd;
+            ofn.lpstrFilter = L"HTML (*.html;*.htm)\0*.html;*.htm\0\u6240\u6709\u6587\u4EF6 (*.*)\0*.*\0";
+            ofn.lpstrFile = file;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.lpstrDefExt = L"html";
+            ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+            if (GetSaveFileNameW(&ofn)) {
+                std::wstring path = file;
+                if (SaveDocumentAsHtml(fs->doc, path)) {
+                    std::wstring msg = L"\u5DF2\u4FDD\u5B58\u5230\uFF1A\n" + path;
+                    MessageBoxW(hwnd, msg.c_str(), L"MarkdownReader", MB_OK | MB_ICONINFORMATION);
+                } else {
+                    std::wstring msg = L"\u4FDD\u5B58\u5931\u8D25\uFF1A\n" + path;
+                    MessageBoxW(hwnd, msg.c_str(), L"MarkdownReader", MB_OK | MB_ICONERROR);
+                }
+            }
+            return 0;
+        }
         case IDM_VIEW_TOC:
             if (fs) {
                 fs->tocVisible = !fs->tocVisible;
@@ -653,9 +691,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     // 加速键
     ACCEL acc[] = {
         { FCONTROL | FVIRTKEY, 'O', IDM_FILE_OPEN },
+        { FCONTROL | FVIRTKEY, 'S', IDM_FILE_SAVE_HTML },
         { FVIRTKEY, VK_F9, IDM_VIEW_TOC },
     };
-    HACCEL hAccel = CreateAcceleratorTableW(acc, 2);
+    HACCEL hAccel = CreateAcceleratorTableW(acc, 3);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
