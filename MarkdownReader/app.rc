@@ -2,3 +2,6 @@
 #include "resource.h"
 
 // 清单由链接器的清单工具合并 app.manifest 生成（避免与 .rc 重复嵌入）
+
+// 应用程序图标
+IDI_APP_ICON ICON "app.ico"

@@ -107,4 +107,6 @@ private:
     void BuildLayout();
     void UpdateScrollInfo();
     void ClampScroll();
+    // 允许的最大滚动偏移：末尾留白使最后一个块可滚到视口顶部
+    float MaxScroll() const;
 };

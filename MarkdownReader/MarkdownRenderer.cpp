@@ -130,20 +130,34 @@ void MarkdownRenderer::SetDocument(const Document& doc) {
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
-void MarkdownRenderer::ClampScroll() {
+float MarkdownRenderer::MaxScroll() const {
+    if (m_totalHeight <= m_viewHeight) return 0.0f;
+    // 允许底部留白：最后一个块可滚到视口顶部，方便阅读末尾内容、
+    // 也使点击目录末尾标题能将其显示在窗口顶部。
     float maxScroll = m_totalHeight - m_viewHeight;
-    if (maxScroll < 0) maxScroll = 0;
+    if (!m_layout.empty()) {
+        float lastTop = m_layout.back().y;
+        if (lastTop > maxScroll) maxScroll = lastTop;
+    }
+    return maxScroll;
+}
+
+void MarkdownRenderer::ClampScroll() {
+    float maxScroll = MaxScroll();
     if (m_scrollOffset < 0) m_scrollOffset = 0;
     if (m_scrollOffset > maxScroll) m_scrollOffset = maxScroll;
 }
 
 void MarkdownRenderer::UpdateScrollInfo() {
     if (!m_hwnd) return;
+    float maxScroll = MaxScroll();
     SCROLLINFO si = {};
     si.cbSize = sizeof(si);
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     si.nMin = 0;
-    si.nMax = (int)(m_totalHeight + 0.5f);
+    // nMax 取 maxScroll+viewHeight，使滚动条 thumb 最底处对应 maxScroll
+    // （Win32 会把 nPos 钳制到 [0, nMax-nPage+1]）。
+    si.nMax = (int)(maxScroll + m_viewHeight + 0.5f);
     si.nPage = (UINT)(m_viewHeight + 0.5f);
     if (si.nPage < 1) si.nPage = 1;
     si.nPos = (int)(m_scrollOffset + 0.5f);

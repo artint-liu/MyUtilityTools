@@ -498,7 +498,8 @@ static void RegisterClasses(HINSTANCE hInst) {
     wc.hbrBackground = nullptr;
     wc.lpszClassName = kFrameClass;
     wc.lpfnWndProc = FrameWndProc;
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.hIcon = LoadIconW(hInst, MAKEINTRESOURCE(IDI_APP_ICON));
+    wc.hIconSm = LoadIconW(hInst, MAKEINTRESOURCE(IDI_APP_ICON));
     RegisterClassExW(&wc);
 
     wc.lpfnWndProc = ContentWndProc;
