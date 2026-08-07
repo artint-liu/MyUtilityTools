@@ -234,7 +234,7 @@ void MarkdownRenderer::BuildLayout() {
                 kPadding + m_contentWidth - 68.0f, lb.marginTop + 3.0f,
                 kPadding + m_contentWidth - 4.0f, lb.marginTop + 25.0f);
             {
-                const wchar_t* btnText = L"\u590d\u5236";
+                const wchar_t* btnText = L"复制";
                 ComPtr<IDWriteTextLayout> btnLay;
                 m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
                 if (btnLay) {
@@ -412,7 +412,7 @@ void MarkdownRenderer::BuildLayout() {
                 listCounters[lvl]++;
                 marker = std::to_wstring(listCounters[lvl]) + L".";
             } else {
-                marker = L"\u2022";
+                marker = L"•";
             }
             lb.markerText = marker;
             lb.markerX = kPadding + indent;
@@ -471,7 +471,7 @@ void MarkdownRenderer::BuildLayout() {
             lb.copyBtnRect = D2D1::RectF(
                 kPadding + m_contentWidth - 64.0f, marginTop,
                 kPadding + m_contentWidth, marginTop + 22.0f);
-            const wchar_t* btnText = L"\u590d\u5236";
+            const wchar_t* btnText = L"复制";
             ComPtr<IDWriteTextLayout> btnLay;
             m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
             if (btnLay) {
@@ -1156,7 +1156,7 @@ void MarkdownRenderer::DrawCopyButton(const LayoutBlock& lb, float top) {
     D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(btn, 3.0f, 3.0f);
     m_rt->FillRoundedRectangle(rr, m_brCopyBtnBg.Get());
     // 文字
-    const wchar_t* text = copied ? L"\u5df2\u590d\u5236" : L"\u590d\u5236"; // 已复制 / 复制
+    const wchar_t* text = copied ? L"已复制" : L"复制"; // 已复制 / 复制
     UINT32 textLen = copied ? 3 : 2;
     ComPtr<IDWriteTextLayout> textLay;
     if (copied) {

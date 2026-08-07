@@ -116,7 +116,7 @@ static bool ReadFileToWide(const std::wstring& path, std::wstring& out) {
 static void LoadFileIntoFrame(FrameState* fs, const std::wstring& path) {
     std::wstring content;
     if (!ReadFileToWide(path, content)) {
-        MessageBoxW(nullptr, (L"\u65E0\u6CD5\u6253\u5F00\u6587\u4EF6\uFF1A" + path).c_str(),
+        MessageBoxW(nullptr, (L"无法打开文件：" + path).c_str(),
             L"MarkdownReader", MB_OK | MB_ICONERROR);
         return;
     }
@@ -277,32 +277,17 @@ static void CreateSearchBarControls(HWND frame, HINSTANCE hInst, FrameState* fs)
     // 不可见创建，后续 ShowSearchBar 时再显示
     DWORD hidden = WS_CHILD;
     // 背景面板（先创建，位于最底层；控件在其之上）。WS_EX_STATICEDGE 提供细边框
-    fs->hSearchBg = CreateWindowExW(WS_EX_STATICEDGE, L"STATIC", L"",
-        hidden, 0, 0, 0, 0,
-        frame, nullptr, hInst, nullptr);
+    fs->hSearchBg = CreateWindowExW(WS_EX_STATICEDGE, L"STATIC", L"", hidden, 0, 0, 0, 0, frame, nullptr, hInst, nullptr);
     // 编辑框：无边框，融入白底背景
-    fs->hSearchEdit = CreateWindowExW(0, L"EDIT", L"",
-        hidden | ES_AUTOHSCROLL, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
+    fs->hSearchEdit = CreateWindowExW(0, L"EDIT", L"", hidden | ES_AUTOHSCROLL, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_EDIT, hInst, nullptr);
     // 加左右内边距，让文字不贴边
-    SendMessageW(fs->hSearchEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-        MAKELONG(Scale(6), Scale(6)));
-    fs->hSearchLabel = CreateWindowExW(0, L"STATIC", L"",
-        hidden | SS_CENTER | SS_CENTERIMAGE, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_LABEL, hInst, nullptr);
+    SendMessageW(fs->hSearchEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(Scale(6), Scale(6)));
+    fs->hSearchLabel = CreateWindowExW(0, L"STATIC", L"", hidden | SS_CENTER | SS_CENTERIMAGE, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_LABEL, hInst, nullptr);
     // Aa 大小写按钮：BS_PUSHLIKE|BS_CHECKBOX 让按钮保持按下/弹起状态
-    fs->hSearchCase = CreateWindowExW(0, L"BUTTON", L"Aa",
-        hidden | BS_CHECKBOX | BS_PUSHLIKE, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_CASE, hInst, nullptr);
-    fs->hSearchPrev = CreateWindowExW(0, L"BUTTON", L"\u25B2",
-        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_PREV, hInst, nullptr);
-    fs->hSearchNext = CreateWindowExW(0, L"BUTTON", L"\u25BC",
-        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_NEXT, hInst, nullptr);
-    fs->hSearchClose = CreateWindowExW(0, L"BUTTON", L"\u2715",
-        hidden | BS_PUSHBUTTON, 0, 0, 0, 0,
-        frame, (HMENU)IDC_SEARCH_CLOSE, hInst, nullptr);
+    fs->hSearchCase = CreateWindowExW(0, L"BUTTON", L"Aa", hidden | BS_CHECKBOX | BS_PUSHLIKE, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_CASE, hInst, nullptr);
+    fs->hSearchPrev = CreateWindowExW(0, L"BUTTON", L"▲", hidden | BS_PUSHBUTTON, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_PREV, hInst, nullptr);
+    fs->hSearchNext = CreateWindowExW(0, L"BUTTON", L"▼", hidden | BS_PUSHBUTTON, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_NEXT, hInst, nullptr);
+    fs->hSearchClose = CreateWindowExW(0, L"BUTTON", L"✕", hidden | BS_PUSHBUTTON, 0, 0, 0, 0, frame, (HMENU)IDC_SEARCH_CLOSE, hInst, nullptr);
     // 子类化编辑框以拦截 Enter/Esc/F3
     fs->searchEditOrigProc = (WNDPROC)SetWindowLongPtrW(fs->hSearchEdit, GWLP_WNDPROC, (LONG_PTR)SearchEditProc);
 }
@@ -379,7 +364,7 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         HMENU hMenu = CreatePopupMenu();
         bool hasSel = r && r->HasSelection();
         AppendMenuW(hMenu, hasSel ? MF_STRING : (MF_STRING | MF_GRAYED),
-            1, L"\u590d\u5236\u9009\u4e2d\u6587\u672c\tCtrl+C");
+            1, L"复制选中文本\tCtrl+C");
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
             pt.x, pt.y, 0, hwnd, nullptr);
         DestroyMenu(hMenu);
@@ -489,20 +474,20 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         // 菜单
         HMENU hMenu = CreateMenu();
         HMENU hFile = CreatePopupMenu();
-        AppendMenuW(hFile, MF_STRING, IDM_FILE_OPEN, L"\u6253\u5F00...\tCtrl+O");
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_OPEN, L"打开...\tCtrl+O");
         AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hFile, MF_STRING, IDM_FILE_SAVE_HTML, L"\u4FDD\u5B58\u4E3A HTML...\tCtrl+S");
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_SAVE_HTML, L"保存为 HTML...\tCtrl+S");
         AppendMenuW(hFile, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT, L"\u9000\u51FA");
-        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFile, L"\u6587\u4EF6(&F)");
+        AppendMenuW(hFile, MF_STRING, IDM_FILE_EXIT, L"退出");
+        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFile, L"文件(&F)");
         HMENU hEdit = CreatePopupMenu();
-        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND, L"\u67E5\u627E...\tCtrl+F");
-        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_NEXT, L"\u67E5\u627E\u4E0B\u4E00\u4E2A\tF3");
-        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_PREV, L"\u67E5\u627E\u4E0A\u4E00\u4E2A\tShift+F3");
-        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hEdit, L"\u7F16\u8F91(&E)");
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND, L"查找...\tCtrl+F");
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_NEXT, L"查找下一个\tF3");
+        AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_PREV, L"查找上一个\tShift+F3");
+        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hEdit, L"编辑(&E)");
         HMENU hView = CreatePopupMenu();
-        AppendMenuW(hView, MF_STRING, IDM_VIEW_TOC, L"\u663E\u793A/\u9690\u85CF\u76EE\u5F55\tF9");
-        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hView, L"\u89C6\u56FE(&V)");
+        AppendMenuW(hView, MF_STRING, IDM_VIEW_TOC, L"显示/隐藏目录\tF9");
+        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hView, L"视图(&V)");
         SetMenu(hwnd, hMenu);
 
         // 搜索栏控件
@@ -581,7 +566,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             OPENFILENAMEW ofn = {};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = hwnd;
-            ofn.lpstrFilter = L"Markdown (*.md;*.markdown)\0*.md;*.markdown\0\u6240\u6709\u6587\u4EF6 (*.*)\0*.*\0";
+            ofn.lpstrFilter = L"Markdown (*.md;*.markdown)\0*.md;*.markdown\0所有文件 (*.*)\0*.*\0";
             ofn.lpstrFile = file;
             ofn.nMaxFile = MAX_PATH;
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -595,7 +580,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             return 0;
         case IDM_FILE_SAVE_HTML: {
             if (fs->doc.blocks.empty()) {
-                MessageBoxW(hwnd, L"\u5F53\u524D\u6CA1\u6709\u53EF\u5BFC\u51FA\u7684\u6587\u6863\uFF0C\u8BF7\u5148\u6253\u5F00 Markdown \u6587\u4EF6\u3002",
+                MessageBoxW(hwnd, L"当前没有可导出的文档，请先打开 Markdown 文件。",
                     L"MarkdownReader", MB_OK | MB_ICONINFORMATION);
                 return 0;
             }
@@ -611,7 +596,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             OPENFILENAMEW ofn = {};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = hwnd;
-            ofn.lpstrFilter = L"HTML (*.html;*.htm)\0*.html;*.htm\0\u6240\u6709\u6587\u4EF6 (*.*)\0*.*\0";
+            ofn.lpstrFilter = L"HTML (*.html;*.htm)\0*.html;*.htm\0所有文件 (*.*)\0*.*\0";
             ofn.lpstrFile = file;
             ofn.nMaxFile = MAX_PATH;
             ofn.lpstrDefExt = L"html";
@@ -619,10 +604,10 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             if (GetSaveFileNameW(&ofn)) {
                 std::wstring path = file;
                 if (SaveDocumentAsHtml(fs->doc, path)) {
-                    std::wstring msg = L"\u5DF2\u4FDD\u5B58\u5230\uFF1A\n" + path;
+                    std::wstring msg = L"已保存至：\n" + path;
                     MessageBoxW(hwnd, msg.c_str(), L"MarkdownReader", MB_OK | MB_ICONINFORMATION);
                 } else {
-                    std::wstring msg = L"\u4FDD\u5B58\u5931\u8D25\uFF1A\n" + path;
+                    std::wstring msg = L"保存失败：\n" + path;
                     MessageBoxW(hwnd, msg.c_str(), L"MarkdownReader", MB_OK | MB_ICONERROR);
                 }
             }

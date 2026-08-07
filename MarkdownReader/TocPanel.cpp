@@ -266,7 +266,7 @@ void TocPanel::Paint() {
     HFONT oldFont = (HFONT)SelectObject(mem, m_fontTitle);
     SetBkMode(mem, TRANSPARENT);
     SetTextColor(mem, RGB(0x24, 0x29, 0x2F));
-    DrawTextW(mem, L"\u76EE\u5F55", -1, &rcTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(mem, L"目录", -1, &rcTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
     HPEN pen = CreatePen(PS_SOLID, 1, RGB(0xD0, 0xD7, 0xDE));
     HPEN oldPen = (HPEN)SelectObject(mem, pen);
