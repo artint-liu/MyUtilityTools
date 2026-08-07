@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 # 存盘机制配置
-SAVE_INTERVAL_SECONDS: int = 30          # 定时存盘间隔（秒）
+SAVE_INTERVAL_SECONDS: int = 1200        # 定时存盘间隔（秒），默认 20 分钟
 SAVE_EVERY_N_MARKS: int = 10             # 每标记 N 条后自动存盘
 
 # 心跳配置

@@ -151,6 +151,12 @@ body {
   border: 1px solid var(--border);
 }
 .btn-nav:hover { background: var(--bg-2); box-shadow: 0 0 12px rgba(79,195,247,0.3); }
+.export-btn {
+  background: linear-gradient(135deg, #7e57c2, #5e35b1); color: #fff; font-weight: 600;
+  box-shadow: 0 2px 10px rgba(126,87,194,0.35);
+}
+.export-btn:hover { box-shadow: 0 4px 16px rgba(126,87,194,0.55); }
+.export-btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .help-btn {
   position: absolute; left: 18px; width: 34px; height: 34px; border-radius: 50%;
   background: var(--bg-3); color: var(--primary-3); border: 1px solid var(--border);
@@ -291,6 +297,7 @@ body {
     <div class="file-select">
       <select id="fileSelect"><option value="">历史文件…</option></select>
       <span class="open-btn" id="openLabel">📂 打开文件</span>
+      <span class="open-btn export-btn" id="exportBtn" title="将标记为「通过」的条目导出为新文件">⬇ 导出通过</span>
     </div>
   </div>
 
@@ -636,6 +643,47 @@ async function goTo(idx) {
   } catch (e) { toast("加载失败: " + e.message, "err"); }
 }
 
+// 将标记为「通过」的条目导出为新文件
+async function exportPassed() {
+  if (!window.__dataFile) { toast("请先打开一个文件", "err"); return; }
+  const btn = $("exportBtn");
+  btn.disabled = true;
+  const oldText = btn.textContent;
+  btn.textContent = "导出中…";
+  try {
+    const res = await fetch("/api/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_path: window.__dataFile, statuses: ["pass"] }),
+    });
+    if (!res.ok) {
+      let msg = "导出失败";
+      try { msg = (await res.json()).detail || msg; } catch (_) {}
+      toast(msg, "err");
+      return;
+    }
+    // 触发浏览器下载
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
+    const fname = m ? m[1] : "export.jsonl";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("已导出通过条目 → " + decodeURIComponent(fname), "ok");
+  } catch (e) {
+    toast("导出失败: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldText;
+  }
+}
+
 // 打开文件并加载到上次进度位置
 async function openAndLoad(path) {
   if (isBusy) return;
@@ -685,6 +733,7 @@ $("passBtn").onclick = () => doMark("pass");
 $("rejectBtn").onclick = () => doMark("reject");
 $("nextBtn").onclick = () => skipNext();
 $("prevBtn").onclick = () => goTo(currentIndex - 1);
+$("exportBtn").onclick = () => exportPassed();
 
 $("helpBtn").onclick = (e) => { e.stopPropagation(); $("helpPop").classList.toggle("show"); };
 document.addEventListener("click", () => $("helpPop").classList.remove("show"));

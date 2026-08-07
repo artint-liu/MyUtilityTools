@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 import config
@@ -91,6 +92,11 @@ class OpenRequest(BaseModel):
 
 class SaveRequest(BaseModel):
     pass
+
+
+class ExportRequest(BaseModel):
+    file_path: Optional[str] = None  # 不传时使用当前已打开文件
+    statuses: list[str] = ["pass"]   # 导出哪些状态的条目，默认 pass
 
 
 # ---- 初始化数据 ----
@@ -299,6 +305,74 @@ async def api_shutdown():
     if state.progress is not None:
         await state.progress.save()
     return {"success": True}
+
+
+def _build_export_path(file_path: str, statuses: list) -> str:
+    """根据源文件路径与导出状态组合生成导出文件名。"""
+    base, ext = os.path.splitext(file_path)
+    tag = "".join(s[0] for s in statuses)  # pass -> p, pass+reject -> pr
+    return f"{base}_export_{tag}{ext}"
+
+
+@app.post("/api/export")
+async def api_export(req: ExportRequest):
+    """将标记为指定状态的条目导出为新的文件（默认导出 pass）。
+
+    导出文件保存在源文件同目录下，文件名形如 <原名>_export_p.<原扩展名>。
+    返回可被前端直接下载的文件响应。
+    """
+    # 确定目标文件：显式传入优先，否则用当前已打开文件
+    file_path = req.file_path or (str(state.data_path) if state.data_path else None)
+    if not file_path or not Path(file_path).is_file():
+        raise HTTPException(status_code=400, detail="没有可导出的文件，请先打开文件")
+
+    valid = {"pass", "reject", "skip", "unmarked"}
+    statuses = [s for s in (req.statuses or ["pass"]) if s in valid]
+    if not statuses:
+        raise HTTPException(status_code=400, detail="无效的导出状态")
+
+    # 进度优先取内存中已打开文件的进度（避免未保存遗漏）
+    if state.data_path and Path(file_path).resolve() == Path(str(state.data_path)).resolve():
+        progress = state.progress
+        reader = state.reader
+    else:
+        indexer = FileIndexer(file_path)
+        offsets = indexer.build()
+        reader = SampleReader(file_path, offsets)
+        progress = ProgressManager(file_path, reader.total)
+        progress.load()
+
+    if reader is None or progress is None:
+        raise HTTPException(status_code=400, detail="无法读取文件数据")
+
+    # 收集需要导出的条目（保持原顺序）
+    total = reader.total
+    selected = []
+    for i in range(total):
+        status = progress.status_of(i)
+        if status in statuses:
+            selected.append(reader.read(i))
+
+    if not selected:
+        raise HTTPException(status_code=404, detail="没有符合导出条件的条目")
+
+    out_path = _build_export_path(file_path, statuses)
+    try:
+        if file_path.lower().endswith(".jsonl"):
+            with open(out_path, "w", encoding="utf-8") as f:
+                for entry in selected:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        else:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(selected, f, ensure_ascii=False, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"写入导出文件失败: {exc}")
+
+    return FileResponse(
+        out_path,
+        media_type="application/octet-stream",
+        filename=os.path.basename(out_path),
+    )
 
 
 # ---- 前端 HTML（从文件读取，保持开发可维护性） ----
