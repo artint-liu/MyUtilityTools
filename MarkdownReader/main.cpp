@@ -230,11 +230,44 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (r) { WheelLog(L"Content -> HandleMouseWheel(delta=%d)", GET_WHEEL_DELTA_WPARAM(wParam)); r->HandleMouseWheel(wParam); }
         return 0;
     case WM_KEYDOWN:
+        if (wParam == 'C' && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            if (r) r->CopySelection();
+            return 0;
+        }
         if (r) r->HandleKeyDown(wParam);
         return 0;
-    case WM_LBUTTONUP:
-        if (r) r->HandleClick(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+    case WM_LBUTTONDOWN:
+        if (r) r->OnLButtonDown(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
+    case WM_MOUSEMOVE:
+        if (r) r->OnMouseMove(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        {
+            TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+            TrackMouseEvent(&tme);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (r) r->ClearHover();
+        return 0;
+    case WM_LBUTTONUP:
+        if (r) r->OnLButtonUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
+    case WM_SETCURSOR:
+        if ((HWND)wParam == hwnd && r) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            int type = r->GetCursorType(pt.x, pt.y);
+            HCURSOR hCur = nullptr;
+            switch (type) {
+            case 1: hCur = LoadCursorW(nullptr, IDC_HAND); break;
+            case 2: hCur = LoadCursorW(nullptr, IDC_IBEAM); break;
+            default: hCur = LoadCursorW(nullptr, IDC_ARROW); break;
+            }
+            SetCursor(hCur);
+            return TRUE;
+        }
+        break;
     case WM_DPICHANGED: {
         UINT dpi = HIWORD(wParam);
         if (r) r->OnDpiChanged(dpi);

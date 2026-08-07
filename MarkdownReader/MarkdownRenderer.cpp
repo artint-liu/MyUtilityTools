@@ -24,6 +24,8 @@ void MarkdownRenderer::DiscardDeviceResources() {
     m_brText.Reset(); m_brLink.Reset(); m_brCode.Reset(); m_brQuote.Reset();
     m_brBar.Reset(); m_brHr.Reset(); m_brCodeBg.Reset();
     m_brTableBorder.Reset(); m_brTableHeaderBg.Reset();
+    m_brSelection.Reset(); m_brCopyBtnBg.Reset(); m_brCopyBtnText.Reset();
+    m_fmtBtn.Reset();
     m_effLink.Reset(); m_effCode.Reset();
 }
 
@@ -75,6 +77,9 @@ void MarkdownRenderer::CreateDeviceResources() {
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xF6F8FA), m_brCodeBg.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xD0D7DE), m_brTableBorder.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xF6F8FA), m_brTableHeaderBg.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xCCE8FF), m_brSelection.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xEAEEF2), m_brCopyBtnBg.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x57606A), m_brCopyBtnText.GetAddressOf());
         m_effLink.Attach(new ColorEffect(m_brLink.Get()));
         m_effCode.Attach(new ColorEffect(m_brCode.Get()));
     }
@@ -91,6 +96,8 @@ void MarkdownRenderer::CreateDeviceResources() {
         }
         MakeFormat(m_dwrite.Get(), m_fmtCode.GetAddressOf(), fm.GetCodeFamily().c_str(),
             13.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
+        MakeFormat(m_dwrite.Get(), m_fmtBtn.GetAddressOf(), fm.GetBodyFamily().c_str(),
+            12.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
     }
 }
 
@@ -168,6 +175,9 @@ void MarkdownRenderer::BuildLayout() {
     if (!m_dwrite) return;
     m_layout.clear();
     m_totalHeight = 0;
+    m_selBlockStart = m_selBlockEnd = -1;
+    m_hoverCopyBlock = -1;
+    m_pressingCopy = -1;
     m_viewHeight = ToDip(m_heightPx);
     float clientWidthDip = ToDip(m_widthPx);
     m_contentWidth = clientWidthDip - 2 * kPadding;
@@ -209,6 +219,21 @@ void MarkdownRenderer::BuildLayout() {
             lb.textX = kPadding + kCodePad;
             lb.bgRect = D2D1::RectF(kPadding, lb.marginTop,
                 kPadding + m_contentWidth, lb.marginTop + 2 * kCodePad + codeHeight);
+            lb.fullText = b.rawText;
+            lb.hasCopyBtn = true;
+            lb.copyBtnRect = D2D1::RectF(
+                kPadding + m_contentWidth - 68.0f, lb.marginTop + 3.0f,
+                kPadding + m_contentWidth - 4.0f, lb.marginTop + 25.0f);
+            {
+                const wchar_t* btnText = L"\u590d\u5236";
+                ComPtr<IDWriteTextLayout> btnLay;
+                m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
+                if (btnLay) {
+                    btnLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    btnLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                }
+                lb.copyBtnLayout = btnLay;
+            }
             lb.y = m_totalHeight;
             m_totalHeight += lb.height;
             m_layout.push_back(std::move(lb));
@@ -417,12 +442,25 @@ void MarkdownRenderer::BuildLayout() {
         DWRITE_TEXT_METRICS m = {};
         if (lay) lay->GetMetrics(&m);
         lb.layout = lay;
+        lb.fullText = text;
         lb.textX = textX;
         lb.textTopRel = marginTop;
         lb.height = marginTop + m.height + marginBottom;
         if (b.type == BlockType::BlockQuote) {
             lb.barRect = D2D1::RectF(kPadding + 6, marginTop - 2,
                 kPadding + 6 + 3, marginTop + m.height + 2);
+            lb.hasCopyBtn = true;
+            lb.copyBtnRect = D2D1::RectF(
+                kPadding + m_contentWidth - 64.0f, marginTop,
+                kPadding + m_contentWidth, marginTop + 22.0f);
+            const wchar_t* btnText = L"\u590d\u5236";
+            ComPtr<IDWriteTextLayout> btnLay;
+            m_dwrite->CreateTextLayout(btnText, 2, m_fmtBtn.Get(), 64.0f, 22.0f, btnLay.GetAddressOf());
+            if (btnLay) {
+                btnLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                btnLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            }
+            lb.copyBtnLayout = btnLay;
         }
         lb.y = m_totalHeight;
         m_totalHeight += lb.height;
@@ -519,9 +557,17 @@ void MarkdownRenderer::Render() {
                 yRow += rh;
             }
         }
+        // 选取高亮（在文本下方）
+        if (HasSelection()) {
+            DrawSelectionForBlock(lb, top);
+        }
         if (lb.layout) {
             RenderContext ctx{ m_rt.Get(), defBrush };
             lb.layout->Draw(&ctx, m_textRenderer.Get(), lb.textX, top + lb.textTopRel);
+        }
+        // 复制按钮（在文本上方）
+        if (lb.hasCopyBtn) {
+            DrawCopyButton(lb, top);
         }
     }
 
@@ -614,11 +660,34 @@ void MarkdownRenderer::ScrollToBlock(int blockIndex) {
 }
 
 bool MarkdownRenderer::HandleClick(int xPx, int yPx) {
+    std::wstring url = HitTestLink(xPx, yPx);
+    if (!url.empty()) {
+        ShellExecuteW(m_hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return true;
+    }
+    return false;
+}
+
+int MarkdownRenderer::GetTocBlockAtScrollTop() const {
+    int best = -1;
+    for (const auto& lb : m_layout) {
+        if (lb.type != BlockType::Heading) continue;
+        // 阈值需 >= ScrollToBlock 的顶部边距(8.0f)，否则点击跳转后目标标题位于
+        // scrollOffset+8 处不满足此条件，SyncTocTimer 会误选上一条标题覆盖点击高亮。
+        if (lb.y <= m_scrollOffset + 8.0f) best = lb.blockIndex;
+        else break;
+    }
+    return best;
+}
+
+// ==================== 链接命中测试 ====================
+
+std::wstring MarkdownRenderer::HitTestLink(int xPx, int yPx) const {
     float xDip = ToDip(xPx);
     float yDip = ToDip(yPx) + m_scrollOffset;
     for (const auto& lb : m_layout) {
         if (yDip < lb.y || yDip > lb.y + lb.height) continue;
-        // 表格单元格链接点击
+        // 表格单元格链接
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
             const auto& colWidths = lb.tableColWidths;
             std::vector<float> colX(colWidths.size());
@@ -647,10 +716,7 @@ bool MarkdownRenderer::HandleClick(int xPx, int yPx) {
                         if (isInside) {
                             UINT32 p = htm.textPosition;
                             for (const auto& lr : cell.linkRanges) {
-                                if (p >= lr.start && p < lr.end) {
-                                    ShellExecuteW(m_hwnd, L"open", lr.url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                                    return true;
-                                }
+                                if (p >= lr.start && p < lr.end) return lr.url;
                             }
                         }
                     }
@@ -669,25 +735,320 @@ bool MarkdownRenderer::HandleClick(int xPx, int yPx) {
         if (isInside) {
             UINT32 p = htm.textPosition;
             for (const auto& lr : lb.linkRanges) {
-                if (p >= lr.start && p < lr.end) {
-                    ShellExecuteW(m_hwnd, L"open", lr.url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                    return true;
-                }
+                if (p >= lr.start && p < lr.end) return lr.url;
             }
         }
         break;
     }
+    return L"";
+}
+
+// ==================== 文本命中测试 ====================
+
+bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* textPos) const {
+    float xDip = ToDip(xPx);
+    float yDip = ToDip(yPx) + m_scrollOffset;
+    // 超出顶部：选第一个文本块开头
+    if (yDip < 0 && !m_layout.empty()) {
+        for (const auto& lb : m_layout) {
+            if (lb.layout && lb.type != BlockType::Table && lb.type != BlockType::HorizontalRule) {
+                *blockIdx = lb.blockIndex;
+                *textPos = 0;
+                return true;
+            }
+        }
+    }
+    // 超出底部：选最后一个文本块末尾
+    if (yDip >= m_totalHeight && !m_layout.empty()) {
+        for (auto it = m_layout.rbegin(); it != m_layout.rend(); ++it) {
+            if (it->layout && it->type != BlockType::Table && it->type != BlockType::HorizontalRule) {
+                *blockIdx = it->blockIndex;
+                *textPos = (UINT32)it->fullText.size();
+                return true;
+            }
+        }
+    }
+    // 查找 Y 对应的块
+    for (const auto& lb : m_layout) {
+        if (yDip < lb.y || yDip >= lb.y + lb.height) continue;
+        if (lb.type == BlockType::Table || lb.type == BlockType::HorizontalRule) continue;
+        if (!lb.layout) continue;
+        float localX = xDip - lb.textX;
+        float localY = yDip - (lb.y + lb.textTopRel);
+        DWRITE_HIT_TEST_METRICS htm = {};
+        BOOL isTrailing = FALSE, isInside = FALSE;
+        lb.layout->HitTestPoint(localX, localY, &isTrailing, &isInside, &htm);
+        *blockIdx = lb.blockIndex;
+        *textPos = htm.textPosition + (isTrailing ? 1 : 0);
+        return true;
+    }
     return false;
 }
 
-int MarkdownRenderer::GetTocBlockAtScrollTop() const {
-    int best = -1;
+// ==================== 复制按钮命中测试 ====================
+
+int MarkdownRenderer::HitTestCopyButton(int xPx, int yPx) const {
+    float xDip = ToDip(xPx);
+    float yDip = ToDip(yPx) + m_scrollOffset;
     for (const auto& lb : m_layout) {
-        if (lb.type != BlockType::Heading) continue;
-        // 阈值需 >= ScrollToBlock 的顶部边距(8.0f)，否则点击跳转后目标标题位于
-        // scrollOffset+8 处不满足此条件，SyncTocTimer 会误选上一条标题覆盖点击高亮。
-        if (lb.y <= m_scrollOffset + 8.0f) best = lb.blockIndex;
-        else break;
+        if (!lb.hasCopyBtn) continue;
+        float absTop = lb.y + lb.copyBtnRect.top;
+        float absBottom = lb.y + lb.copyBtnRect.bottom;
+        if (yDip >= absTop && yDip <= absBottom &&
+            xDip >= lb.copyBtnRect.left && xDip <= lb.copyBtnRect.right) {
+            return lb.blockIndex;
+        }
     }
-    return best;
+    return -1;
+}
+
+// ==================== 光标类型 ====================
+
+int MarkdownRenderer::GetCursorType(int xPx, int yPx) const {
+    if (HitTestCopyButton(xPx, yPx) >= 0) return 1; // 手型
+    if (!HitTestLink(xPx, yPx).empty()) return 1;   // 手型
+    float yDip = ToDip(yPx) + m_scrollOffset;
+    for (const auto& lb : m_layout) {
+        if (yDip < lb.y || yDip >= lb.y + lb.height) continue;
+        if (lb.layout && lb.type != BlockType::Table && lb.type != BlockType::HorizontalRule) {
+            return 2; // 文本 I
+        }
+        return 0; // 箭头
+    }
+    return 0;
+}
+
+// ==================== 选取状态管理 ====================
+
+bool MarkdownRenderer::HasSelection() const {
+    if (m_selBlockStart < 0 || m_selBlockEnd < 0) return false;
+    int sBlk, eBlk;
+    UINT32 sPos, ePos;
+    GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
+    if (sBlk == eBlk) return sPos < ePos;
+    return true;
+}
+
+void MarkdownRenderer::ClearSelection() {
+    m_selBlockStart = -1;
+    m_selBlockEnd = -1;
+    m_selPosStart = 0;
+    m_selPosEnd = 0;
+}
+
+void MarkdownRenderer::ClearHover() {
+    m_hoverCopyBlock = -1;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::GetNormalizedSelection(int* startBlk, int* endBlk,
+    UINT32* startPos, UINT32* endPos) const {
+    if (m_selBlockStart < m_selBlockEnd ||
+        (m_selBlockStart == m_selBlockEnd && m_selPosStart <= m_selPosEnd)) {
+        *startBlk = m_selBlockStart; *endBlk = m_selBlockEnd;
+        *startPos = m_selPosStart;   *endPos = m_selPosEnd;
+    } else {
+        *startBlk = m_selBlockEnd;   *endBlk = m_selBlockStart;
+        *startPos = m_selPosEnd;     *endPos = m_selPosStart;
+    }
+}
+
+// ==================== 鼠标事件 ====================
+
+void MarkdownRenderer::OnLButtonDown(int xPx, int yPx) {
+    // 优先检查复制按钮
+    int copyBlk = HitTestCopyButton(xPx, yPx);
+    if (copyBlk >= 0) {
+        m_pressingCopy = copyBlk;
+        SetCapture(m_hwnd);
+        return;
+    }
+    // 开始文本选取
+    m_mouseDownX = xPx;
+    m_mouseDownY = yPx;
+    m_dragStarted = false;
+    int blk = -1;
+    UINT32 pos = 0;
+    HitTestText(xPx, yPx, &blk, &pos);
+    m_selBlockStart = m_selBlockEnd = blk;
+    m_selPosStart = m_selPosEnd = pos;
+    m_selecting = true;
+    SetCapture(m_hwnd);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::OnMouseMove(int xPx, int yPx) {
+    // 更新复制按钮悬停
+    int hoverCopy = HitTestCopyButton(xPx, yPx);
+    if (hoverCopy != m_hoverCopyBlock) {
+        m_hoverCopyBlock = hoverCopy;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+    if (m_selecting) {
+        if (!m_dragStarted) {
+            int dx = xPx - m_mouseDownX;
+            int dy = yPx - m_mouseDownY;
+            if (dx * dx + dy * dy > 9) m_dragStarted = true; // 3px 阈值
+        }
+        if (m_dragStarted) {
+            int blk = -1;
+            UINT32 pos = 0;
+            if (HitTestText(xPx, yPx, &blk, &pos)) {
+                m_selBlockEnd = blk;
+                m_selPosEnd = pos;
+            }
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+    }
+}
+
+void MarkdownRenderer::OnLButtonUp(int xPx, int yPx) {
+    if (m_pressingCopy >= 0) {
+        int copyBlk = HitTestCopyButton(xPx, yPx);
+        if (copyBlk == m_pressingCopy) {
+            CopyBlockText(copyBlk);
+        }
+        m_pressingCopy = -1;
+        ReleaseCapture();
+        return;
+    }
+    if (m_selecting) {
+        m_selecting = false;
+        ReleaseCapture();
+        if (!m_dragStarted) {
+            // 点击（非拖拽）→ 尝试打开链接
+            ClearSelection();
+            HandleClick(xPx, yPx);
+        } else {
+            // 选取结束；若为空则清除
+            if (!HasSelection()) ClearSelection();
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+// ==================== 复制到剪贴板 ====================
+
+void MarkdownRenderer::CopyToClipboard(const std::wstring& text) {
+    if (OpenClipboard(m_hwnd)) {
+        EmptyClipboard();
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+        if (hMem) {
+            wchar_t* p = (wchar_t*)GlobalLock(hMem);
+            if (p) {
+                memcpy(p, text.c_str(), text.size() * sizeof(wchar_t));
+                p[text.size()] = 0;
+                GlobalUnlock(hMem);
+                SetClipboardData(CF_UNICODETEXT, hMem);
+            } else {
+                GlobalFree(hMem);
+            }
+        }
+        CloseClipboard();
+    }
+}
+
+void MarkdownRenderer::CopySelection() {
+    if (!HasSelection()) return;
+    int sBlk, eBlk;
+    UINT32 sPos, ePos;
+    GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
+    std::wstring result;
+    for (const auto& lb : m_layout) {
+        if (lb.blockIndex < sBlk || lb.blockIndex > eBlk) continue;
+        if (lb.fullText.empty()) continue;
+        UINT32 s = (lb.blockIndex == sBlk) ? sPos : 0;
+        UINT32 e = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
+        if (s < e) {
+            if (!result.empty()) result += L"\n";
+            result += lb.fullText.substr(s, e - s);
+        }
+    }
+    if (!result.empty()) CopyToClipboard(result);
+}
+
+// "已复制" 反馈定时器回调
+static VOID CALLBACK CopyRevertTimerProc(HWND hwnd, UINT, UINT_PTR id, DWORD) {
+    KillTimer(hwnd, id);
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::CopyBlockText(int blockIdx) {
+    for (const auto& lb : m_layout) {
+        if (lb.blockIndex == blockIdx) {
+            if (!lb.fullText.empty()) {
+                CopyToClipboard(lb.fullText);
+                m_copiedBlockIndex = blockIdx;
+                m_copiedTick = GetTickCount();
+                InvalidateRect(m_hwnd, nullptr, FALSE);
+                SetTimer(m_hwnd, 2, 2000, CopyRevertTimerProc);
+            }
+            return;
+        }
+    }
+}
+
+// ==================== 选取高亮渲染 ====================
+
+void MarkdownRenderer::DrawSelectionForBlock(const LayoutBlock& lb, float top) {
+    int sBlk, eBlk;
+    UINT32 sPos, ePos;
+    GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
+    if (lb.blockIndex < sBlk || lb.blockIndex > eBlk) return;
+    if (!lb.layout || lb.fullText.empty()) return;
+    UINT32 selStart = (lb.blockIndex == sBlk) ? sPos : 0;
+    UINT32 selEnd = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
+    if (selStart >= selEnd) return;
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics(32);
+    UINT32 actualCount = 0;
+    HRESULT hr = lb.layout->HitTestTextRange(selStart, selEnd - selStart,
+        lb.textX, top + lb.textTopRel, metrics.data(), 32, &actualCount);
+    if (hr == E_NOT_SUFFICIENT_BUFFER && actualCount > 32) {
+        metrics.resize(actualCount);
+        hr = lb.layout->HitTestTextRange(selStart, selEnd - selStart,
+            lb.textX, top + lb.textTopRel, metrics.data(), actualCount, &actualCount);
+    }
+    if (SUCCEEDED(hr) && m_brSelection) {
+        for (UINT32 i = 0; i < actualCount; ++i) {
+            m_rt->FillRectangle(
+                D2D1::RectF(metrics[i].left, metrics[i].top,
+                    metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height),
+                m_brSelection.Get());
+        }
+    }
+}
+
+// ==================== 复制按钮渲染 ====================
+
+void MarkdownRenderer::DrawCopyButton(const LayoutBlock& lb, float top) {
+    if (!m_brCopyBtnBg || !m_brCopyBtnText) return;
+    D2D1_RECT_F btn = lb.copyBtnRect;
+    btn.top += top;
+    btn.bottom += top;
+    bool hovered = (m_hoverCopyBlock == lb.blockIndex);
+    bool copied = (m_copiedBlockIndex == lb.blockIndex &&
+                   GetTickCount() - m_copiedTick < 2000);
+    // 背景
+    m_brCopyBtnBg->SetColor(hovered ? D2D1::ColorF(0xD0D7DE) : D2D1::ColorF(0xEAEEF2));
+    D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(btn, 3.0f, 3.0f);
+    m_rt->FillRoundedRectangle(rr, m_brCopyBtnBg.Get());
+    // 文字
+    const wchar_t* text = copied ? L"\u5df2\u590d\u5236" : L"\u590d\u5236"; // 已复制 / 复制
+    UINT32 textLen = copied ? 3 : 2;
+    ComPtr<IDWriteTextLayout> textLay;
+    if (copied) {
+        m_dwrite->CreateTextLayout(text, textLen, m_fmtBtn.Get(),
+            btn.right - btn.left, btn.bottom - btn.top, textLay.GetAddressOf());
+        if (textLay) {
+            textLay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            textLay->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    } else {
+        textLay = lb.copyBtnLayout;
+    }
+    if (textLay) {
+        m_brCopyBtnText->SetColor(copied ? D2D1::ColorF(0x1A7F37) : D2D1::ColorF(0x57606A));
+        RenderContext ctx{ m_rt.Get(), m_brCopyBtnText.Get() };
+        textLay->Draw(&ctx, m_textRenderer.Get(), btn.left, btn.top);
+    }
 }

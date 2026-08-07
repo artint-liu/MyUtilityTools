@@ -24,6 +24,14 @@ public:
     void HandleKeyDown(WPARAM wParam);
     void ScrollToBlock(int blockIndex);
     bool HandleClick(int xPx, int yPx);  // 返回是否点击到链接
+    void OnLButtonDown(int xPx, int yPx);
+    void OnMouseMove(int xPx, int yPx);
+    void OnLButtonUp(int xPx, int yPx);
+    void CopySelection();
+    void ClearSelection();
+    void ClearHover();
+    bool HasSelection() const;
+    int  GetCursorType(int xPx, int yPx) const; // 0=箭头 1=手型 2=文本I
 
     int  GetTocBlockAtScrollTop() const; // 供目录高亮当前章节
 
@@ -48,6 +56,11 @@ private:
         D2D1_RECT_F barRect{};
         std::wstring markerText;
         float markerX = 0;
+        // 文本选取/复制按钮
+        std::wstring fullText;      // 完整文本（选取/复制用）
+        bool hasCopyBtn = false;    // 是否有复制按钮（代码块/引用）
+        D2D1_RECT_F copyBtnRect{};  // 复制按钮矩形（相对块顶）
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> copyBtnLayout; // "复制" 文本布局
         // 表格专用
         struct TableCellLayout {
             Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
@@ -81,6 +94,10 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brCodeBg;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brTableBorder; // 表格边框/分隔线
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brTableHeaderBg; // 表头背景
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSelection;   // 选取高亮
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brCopyBtnBg;   // 复制按钮背景
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brCopyBtnText; // 复制按钮文字
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtBtn;           // 复制按钮文字格式
 
     Microsoft::WRL::ComPtr<ColorEffect> m_effLink;
     Microsoft::WRL::ComPtr<ColorEffect> m_effCode;
@@ -94,6 +111,18 @@ private:
     float m_contentWidth = 0;  // DIP（可用绘制宽度，已减去左右内边距）
     int   m_widthPx = 0;
     int   m_heightPx = 0;
+    // 文本选取状态
+    int m_selBlockStart = -1;
+    UINT32 m_selPosStart = 0;
+    int m_selBlockEnd = -1;
+    UINT32 m_selPosEnd = 0;
+    bool m_selecting = false;
+    bool m_dragStarted = false;
+    int m_mouseDownX = 0, m_mouseDownY = 0;
+    int m_hoverCopyBlock = -1;
+    int m_pressingCopy = -1;
+    int m_copiedBlockIndex = -1;
+    DWORD m_copiedTick = 0;
 
     static constexpr float kPadding = 24.0f;
     static constexpr float kCodePad = 10.0f;
@@ -109,4 +138,12 @@ private:
     void ClampScroll();
     // 允许的最大滚动偏移：末尾留白使最后一个块可滚到视口顶部
     float MaxScroll() const;
+    std::wstring HitTestLink(int xPx, int yPx) const;
+    bool HitTestText(int xPx, int yPx, int* blockIdx, UINT32* textPos) const;
+    int  HitTestCopyButton(int xPx, int yPx) const;
+    void CopyBlockText(int blockIdx);
+    void DrawSelectionForBlock(const LayoutBlock& lb, float top);
+    void DrawCopyButton(const LayoutBlock& lb, float top);
+    void GetNormalizedSelection(int* startBlk, int* endBlk, UINT32* startPos, UINT32* endPos) const;
+    void CopyToClipboard(const std::wstring& text);
 };
