@@ -48,6 +48,17 @@ private:
         D2D1_RECT_F barRect{};
         std::wstring markerText;
         float markerX = 0;
+        // 表格专用
+        struct TableCellLayout {
+            Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+            float contentW = 0;
+            float contentH = 0;
+            TableAlign align = TableAlign::Left;
+            std::vector<LinkRange> linkRanges; // 单元格内链接
+        };
+        std::vector<float> tableColWidths;
+        std::vector<float> tableRowHeights;
+        std::vector<std::vector<TableCellLayout>> tableCells; // [row][col]
     };
 
     HWND m_hwnd = nullptr;
@@ -68,6 +79,8 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brBar;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brHr;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brCodeBg;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brTableBorder; // 表格边框/分隔线
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brTableHeaderBg; // 表头背景
 
     Microsoft::WRL::ComPtr<ColorEffect> m_effLink;
     Microsoft::WRL::ComPtr<ColorEffect> m_effCode;
@@ -84,6 +97,8 @@ private:
 
     static constexpr float kPadding = 24.0f;
     static constexpr float kCodePad = 10.0f;
+    static constexpr float kTableCellPadX = 8.0f;
+    static constexpr float kTableCellPadY = 6.0f;
 
     void CreateDeviceResources();
     void DiscardDeviceResources();

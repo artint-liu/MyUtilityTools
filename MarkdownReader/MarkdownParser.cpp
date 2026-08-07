@@ -180,6 +180,63 @@ void ParseInline(const std::wstring& s, const InlineState& base, std::vector<Inl
     flush();
 }
 
+// ---- 表格解析（GFM）----
+
+// 按列拆分表格行，处理 \| 转义，自动去除首尾管道符产生的空单元格
+std::vector<std::wstring> SplitTableRow(const std::wstring& line) {
+    const std::wstring s = Trim(line);
+    std::vector<std::wstring> cells;
+    std::wstring cur;
+    for (size_t i = 0; i < s.size(); ++i) {
+        wchar_t c = s[i];
+        if (c == L'\\' && i + 1 < s.size() && s[i + 1] == L'|') {
+            cur += L'|';
+            i++;
+        } else if (c == L'|') {
+            cells.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    cells.push_back(cur);
+    // 去掉首尾管道符产生的空单元格
+    if (!cells.empty() && cells.front().empty()) {
+        if (!s.empty() && s.front() == L'|') cells.erase(cells.begin());
+    }
+    if (!cells.empty() && cells.back().empty()) {
+        if (!s.empty() && s.back() == L'|') cells.pop_back();
+    }
+    return cells;
+}
+
+// 判断一行是否为表格分隔行（每列至少 1 个 '-'，可选 ':'），输出各列对齐
+bool IsTableDelimiter(const std::wstring& line, std::vector<TableAlign>& aligns) {
+    aligns.clear();
+    auto cells = SplitTableRow(line);
+    for (const auto& cell : cells) {
+        std::wstring t = Trim(cell);
+        if (t.empty()) return false;
+        bool leftColon = (t.front() == L':');
+        bool rightColon = (t.back() == L':');
+        std::wstring core = t;
+        if (leftColon) core.erase(core.begin());
+        if (rightColon) core.pop_back();
+        if (core.empty()) return false;
+        for (wchar_t ch : core) if (ch != L'-') return false;
+        if (leftColon && rightColon) aligns.push_back(TableAlign::Center);
+        else if (rightColon) aligns.push_back(TableAlign::Right);
+        else aligns.push_back(TableAlign::Left);
+    }
+    return !aligns.empty();
+}
+
+// 行内解析单元格文本
+void ParseCell(const std::wstring& text, std::vector<InlineRun>& out) {
+    InlineState base;
+    ParseInline(text, base, out);
+}
+
 void AddTextBlock(Document& doc, BlockType type, const std::wstring& text, int level = 0) {
     Block b;
     b.type = type;
@@ -303,6 +360,55 @@ Document ParseMarkdown(const std::wstring& content) {
             continue;
         }
 
+        // 表格：当前行含 | 且下一行是分隔行
+        {
+            const std::wstring& peek = (i + 1 < N) ? lines[i + 1] : std::wstring();
+            std::vector<TableAlign> aligns;
+            if (Trim(line).find(L'|') != std::wstring::npos &&
+                IsTableDelimiter(peek, aligns) && !aligns.empty())
+            {
+                Block b;
+                b.type = BlockType::Table;
+                b.columnAligns = aligns;
+                const size_t ncols = aligns.size();
+
+                // 表头行
+                auto headerCells = SplitTableRow(line);
+                TableRow hr;
+                hr.isHeader = true;
+                for (size_t c = 0; c < ncols; ++c) {
+                    TableCell cell;
+                    std::wstring ct = (c < headerCells.size()) ? Trim(headerCells[c]) : std::wstring();
+                    ParseCell(ct, cell.runs);
+                    hr.cells.push_back(std::move(cell));
+                }
+                b.tableRows.push_back(std::move(hr));
+
+                i += 2; // 跳过表头与分隔行
+
+                // 数据行：连续含 | 的非空行
+                while (i < N) {
+                    const std::wstring& dl = lines[i];
+                    const std::wstring dt = Trim(dl);
+                    if (dt.empty()) break;
+                    if (dt.find(L'|') == std::wstring::npos) break;
+                    auto dcells = SplitTableRow(dl);
+                    TableRow dr;
+                    dr.isHeader = false;
+                    for (size_t c = 0; c < ncols; ++c) {
+                        TableCell cell;
+                        std::wstring ct = (c < dcells.size()) ? Trim(dcells[c]) : std::wstring();
+                        ParseCell(ct, cell.runs);
+                        dr.cells.push_back(std::move(cell));
+                    }
+                    b.tableRows.push_back(std::move(dr));
+                    i++;
+                }
+                doc.blocks.push_back(std::move(b));
+                continue;
+            }
+        }
+
         // 普通段落（连续非空非特殊行），并检测 setext 标题
         {
             std::wstring para = trimmed;
@@ -328,6 +434,11 @@ Document ParseMarkdown(const std::wstring& content) {
                     bool allDash = !nt.empty() && nt.size() >= 1;
                     for (wchar_t c : nt) if (c != L'-') { allDash = false; break; }
                     if (allDash && nt.size() >= 1) { AddTextBlock(doc, BlockType::Heading, para, 2); i++; goto para_done; }
+                }
+                // 表格前瞻：当前行可能作为表头，下一行是分隔行则结束段落
+                if (nt.find(L'|') != std::wstring::npos) {
+                    std::vector<TableAlign> dummy;
+                    if (i + 1 < N && IsTableDelimiter(lines[i + 1], dummy)) break;
                 }
                 para += L'\n';
                 para += nt;

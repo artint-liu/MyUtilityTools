@@ -11,6 +11,7 @@ enum class BlockType {
     BlockQuote,
     ListItem,
     HorizontalRule,
+    Table,
 };
 
 // 行内格式片段
@@ -23,6 +24,24 @@ struct InlineRun {
     std::wstring linkUrl;   // 非空表示是链接
 };
 
+// 表格列对齐方式
+enum class TableAlign {
+    Left,
+    Center,
+    Right,
+};
+
+// 表格单元格
+struct TableCell {
+    std::vector<InlineRun> runs;
+};
+
+// 表格行
+struct TableRow {
+    std::vector<TableCell> cells;
+    bool isHeader = false;
+};
+
 // 文档块
 struct Block {
     BlockType type = BlockType::Paragraph;
@@ -32,6 +51,9 @@ struct Block {
     std::wstring codeLang;      // 代码块语言
     std::vector<InlineRun> runs;// 文本类块的行内片段
     std::wstring rawText;       // 代码块原始文本（保留空白/换行）
+    // 表格专用
+    std::vector<TableAlign> columnAligns; // 列对齐
+    std::vector<TableRow> tableRows;      // 含表头行(首行 isHeader=true)
 };
 
 // 文档
