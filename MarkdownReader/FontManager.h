@@ -32,6 +32,16 @@ public:
     // 代码字体 family name（由 ini 中 code 字段按文件名解析；否则系统 Consolas）。
     const std::wstring& GetCodeFamily() const { return m_codeFamily; }
 
+    // 目录字体 family name（由 ini 中 toc 字段解析；未配置或匹配失败则回退正文字体）。
+    const std::wstring& GetTocFamily() const { return m_tocFamily; }
+    // 与 GetTocFamily 相同，但去掉 family name 前导 '.'，供 GDI CreateFontW 使用
+    // （DWrite 返回的 name 可能以 '.' 开头，GDI 无法匹配，如 ".PingFang SC"）。
+    const std::wstring& GetTocFamilyGdi() const { return m_tocFamilyGdi; }
+    // 目录字号数值（默认 15，对应 CreateFontW 中 N*60 的输入；越大字号越大）。
+    int GetTocSizePt() const { return m_tocSizePt > 0 ? m_tocSizePt : 15; }
+    // 目录行高数值（默认 40，数值越大行间距越疏）。
+    int GetTocLineSpacing() const { return m_tocLineSpacing > 0 ? m_tocLineSpacing : 40; }
+
     bool HasCustomFonts() const { return m_hasCustomFonts; }
 
 private:
@@ -41,8 +51,13 @@ private:
     bool m_hasCustomFonts = false;
     std::wstring m_cfgBody;   // 配置文件指定的正文字体（文件名或 family name，可空）
     std::wstring m_cfgCode;    // 配置文件指定的代码字体（文件名或 family name，可空）
+    std::wstring m_cfgToc;     // 配置文件指定的目录字体（可空，回退 body）
     Microsoft::WRL::ComPtr<IDWriteFactory> m_factory;
     Microsoft::WRL::ComPtr<IDWriteFontCollection> m_dwriteCollection;
     std::wstring m_bodyFamily;
     std::wstring m_codeFamily;
+    std::wstring m_tocFamily;   // 目录字体（回退 body）
+    std::wstring m_tocFamilyGdi; // 目录字体 GDI 版（去前导 '.'）
+    int m_tocSizePt = 0;        // 目录字号（0=默认15）
+    int m_tocLineSpacing = 0;   // 目录行高数值（0=默认40）
 };

@@ -1,4 +1,5 @@
 #include "FontManager.h"
+#include "Common.h"
 #include <dwrite_2.h>
 #include <dwrite_3.h>
 #include <windows.h>
@@ -104,6 +105,9 @@ void FontManager::LoadConfig(const std::wstring& exeDir) {
         }
         if (key == "body") m_cfgBody = wval;
         else if (key == "code") m_cfgCode = wval;
+        else if (key == "toc") m_cfgToc = wval;
+        else if (key == "tocSize") m_tocSizePt = _wtoi(wval.c_str());
+        else if (key == "tocLineSpacing") m_tocLineSpacing = _wtoi(wval.c_str());
     }
 }
 
@@ -112,6 +116,7 @@ void FontManager::LoadFonts() {
     m_loaded = true;
     m_bodyFamily = L"Segoe UI";
     m_codeFamily = L"Consolas";
+    m_tocFamily = m_bodyFamily;
 
     if (!m_factory) {
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
@@ -217,6 +222,20 @@ void FontManager::LoadFonts() {
         if (!m_cfgBody.empty()) bodySet = matchByFile(m_cfgBody, m_bodyFamily);
         if (!m_cfgCode.empty()) codeSet = matchByFile(m_cfgCode, m_codeFamily);
 
+        // 目录字体：配置优先（按文件名/family name），匹配失败回退正文字体
+        bool tocSet = false;
+        if (!m_cfgToc.empty()) {
+            std::wstring fam;
+            if (matchByFile(m_cfgToc, fam)) {
+                m_tocFamily = fam; tocSet = true;
+            } else {
+                UINT32 idx = 0; BOOL exists = FALSE;
+                if (SUCCEEDED(m_dwriteCollection->FindFamilyName(m_cfgToc.c_str(), &idx, &exists)) && exists) {
+                    m_tocFamily = m_cfgToc; tocSet = true;
+                }
+            }
+        }
+
         // 向后兼容：文件名匹配失败时回退按 family name 匹配
         if (!m_cfgBody.empty() && !bodySet) {
             UINT32 idx = 0; BOOL exists = FALSE;
@@ -250,11 +269,26 @@ void FontManager::LoadFonts() {
             }
             if (!codeSet && bodySet) m_codeFamily = m_bodyFamily;
         }
+        // 目录字体未显式匹配，回退正文字体（此时 body 已最终确定）
+        if (!tocSet) m_tocFamily = m_bodyFamily;
         m_hasCustomFonts = true;
     }
 
     // ---- GDI：进程私有加载，使 CreateFontW 可用相同 family name ----
     for (const auto& path : files) {
-        AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr);
+        int added = AddFontResourceExW(path.c_str(), FR_PRIVATE, nullptr);
+        WheelLog(L"FontMgr AddFontResource '%ls' -> added=%d", path.c_str(), added);
     }
+
+    // DWrite 取到的 family name 可能以 '.' 开头（如 ".PingFang SC"），
+    // 这种 name GDI CreateFontW 无法匹配，会回退系统默认字体（如宋体）。
+    // 为 GDI 调用方提供去掉前导 '.' 的版本；DWrite 调用方继续用原 Get*Family()。
+    auto stripLeadingDot = [](std::wstring s) -> std::wstring {
+        while (!s.empty() && s.front() == L'.') s.erase(s.begin());
+        return s;
+    };
+    m_tocFamilyGdi = stripLeadingDot(m_tocFamily);
+
+    WheelLog(L"FontMgr cfgBody='%ls' cfgToc='%ls' bodyFam='%ls' tocFam='%ls' tocFamGdi='%ls'",
+        m_cfgBody.c_str(), m_cfgToc.c_str(), m_bodyFamily.c_str(), m_tocFamily.c_str(), m_tocFamilyGdi.c_str());
 }

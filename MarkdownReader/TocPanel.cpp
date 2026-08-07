@@ -18,20 +18,37 @@ void TocPanel::CreateFonts() {
     // 确保 fonts\*.ttf 已加载（幂等）。GDI 端通过 AddFontResourceEx(FR_PRIVATE)
     // 进程私有加载，CreateFontW 可用其 family name。
     FontManager::Instance().LoadFonts();
-    const wchar_t* family = FontManager::Instance().GetBodyFamily().c_str();
-    int size = -MulDiv(15 * 60, (int)m_dpi, 72 * 100);
+    const std::wstring& fam = FontManager::Instance().GetTocFamilyGdi();
+    const wchar_t* family = fam.c_str();
+    int sizeBase = FontManager::Instance().GetTocSizePt();
+    int lineBase = FontManager::Instance().GetTocLineSpacing();
+    int size = -MulDiv(sizeBase * 60, (int)m_dpi, 72 * 100);
     m_font = CreateFontW(size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, family);
     m_fontBold = CreateFontW(size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, family);
-    int titleSize = -MulDiv(16 * 60, (int)m_dpi, 72 * 100);
+    int titleSize = -MulDiv((sizeBase + 1) * 60, (int)m_dpi, 72 * 100);
     m_fontTitle = CreateFontW(titleSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_SWISS, family);
-    m_lineHeight = MulDiv(40 * 60, (int)m_dpi, 96 * 100);
-    m_titleLineHeight = MulDiv(28 * 60, (int)m_dpi, 96 * 100);
+
+    // 诊断：GDI 实际选中的字体名（CreateFontW 可能因 family name 匹配失败而回退）
+    if (m_font && m_hwnd) {
+        HDC dc = GetDC(m_hwnd);
+        if (dc) {
+            HGDIOBJ old = SelectObject(dc, m_font);
+            wchar_t actual[LF_FACESIZE] = { 0 };
+            GetTextFaceW(dc, LF_FACESIZE, actual);
+            SelectObject(dc, old);
+            ReleaseDC(m_hwnd, dc);
+            WheelLog(L"TocFont DIAG: requested='%ls' actualGDI='%ls' famLen=%zu",
+                family, actual, fam.size());
+        }
+    }
+    m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
+    m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
 }
 
 void TocPanel::Init(HWND hwnd) {
