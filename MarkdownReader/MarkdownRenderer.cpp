@@ -1,5 +1,6 @@
 #include "MarkdownRenderer.h"
 #include "Common.h"
+#include "FontManager.h"
 #include <algorithm>
 #include <shellapi.h>
 #include <cmath>
@@ -27,9 +28,9 @@ void MarkdownRenderer::DiscardDeviceResources() {
 
 static HRESULT MakeFormat(IDWriteFactory* f, IDWriteTextFormat** out,
     const wchar_t* family, float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_FONT_STYLE style = DWRITE_FONT_STYLE_NORMAL)
+    DWRITE_FONT_STYLE style = DWRITE_FONT_STYLE_NORMAL, IDWriteFontCollection* collection = nullptr)
 {
-    HRESULT hr = f->CreateTextFormat(family, nullptr, weight, style,
+    HRESULT hr = f->CreateTextFormat(family, collection, weight, style,
         DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", out);
     if (SUCCEEDED(hr)) {
         (*out)->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -46,6 +47,8 @@ void MarkdownRenderer::CreateDeviceResources() {
     if (!m_dwrite) {
         DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
             reinterpret_cast<IUnknown**>(m_dwrite.GetAddressOf()));
+        // 加载 exe 同级 fonts\*.ttf（幂等）。若目录不存在则回退系统字体。
+        FontManager::Instance().LoadFonts();
     }
     if (!m_textRenderer) {
         m_textRenderer.Attach(new CustomTextRenderer());
@@ -74,13 +77,17 @@ void MarkdownRenderer::CreateDeviceResources() {
     }
 
     if (m_dwrite && !m_fmtBody) {
-        MakeFormat(m_dwrite.Get(), m_fmtBody.GetAddressOf(), L"Segoe UI", 15.0f);
+        FontManager& fm = FontManager::Instance();
+        IDWriteFontCollection* coll = fm.GetDWriteCollection();
+        MakeFormat(m_dwrite.Get(), m_fmtBody.GetAddressOf(), fm.GetBodyFamily().c_str(),
+            15.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
         float hsizes[6] = { 28.0f, 24.0f, 20.0f, 17.0f, 15.0f, 13.0f };
         for (int i = 0; i < 6; ++i) {
-            MakeFormat(m_dwrite.Get(), m_fmtHeading[i].GetAddressOf(), L"Segoe UI", hsizes[i],
-                DWRITE_FONT_WEIGHT_SEMI_BOLD);
+            MakeFormat(m_dwrite.Get(), m_fmtHeading[i].GetAddressOf(), fm.GetBodyFamily().c_str(),
+                hsizes[i], DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL, coll);
         }
-        MakeFormat(m_dwrite.Get(), m_fmtCode.GetAddressOf(), L"Consolas", 13.5f);
+        MakeFormat(m_dwrite.Get(), m_fmtCode.GetAddressOf(), fm.GetCodeFamily().c_str(),
+            13.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
     }
 }
 
@@ -262,7 +269,7 @@ void MarkdownRenderer::BuildLayout() {
                 if (rr.run->italic) lay->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
                 if (rr.run->strikethrough) lay->SetStrikethrough(TRUE, r);
                 if (rr.run->code) {
-                    lay->SetFontFamilyName(L"Consolas", r);
+                    lay->SetFontFamilyName(FontManager::Instance().GetCodeFamily().c_str(), r);
                     lay->SetDrawingEffect(m_effCode.Get(), r);
                 }
                 if (!rr.run->linkUrl.empty()) {

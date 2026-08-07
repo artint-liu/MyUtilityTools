@@ -1,5 +1,6 @@
 #include "TocPanel.h"
 #include "Common.h"
+#include "FontManager.h"
 #include <algorithm>
 
 TocPanel::~TocPanel() {
@@ -14,17 +15,21 @@ void TocPanel::Cleanup() {
 
 void TocPanel::CreateFonts() {
     if (m_font) return;
+    // 确保 fonts\*.ttf 已加载（幂等）。GDI 端通过 AddFontResourceEx(FR_PRIVATE)
+    // 进程私有加载，CreateFontW 可用其 family name。
+    FontManager::Instance().LoadFonts();
+    const wchar_t* family = FontManager::Instance().GetBodyFamily().c_str();
     int size = -MulDiv(15 * 60, (int)m_dpi, 72 * 100);
     m_font = CreateFontW(size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        DEFAULT_PITCH | FF_SWISS, family);
     m_fontBold = CreateFontW(size, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        DEFAULT_PITCH | FF_SWISS, family);
     int titleSize = -MulDiv(16 * 60, (int)m_dpi, 72 * 100);
     m_fontTitle = CreateFontW(titleSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+        DEFAULT_PITCH | FF_SWISS, family);
     m_lineHeight = MulDiv(40 * 60, (int)m_dpi, 96 * 100);
     m_titleLineHeight = MulDiv(28 * 60, (int)m_dpi, 96 * 100);
 }
