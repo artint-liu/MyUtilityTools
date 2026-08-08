@@ -1,3 +1,4 @@
+#define MDR_PROFILE_LAYOUT 1
 #include "MarkdownRenderer.h"
 #include "Common.h"
 #include "FontManager.h"
@@ -8,6 +9,25 @@
 #include <windowsx.h>
 
 using Microsoft::WRL::ComPtr;
+
+#ifdef MDR_PROFILE_LAYOUT
+static double g_msCode = 0, g_msTable = 0, g_msText = 0;
+static int g_nCode = 0, g_nTable = 0, g_nText = 0;
+struct ScopedTimer {
+    LARGE_INTEGER t0, f; double* acc; int* cnt;
+    ScopedTimer(double* a, int* c) : acc(a), cnt(c) {
+        QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
+    }
+    ~ScopedTimer() {
+        LARGE_INTEGER t1; QueryPerformanceCounter(&t1);
+        *acc += (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
+        if (cnt) (*cnt)++;
+    }
+};
+#define MDR_TIME(acc, cnt) ScopedTimer _st_(&acc, &cnt)
+#else
+#define MDR_TIME(acc, cnt) ((void)0)
+#endif
 
 // ==================== 表格几何辅助 ====================
 
@@ -211,11 +231,14 @@ void MarkdownRenderer::OnDpiChanged(UINT dpi) {
     m_dpi = dpi;
     DiscardDeviceResources();
     CreateDeviceResources();
+    // DPI 改变会改变字号，之前按旧字号测得的高度全部作废
+    InvalidateMeasureCache();
     BuildLayout();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void MarkdownRenderer::Resize(int widthPx, int heightPx) {
+    const bool widthChanged = (widthPx != m_widthPx);
     m_widthPx = widthPx;
     m_heightPx = heightPx;
     if (m_rt) {
@@ -223,12 +246,88 @@ void MarkdownRenderer::Resize(int widthPx, int heightPx) {
     } else {
         CreateDeviceResources();
     }
+
+    // 只有宽度变化才需要重新测量（换行结果改变）；仅高度变化时更新视口即可，
+    // 这让竖向拖拽完全避开重排。
+    if (!widthChanged) {
+        m_viewHeight = ToDip(m_heightPx);
+        ClampScroll();
+        UpdateScrollInfo();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+
+    // 拖拽窗口边框时 WM_SIZE 会密集到达，逐帧全量重排在长文档上非常卡。
+    // 这里做节流：两次重排之间至少间隔 kResizeThrottleMs，其余请求合并到定时器。
+    constexpr UINT kResizeThrottleMs = 60;
+    const DWORD now = GetTickCount();
+    if (m_hwnd && m_lastLayoutTick != 0 && (now - m_lastLayoutTick) < kResizeThrottleMs) {
+        m_resizePending = true;
+        SetTimer(m_hwnd, kResizeTimerId, kResizeThrottleMs, nullptr);
+        // 暂不重排，先用旧布局重绘一帧，保证拖拽过程有即时反馈
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+    ApplyPendingResize();
+}
+
+// 真正执行重排；由 Resize 直接调用或节流定时器触发
+void MarkdownRenderer::ApplyPendingResize() {
+    if (m_hwnd) KillTimer(m_hwnd, kResizeTimerId);
+    m_resizePending = false;
+    m_lastLayoutTick = GetTickCount();
+
+    // 保持重排前后视口顶部所在的文档位置，避免宽度变化时阅读位置跳动
+    const float oldTotal = m_totalHeight;
+    const float ratio = (oldTotal > 0.0f) ? (m_scrollOffset / oldTotal) : 0.0f;
+
+#ifdef MDR_PROFILE_LAYOUT
+    LARGE_INTEGER _f, _t0, _t1;
+    QueryPerformanceFrequency(&_f);
+    QueryPerformanceCounter(&_t0);
+#endif
     BuildLayout();
+#ifdef MDR_PROFILE_LAYOUT
+    QueryPerformanceCounter(&_t1);
+    {
+        wchar_t buf[240];
+        swprintf_s(buf, L"[perf] BuildLayout %.2f ms (blocks=%zu) code=%.1f table=%.1f text=%.1f n(code=%d,table=%d,text=%d)\n",
+            (_t1.QuadPart - _t0.QuadPart) * 1000.0 / _f.QuadPart, m_layout.size(),
+            g_msCode, g_msTable, g_msText, g_nCode, g_nTable, g_nText);
+        OutputDebugStringW(buf);
+        FILE* fp = nullptr;
+        if (_wfopen_s(&fp, L"D:\\MyCodes\\MyUtilityTools\\MarkdownReader\\_perf.log", L"a") == 0 && fp) {
+            fwprintf(fp, L"%s", buf);
+            fclose(fp);
+        }
+    }
+#endif
+
+    if (oldTotal > 0.0f && m_totalHeight > 0.0f) {
+        m_scrollOffset = ratio * m_totalHeight;
+        ClampScroll();
+        UpdateScrollInfo();
+    }
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MarkdownRenderer::OnResizeTimer() {
+    if (!m_resizePending) {
+        if (m_hwnd) KillTimer(m_hwnd, kResizeTimerId);
+        return;
+    }
+    ApplyPendingResize();
+}
+
+// 文档内容、字体或 DPI 变化后，已缓存的测量结果全部失效
+void MarkdownRenderer::InvalidateMeasureCache() {
+    m_measCache.clear();
+    m_tableCache.clear();
 }
 
 void MarkdownRenderer::SetDocument(const Document& doc) {
     m_doc = doc;
+    InvalidateMeasureCache();
     EnsureResources();
     BuildLayout();
     m_scrollOffset = 0;
@@ -278,7 +377,13 @@ void MarkdownRenderer::UpdateScrollInfo() {
 
 void MarkdownRenderer::BuildLayout() {
     if (!m_dwrite) return;
+#ifdef MDR_PROFILE_LAYOUT
+    g_msCode = g_msTable = g_msText = 0; g_nCode = g_nTable = g_nText = 0;
+#endif
     m_layout.clear();
+    // 测量缓存与文档块一一对应；文档变更时由 InvalidateMeasureCache 清空
+    if (m_measCache.size() != m_doc.blocks.size()) m_measCache.assign(m_doc.blocks.size(), MeasureCache{});
+    if (m_tableCache.size() != m_doc.blocks.size()) m_tableCache.assign(m_doc.blocks.size(), TableMeasureCache{});
     m_totalHeight = 0;
     m_selBlockStart = m_selBlockEnd = -1;
     m_hoverCopyBlock = -1;
@@ -309,41 +414,36 @@ void MarkdownRenderer::BuildLayout() {
         }
 
         if (b.type == BlockType::CodeBlock) {
+            MDR_TIME(g_msCode, g_nCode);
             float maxW = m_contentWidth - 2 * kCodePad;
             if (maxW < 50) maxW = 50;
-            ComPtr<IDWriteTextLayout> lay;
-            m_dwrite->CreateTextLayout(b.rawText.c_str(), (UINT32)b.rawText.size(),
-                m_fmtCode.Get(), maxW, 1e6f, lay.GetAddressOf());
+            // 测量（带缓存）：代码块通常不含需要回退的字形，但量大且多行，
+            // 宽度足够容纳最长行时高度恒定，可直接复用。
             DWRITE_TEXT_METRICS m = {};
-            if (lay) lay->GetMetrics(&m);
+            MeasureCache& mc = m_measCache[idx];
+            if (mc.valid && maxW >= mc.loW && maxW <= mc.hiW) {
+                m.height = mc.height;   // 落在高度稳定区间内，无需重新排版
+            } else {
+                ComPtr<IDWriteTextLayout> lay;
+                m_dwrite->CreateTextLayout(b.rawText.c_str(), (UINT32)b.rawText.size(),
+                    m_fmtCode.Get(), maxW, 1e6f, lay.GetAddressOf());
+                if (lay) {
+                    lay->GetMetrics(&m);
+                    mc.valid = true;
+                    mc.maxW = maxW;
+                    mc.height = m.height;
+                    mc.loW = m.width;
+                    // 代码块含硬换行，行数恒 >= 源码行数；只要没有任何行被折行
+                    // （实际宽度未触到上限），继续放宽也不会改变高度。
+                    mc.hiW = (m.width < maxW) ? 1e9f : maxW;
+                }
+            }
             lb.marginTop = 8.0f;
             float codeHeight = m.height;
             lb.height = lb.marginTop + codeHeight + 2 * kCodePad + 8.0f;
-            lb.layout = lay;
-
-            // 语法高亮：按语言对代码做词法着色
-            if (lay && !b.codeLang.empty()) {
-                std::vector<Token> toks = HighlightCode(b.rawText, b.codeLang);
-                for (const auto& t : toks) {
-                    ID2D1SolidColorBrush* br = nullptr;
-                    switch (t.kind) {
-                        case TokenKind::Keyword:   br = m_brSynKeyword.Get(); break;
-                        case TokenKind::Type:      br = m_brSynType.Get(); break;
-                        case TokenKind::String:    br = m_brSynString.Get(); break;
-                        case TokenKind::Number:    br = m_brSynNumber.Get(); break;
-                        case TokenKind::Comment:   br = m_brSynComment.Get(); break;
-                        case TokenKind::Preproc:   br = m_brSynPreproc.Get(); break;
-                        case TokenKind::Function:  br = m_brSynFunc.Get(); break;
-                        case TokenKind::Register:  br = m_brSynRegister.Get(); break;
-                        case TokenKind::Label:     br = m_brSynLabel.Get(); break;
-                        default: break;
-                    }
-                    if (br) {
-                        DWRITE_TEXT_RANGE r = { (UINT32)t.start, (UINT32)t.len };
-                        lay->SetDrawingEffect(new ColorEffect(br), r);
-                    }
-                }
-            }
+            // 懒布局：仅记录换行宽度，语法高亮与复制按钮推迟到进入视口时再做
+            lb.measMaxW = maxW;
+            lb.measFmt = m_fmtCode.Get();
 
             lb.textTopRel = lb.marginTop + kCodePad;
             lb.textX = kPadding + kCodePad;
@@ -354,7 +454,6 @@ void MarkdownRenderer::BuildLayout() {
             lb.copyBtnRect = D2D1::RectF(
                 kPadding + m_contentWidth - 68.0f, lb.marginTop + 3.0f,
                 kPadding + m_contentWidth - 4.0f, lb.marginTop + 25.0f);
-            lb.copyBtnLayout = CreateCopyButtonLayout(L"复制", 2);
             lb.y = m_totalHeight;
             m_totalHeight += lb.height;
             m_layout.push_back(std::move(lb));
@@ -363,6 +462,7 @@ void MarkdownRenderer::BuildLayout() {
         }
 
         if (b.type == BlockType::Table) {
+            MDR_TIME(g_msTable, g_nTable);
             const auto& rows = b.tableRows;
             const size_t ncols = b.columnAligns.size();
             if (rows.empty() || ncols == 0) {
@@ -373,7 +473,12 @@ void MarkdownRenderer::BuildLayout() {
             }
 
             // 1. 测量每列最大内容宽度（不限宽，表头加粗）
+            // 该结果与窗口宽度无关，可跨重排缓存，避免每次拖拽都重测所有单元格。
             std::vector<float> colContentW(ncols, 0.0f);
+            TableMeasureCache& tc = m_tableCache[idx];
+            if (tc.valid && tc.colContentW.size() == ncols) {
+                colContentW = tc.colContentW;
+            } else {
             for (const auto& row : rows) {
                 for (size_t c = 0; c < ncols; ++c) {
                     if (c >= row.cells.size()) continue;
@@ -398,6 +503,9 @@ void MarkdownRenderer::BuildLayout() {
                         if (m.width > colContentW[c]) colContentW[c] = m.width;
                     }
                 }
+            }
+            tc.valid = true;
+            tc.colContentW = colContentW;
             }
 
             // 2. 列宽 = 内容 + padding，超出可用宽度时按比例缩小
@@ -446,11 +554,13 @@ void MarkdownRenderer::BuildLayout() {
                     if (lay) {
                         if (row.isHeader) lay->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
                             DWRITE_TEXT_RANGE{ 0, (UINT32)text.size() });
-                        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, cells[ri][c].linkRanges);
+                        std::vector<LayoutBlock::LinkRange> discard;
+                        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard);
                     }
                     DWRITE_TEXT_METRICS m = {};
                     if (lay) lay->GetMetrics(&m);
-                    cells[ri][c].layout = lay;
+                    // 懒布局：此处只取尺寸，链接范围推迟到 Materialize；
+                    // 不保留 layout，避免长表格常驻大量 DWrite 对象
                     cells[ri][c].contentW = m.width;
                     cells[ri][c].contentH = m.height;
                     cells[ri][c].align = (c < b.columnAligns.size()) ? b.columnAligns[c] : TableAlign::Left;
@@ -475,6 +585,7 @@ void MarkdownRenderer::BuildLayout() {
         }
 
         // 文本类块
+        MDR_TIME(g_msText, g_nText);
         IDWriteTextFormat* fmt = m_fmtBody.Get();
         float maxW = m_contentWidth;
         float textX = kPadding;
@@ -519,10 +630,7 @@ void MarkdownRenderer::BuildLayout() {
             }
             lb.markerText = marker;
             lb.markerX = kPadding + indent;
-            ComPtr<IDWriteTextLayout> mlay;
-            m_dwrite->CreateTextLayout(marker.c_str(), (UINT32)marker.size(),
-                m_fmtBody.Get(), 200.0f, 1e6f, mlay.GetAddressOf());
-            lb.markerLayout = mlay;
+            // 懒布局：markerLayout 推迟到 Materialize 创建
         } else {
             lastListLevel = -1;
             marginTop = 6.0f; marginBottom = 6.0f;
@@ -539,12 +647,50 @@ void MarkdownRenderer::BuildLayout() {
             text += r.text;
         }
 
-        ComPtr<IDWriteTextLayout> lay;
-        m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt, maxW, 1e6f, lay.GetAddressOf());
-        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, lb.linkRanges);
+        // 测量（带缓存）：自定义字体集下 CreateTextLayout+GetMetrics 很慢，
+        // 而改变窗口宽度时多数块的高度不变，故尽量复用上次结果。
         DWRITE_TEXT_METRICS m = {};
-        if (lay) lay->GetMetrics(&m);
-        lb.layout = lay;
+        MeasureCache& mc = m_measCache[idx];
+        if (mc.valid && maxW >= mc.loW && maxW <= mc.hiW) {
+            m.height = mc.height;   // 落在高度稳定区间内，无需重新排版
+        } else {
+            ComPtr<IDWriteTextLayout> lay;
+            m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt, maxW, 1e6f, lay.GetAddressOf());
+            // 粗体/斜体/行内代码会改变字形宽度进而影响换行，必须参与测高；
+            // 链接范围属于绘制信息，留到 Materialize 时再收集。
+            {
+                std::vector<LayoutBlock::LinkRange> discard;
+                ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard);
+            }
+            if (lay) {
+                lay->GetMetrics(&m);
+                mc.valid = true;
+                mc.maxW = maxW;
+                mc.height = m.height;
+                // 贪心换行下，把可用宽度收窄到“实际最长行宽”不会改变任何断行位置，
+                // 故下界取 m.width。
+                mc.loW = m.width;
+                if (m.lineCount <= 1) {
+                    mc.hiW = 1e9f;          // 单行：再宽也还是一行
+                    mc.unwrappedW = m.width;
+                } else {
+                    // 多行：m.width 是最宽行的宽度。只有当可用宽度 >= 某行宽 +
+                    // 下一行首个不可断单元宽度时，才可能发生回并；用全局最小
+                    // 不可断宽度 DetermineMinWidth 做下估，得到安全的上界。
+                    float minUnbreakable = 0.0f;
+                    if (SUCCEEDED(lay->DetermineMinWidth(&minUnbreakable)) && minUnbreakable > 0.0f) {
+                        // 留 1px 余量并取严格小于，避免恰好等于阈值时误判
+                        float bound = m.width + minUnbreakable - 1.0f;
+                        mc.hiW = (bound > maxW) ? bound : maxW;
+                    } else {
+                        mc.hiW = maxW;
+                    }
+                }
+            }
+        }
+        // 懒布局：测得高度后即释放 layout，进入视口时按同样参数重建
+        lb.measMaxW = maxW;
+        lb.measFmt = fmt;
         lb.fullText = text;
         lb.textX = textX;
         lb.textTopRel = marginTop;
@@ -568,11 +714,156 @@ void MarkdownRenderer::BuildLayout() {
 
     ClampScroll();
     UpdateScrollInfo();
+    MaterializeVisible();
+}
+
+// 为单个块创建绘制所需的 DWrite 资源。measure 阶段已确定几何（高度/列宽/行高），
+// 这里只重建 layout 并补齐纯绘制信息，因此不会改变任何位置计算结果。
+void MarkdownRenderer::EnsureBlockMaterialized(LayoutBlock& lb) {
+    if (lb.materialized || !m_dwrite) return;
+    lb.materialized = true;
+
+    if (lb.blockIndex < 0 || lb.blockIndex >= (int)m_doc.blocks.size()) return;
+    const Block& b = m_doc.blocks[lb.blockIndex];
+
+    if (lb.hasCopyBtn && !lb.copyBtnLayout) {
+        lb.copyBtnLayout = CreateCopyButtonLayout(L"复制", 2);
+    }
+
+    if (b.type == BlockType::CodeBlock) {
+        ComPtr<IDWriteTextLayout> lay;
+        m_dwrite->CreateTextLayout(b.rawText.c_str(), (UINT32)b.rawText.size(),
+            lb.measFmt ? lb.measFmt : m_fmtCode.Get(), lb.measMaxW, 1e6f, lay.GetAddressOf());
+        if (lay && !b.codeLang.empty()) {
+            std::vector<Token> toks = HighlightCode(b.rawText, b.codeLang);
+            for (const auto& t : toks) {
+                ID2D1SolidColorBrush* br = nullptr;
+                switch (t.kind) {
+                    case TokenKind::Keyword:   br = m_brSynKeyword.Get(); break;
+                    case TokenKind::Type:      br = m_brSynType.Get(); break;
+                    case TokenKind::String:    br = m_brSynString.Get(); break;
+                    case TokenKind::Number:    br = m_brSynNumber.Get(); break;
+                    case TokenKind::Comment:   br = m_brSynComment.Get(); break;
+                    case TokenKind::Preproc:   br = m_brSynPreproc.Get(); break;
+                    case TokenKind::Function:  br = m_brSynFunc.Get(); break;
+                    case TokenKind::Register:  br = m_brSynRegister.Get(); break;
+                    case TokenKind::Label:     br = m_brSynLabel.Get(); break;
+                    default: break;
+                }
+                if (br) {
+                    DWRITE_TEXT_RANGE r = { (UINT32)t.start, (UINT32)t.len };
+                    ComPtr<ColorEffect> eff;
+                    eff.Attach(new ColorEffect(br));
+                    lay->SetDrawingEffect(eff.Get(), r);
+                }
+            }
+        }
+        lb.layout = lay;
+        return;
+    }
+
+    if (b.type == BlockType::Table) {
+        const auto& rows = b.tableRows;
+        const size_t ncols = b.columnAligns.size();
+        if (rows.empty() || ncols == 0 || lb.tableColWidths.size() != ncols) return;
+        for (size_t ri = 0; ri < rows.size() && ri < lb.tableCells.size(); ++ri) {
+            const auto& row = rows[ri];
+            for (size_t c = 0; c < ncols && c < lb.tableCells[ri].size(); ++c) {
+                auto& cell = lb.tableCells[ri][c];
+                if (cell.layout) continue;
+                const std::vector<InlineRun>* pruns =
+                    (c < row.cells.size()) ? &row.cells[c].runs : nullptr;
+                std::wstring text;
+                std::vector<InlineRun*> runPtrs;
+                std::vector<UINT32> runStarts;
+                if (pruns) {
+                    for (const auto& r : *pruns) {
+                        runStarts.push_back((UINT32)text.size());
+                        runPtrs.push_back(const_cast<InlineRun*>(&r));
+                        text += r.text;
+                    }
+                }
+                float maxW = lb.tableColWidths[c] - 2 * kTableCellPadX;
+                if (maxW < 10) maxW = 10;
+                ComPtr<IDWriteTextLayout> lay;
+                m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(),
+                    m_fmtBody.Get(), maxW, 1e6f, lay.GetAddressOf());
+                if (lay) {
+                    if (row.isHeader) lay->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                        DWRITE_TEXT_RANGE{ 0, (UINT32)text.size() });
+                    cell.linkRanges.clear();
+                    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, cell.linkRanges);
+                }
+                cell.layout = lay;
+            }
+        }
+        return;
+    }
+
+    if (b.type == BlockType::HorizontalRule) return;
+
+    // 文本类块（段落/标题/引用/列表项）
+    if (!lb.markerText.empty() && !lb.markerLayout) {
+        ComPtr<IDWriteTextLayout> mlay;
+        m_dwrite->CreateTextLayout(lb.markerText.c_str(), (UINT32)lb.markerText.size(),
+            m_fmtBody.Get(), 200.0f, 1e6f, mlay.GetAddressOf());
+        lb.markerLayout = mlay;
+    }
+
+    std::wstring text;
+    std::vector<InlineRun*> runPtrs;
+    std::vector<UINT32> runStarts;
+    for (const auto& r : b.runs) {
+        runStarts.push_back((UINT32)text.size());
+        runPtrs.push_back(const_cast<InlineRun*>(&r));
+        text += r.text;
+    }
+    ComPtr<IDWriteTextLayout> lay;
+    m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(),
+        lb.measFmt ? lb.measFmt : m_fmtBody.Get(), lb.measMaxW, 1e6f, lay.GetAddressOf());
+    lb.linkRanges.clear();
+    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, lb.linkRanges);
+    lb.layout = lay;
+}
+
+void MarkdownRenderer::MaterializeVisible() {
+    if (m_layout.empty()) return;
+    // 预留一屏的上下缓冲，滚动时不必等到块进入视口才构建
+    const float margin = m_viewHeight;
+    const float top = m_scrollOffset - margin;
+    const float bottom = m_scrollOffset + m_viewHeight + margin;
+    for (auto& lb : m_layout) {
+        if (lb.y + lb.height < top) continue;
+        if (lb.y > bottom) break;   // m_layout 按 y 递增
+        EnsureBlockMaterialized(lb);
+    }
+    TrimFarBlocks();
+}
+
+// 释放远离视口的块资源：保留 ±3 屏，避免超长文档持续累积 DWrite 对象
+void MarkdownRenderer::TrimFarBlocks() {
+    const float keep = m_viewHeight * 3.0f + 600.0f;
+    const float top = m_scrollOffset - keep;
+    const float bottom = m_scrollOffset + m_viewHeight + keep;
+    for (auto& lb : m_layout) {
+        if (!lb.materialized) continue;
+        if (lb.y + lb.height >= top && lb.y <= bottom) continue;
+        lb.materialized = false;
+        lb.layout.Reset();
+        lb.markerLayout.Reset();
+        lb.copyBtnLayout.Reset();
+        for (auto& row : lb.tableCells) {
+            for (auto& cell : row) cell.layout.Reset();
+        }
+    }
 }
 
 void MarkdownRenderer::Render() {
     EnsureResources();
     if (!m_rt) { ValidateRect(m_hwnd, nullptr); return; }
+
+    // 懒布局：绘制前确保视口内（含上下缓冲）的块已具备 DWrite 资源
+    MaterializeVisible();
 
     m_rt->BeginDraw();
     m_rt->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -884,6 +1175,7 @@ std::wstring MarkdownRenderer::HitTestLink(int xPx, int yPx) const {
     float yDip = ToDip(yPx) + m_scrollOffset;
     for (const auto& lb : m_layout) {
         if (yDip < lb.y || yDip > lb.y + lb.height) continue;
+        EnsureBlockMaterialized(lb);
         // 表格单元格链接
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
             const auto& colWidths = lb.tableColWidths;
@@ -963,6 +1255,7 @@ bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* text
     for (const auto& lb : m_layout) {
         if (yDip < lb.y || yDip >= lb.y + lb.height) continue;
         if (lb.type == BlockType::HorizontalRule) continue;
+        EnsureBlockMaterialized(lb);
         // 表格：定位到具体单元格
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
             const auto& colWidths = lb.tableColWidths;
@@ -1446,6 +1739,9 @@ void MarkdownRenderer::CollectTextRangeRects(const LayoutBlock& lb, UINT32 pos, 
                 metrics[i].left + metrics[i].width, metrics[i].top + metrics[i].height));
         }
     };
+
+    // 该块可能在视口外（如搜索定位），需先补建 layout 才能做 HitTestTextRange
+    EnsureBlockMaterialized(lb);
 
     const UINT32 rangeEnd = pos + len;
 

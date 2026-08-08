@@ -32,7 +32,11 @@ public:
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_ref); }
     ULONG STDMETHODCALLTYPE Release() override {
-        return InterlockedDecrement(&m_ref);
+        // 必须真正释放：每个代码块的每个高亮 token 都会 new 一个 ColorEffect，
+        // 若只减计数不 delete，反复重排（如拖拽窗口）会持续泄漏。
+        ULONG n = InterlockedDecrement(&m_ref);
+        if (n == 0) delete this;
+        return n;
     }
 private:
     ULONG m_ref = 1;

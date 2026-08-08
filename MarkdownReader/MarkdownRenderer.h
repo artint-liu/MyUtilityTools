@@ -20,6 +20,9 @@ public:
     // 设为空表示无对应文件，此时相对链接按本地文件解析会失败而走默认打开。
     void SetCurrentFile(const std::wstring& path) { m_currentFile = path; }
     void Resize(int widthPx, int heightPx);
+    // 窗口拖拽期间的重排节流定时器回调（由 WM_TIMER 转发）
+    static constexpr UINT_PTR kResizeTimerId = 0xA1;
+    void OnResizeTimer();
     void Render();
     void OnDpiChanged(UINT dpi);
 
@@ -66,6 +69,12 @@ private:
         BlockType type = BlockType::Paragraph;
         Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
         Microsoft::WRL::ComPtr<IDWriteTextLayout> markerLayout; // 列表标记
+        // 懒布局：measure 阶段只算高度并释放 layout，进入视口时才 Materialize
+        // （创建 layout + 行内样式 + 语法高亮 + 复制按钮 + 表格单元格）
+        bool materialized = false;
+        // measure 阶段缓存的排版参数，供 Materialize 复用，避免重复推导
+        float measMaxW = 0;      // 正文/代码块换行宽度
+        IDWriteTextFormat* measFmt = nullptr;  // 非拥有，指向 m_fmtXxx（生命周期长于 layout）
         float height = 0;     // DIP
         float y = 0;          // DIP，块顶端绝对坐标
         float textX = 0;      // DIP，文本绘制 x
@@ -152,6 +161,35 @@ private:
     float m_scrollOffset = 0;  // DIP
     float m_viewHeight = 0;    // DIP
     float m_contentWidth = 0;  // DIP（可用绘制宽度，已减去左右内边距）
+    bool  m_resizePending = false;  // 有被节流合并、尚未执行的重排
+    DWORD m_lastLayoutTick = 0;     // 上次重排的时间戳（GetTickCount）
+
+    // ---- 测量缓存 ----
+    // 自定义字体集下 DirectWrite 的换行/字体回退很慢（实测 698 块约 190~480ms），
+    // 而窗口宽度变化时绝大多数块的高度并不改变。这里缓存每个块的测量结果：
+    //   - unwrappedW：不限宽时的文本宽度
+    //   - minW：DetermineMinWidth，即最长不可断单元的宽度
+    // 若新宽度 w 满足 w >= unwrappedW（整体放得下、必为单行/原行数）
+    // 或上次命中的宽度区间未跨越任何换行点，则可直接复用缓存高度，跳过 DWrite。
+    struct MeasureCache {
+        float maxW = -1.0f;        // 上次测量所用的换行宽度
+        float height = 0.0f;       // 对应高度
+        float unwrappedW = -1.0f;  // 不限宽时的宽度（-1 表示未知）
+        bool  valid = false;
+        // 高度稳定区间 [loW, hiW]：在此宽度范围内换行结果不变，高度恒为 height。
+        // 由“实测宽度 m.width”与“下一个换行点”共同确定：
+        //   下界 = 本次排版实际占用的最大行宽（再窄就会有行被迫折行）
+        //   上界 = 触发某行可以并入上一行的宽度，未知时保守取当前 maxW
+        float loW = -1.0f, hiW = -1.0f;
+    };
+    std::vector<MeasureCache> m_measCache;   // 与 m_doc.blocks 同长度，按块索引
+    // 表格测量缓存：列内容宽度不随窗口宽度变化，可跨重排复用
+    struct TableMeasureCache {
+        bool valid = false;
+        std::vector<float> colContentW;
+    };
+    std::vector<TableMeasureCache> m_tableCache;  // 与 m_doc.blocks 同长度
+    void InvalidateMeasureCache();
     int   m_widthPx = 0;
     int   m_heightPx = 0;
     // 文本选取状态
@@ -226,6 +264,18 @@ private:
     void EnsureResources();
     float ToDip(int px) const { return px * 96.0f / m_dpi; }
     void BuildLayout();
+    void ApplyPendingResize();
+    // 懒布局：确保块的绘制资源已创建（仅对进入视口/需要命中测试的块调用）
+    void EnsureBlockMaterialized(LayoutBlock& lb);
+    // const 上下文（命中测试/搜索定位）中按需实体化：只补建缓存资源，不改变布局几何
+    void EnsureBlockMaterialized(const LayoutBlock& lb) const {
+        const_cast<MarkdownRenderer*>(this)->EnsureBlockMaterialized(
+            const_cast<LayoutBlock&>(lb));
+    }
+    // 确保 [scrollOffset, scrollOffset+viewHeight] 内的块均已实体化
+    void MaterializeVisible();
+    // 释放远离视口的块所占的 DWrite 资源，控制长文档内存占用
+    void TrimFarBlocks();
     void UpdateScrollInfo();
     void ClampScroll();
     // 允许的最大滚动偏移：末尾留白使最后一个块可滚到视口顶部

@@ -438,6 +438,12 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     case WM_SIZE:
         if (r) r->Resize(LOWORD(lParam), HIWORD(lParam));
         return 0;
+    case WM_TIMER:
+        if (r && wParam == MarkdownRenderer::kResizeTimerId) {
+            r->OnResizeTimer();
+            return 0;
+        }
+        break;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);

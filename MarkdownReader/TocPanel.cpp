@@ -96,8 +96,9 @@ void TocPanel::CreateDeviceResources() {
     m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0B3D91, 1.0f), m_brSelText.GetAddressOf());
 
     // 文本绘制效果：普通文本用 m_brText，选中项用深蓝字（在浅蓝底上保证对比度）
-    m_effText = new ColorEffect(m_brText.Get());
-    m_effSel = new ColorEffect(m_brSelText.Get());
+    // Attach 而非赋值：ColorEffect 构造后引用计数已为 1，赋值会再 AddRef 造成泄漏
+    m_effText.Attach(new ColorEffect(m_brText.Get()));
+    m_effSel.Attach(new ColorEffect(m_brSelText.Get()));
 }
 
 void TocPanel::DiscardDeviceResources() {
