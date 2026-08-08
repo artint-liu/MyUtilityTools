@@ -49,14 +49,111 @@
 
 ## 代码块
 
+代码块现在支持简单的关键字着色，覆盖 json、C/C++、C#、Lua、Python、x86/x64 汇编等常用语言。
+语言由围栏信息串（``` 后的文字）决定，例如 ```cpp、```python、```asm。
+
+C++（关键字、类型、字符串、注释、预处理器着色）：
+
 ```cpp
-#include <windows.h>
+#include <windows.h>   // 预处理器 + 注释
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmd, int show) {
     // 一个最小的 Win32 入口
+    const int count = 42;
     MessageBoxW(nullptr, L"Hello, Markdown!", L"Demo", MB_OK);
     return 0;
 }
+```
+
+C 语言：
+
+```c
+#include <stdio.h>
+
+int main(void) {
+    double pi = 3.14159;
+    printf("PI = %f\n", pi);   /* 块注释 */
+    return 0;
+}
+```
+
+C#（关键字、类型、字符串着色）：
+
+```csharp
+using System;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        string name = "MarkdownReader";
+        int value = 100;
+        Console.WriteLine($"Hello, {name}: {value}");
+    }
+}
+```
+
+Python（关键字、函数名、字符串、数字、注释着色）：
+
+```python
+import math
+
+def area(radius: float) -> float:
+    # 计算圆面积
+    return math.pi * radius ** 2
+
+result = area(3)
+print(f"area = {result}")
+```
+
+Lua（关键字、字符串、注释着色）：
+
+```lua
+-- 计算阶乘
+function factorial(n)
+    if n <= 1 then
+        return 1
+    end
+    return n * factorial(n - 1)
+end
+
+local r = factorial(5)
+print("5! = " .. r)
+```
+
+JSON（键名、字符串、数字、布尔、null 着色）：
+
+```json
+{
+    "name": "MarkdownReader",
+    "version": 1.2,
+    "enabled": true,
+    "tags": ["markdown", "d2d"],
+    "nested": { "count": 0, "note": null }
+}
+```
+
+x86/x64 汇编（指令、寄存器、标签、注释、立即数着色）：
+
+```asm
+section .text
+
+global _start
+
+_start:
+    mov     rax, 1          ; sys_write
+    mov     rdi, 1          ; stdout
+    mov     rsi, msg
+    mov     rdx, len
+    syscall
+
+    mov     rax, 60         ; sys_exit
+    xor     rdi, rdi
+    syscall
+
+msg:
+    db      "Hello, Assembly!", 0x0A
+len equ $ - msg
 ```
 
 ## 引用块

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "MarkdownParser.h"
+#include "SyntaxHighlighter.h"
 #include "TextRenderer.h"
 
 class MarkdownRenderer {
@@ -132,6 +133,17 @@ private:
     Microsoft::WRL::ComPtr<ColorEffect> m_effLink;
     Microsoft::WRL::ComPtr<ColorEffect> m_effCode;
     Microsoft::WRL::ComPtr<CustomTextRenderer> m_textRenderer;
+
+    // 代码语法高亮画笔（按 token 类别着色）
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynKeyword;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynType;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynString;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynNumber;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynComment;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynPreproc;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynFunc;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynRegister;
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brSynLabel;
 
     Document m_doc;
     std::wstring m_currentFile;  // 当前文档路径（解析相对链接用）

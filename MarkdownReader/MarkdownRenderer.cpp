@@ -156,7 +156,7 @@ void MarkdownRenderer::CreateDeviceResources() {
     if (m_rt && !m_brText) {
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0x1F2328), m_brText.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0969DA), m_brLink.GetAddressOf());
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xCF222E), m_brCode.GetAddressOf());
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x24292F), m_brCode.GetAddressOf());   // 代码默认文本（近黑，区别于关键字）
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0x636C76), m_brQuote.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xD0D7DE), m_brBar.GetAddressOf());
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xD0D7DE), m_brHr.GetAddressOf());
@@ -170,6 +170,17 @@ void MarkdownRenderer::CreateDeviceResources() {
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0xFF9900), m_brSearchCurrent.GetAddressOf());
         m_effLink.Attach(new ColorEffect(m_brLink.Get()));
         m_effCode.Attach(new ColorEffect(m_brCode.Get()));
+
+        // 语法高亮画笔（GitHub Light 风格，适配浅色代码背景）
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xCF222E), m_brSynKeyword.GetAddressOf());   // 关键字 红
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0550AE), m_brSynType.GetAddressOf());       // 类型   蓝
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0A3069), m_brSynString.GetAddressOf());    // 字符串 深蓝
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x953800), m_brSynNumber.GetAddressOf());    // 数字   棕橙
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x6E7781), m_brSynComment.GetAddressOf());    // 注释   灰
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x8250DF), m_brSynPreproc.GetAddressOf());   // 预处理器 紫
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x00838F), m_brSynFunc.GetAddressOf());       // 函数名 青（区别于预处理器紫）
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x116329), m_brSynRegister.GetAddressOf());   // 寄存器 绿
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x9A6700), m_brSynLabel.GetAddressOf());      // 标签   琥珀（区别于数字棕橙）
     }
 
     if (m_dwrite && !m_fmtBody) {
@@ -309,6 +320,31 @@ void MarkdownRenderer::BuildLayout() {
             float codeHeight = m.height;
             lb.height = lb.marginTop + codeHeight + 2 * kCodePad + 8.0f;
             lb.layout = lay;
+
+            // 语法高亮：按语言对代码做词法着色
+            if (lay && !b.codeLang.empty()) {
+                std::vector<Token> toks = HighlightCode(b.rawText, b.codeLang);
+                for (const auto& t : toks) {
+                    ID2D1SolidColorBrush* br = nullptr;
+                    switch (t.kind) {
+                        case TokenKind::Keyword:   br = m_brSynKeyword.Get(); break;
+                        case TokenKind::Type:      br = m_brSynType.Get(); break;
+                        case TokenKind::String:    br = m_brSynString.Get(); break;
+                        case TokenKind::Number:    br = m_brSynNumber.Get(); break;
+                        case TokenKind::Comment:   br = m_brSynComment.Get(); break;
+                        case TokenKind::Preproc:   br = m_brSynPreproc.Get(); break;
+                        case TokenKind::Function:  br = m_brSynFunc.Get(); break;
+                        case TokenKind::Register:  br = m_brSynRegister.Get(); break;
+                        case TokenKind::Label:     br = m_brSynLabel.Get(); break;
+                        default: break;
+                    }
+                    if (br) {
+                        DWRITE_TEXT_RANGE r = { (UINT32)t.start, (UINT32)t.len };
+                        lay->SetDrawingEffect(new ColorEffect(br), r);
+                    }
+                }
+            }
+
             lb.textTopRel = lb.marginTop + kCodePad;
             lb.textX = kPadding + kCodePad;
             lb.bgRect = D2D1::RectF(kPadding, lb.marginTop,
