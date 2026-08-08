@@ -22,7 +22,8 @@
   --reject: #F44336;
   --skip: #9E9E9E;
   --key: #569CD6;
-  --str: #6A9955;
+  --str: #7EE787;
+  --str-bright: #8AFE80;
   --num: #CE9178;
   --bool: #C586C0;
   --glow-green: rgba(76,175,80,0.45);
@@ -81,6 +82,7 @@ body {
   padding: 26px 28px 22px; position: relative;
   box-shadow: 0 8px 30px rgba(0,0,0,0.45);
   transition: transform .3s ease, opacity .3s ease, box-shadow .3s ease;
+  display: flex; flex-direction: column; min-height: 0;
 }
 .sample-card.swipe-pass { transform: translateX(40px); opacity: 0; box-shadow: 0 0 40px var(--glow-green); }
 .sample-card.swipe-reject { transform: translateX(-40px); opacity: 0; box-shadow: 0 0 40px var(--glow-red); }
@@ -101,15 +103,15 @@ body {
 .status-badge.unmarked { background: rgba(128,128,128,0.1); color: var(--text-dim); }
 
 /* ===== 字段渲染（键值卡片） ===== */
-.fields { display: flex; flex-direction: column; gap: 16px; max-height: 62vh; overflow-y: auto; padding-right: 8px; }
+.fields { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; }
 .field { border-left: 3px solid var(--primary); padding: 8px 0 8px 14px; }
 .field-key {
-  display: inline-block; font-size: 12px; font-weight: 600; color: var(--key);
+  display: inline-block; font-size: 13px; font-weight: 600; color: var(--key);
   background: rgba(86,156,214,0.12); padding: 2px 10px; border-radius: 6px; margin-bottom: 8px;
   letter-spacing: .3px;
 }
-.field-val { font-size: 13px; line-height: 1.7; color: var(--text-0); padding-left: 4px; word-break: break-word; }
-.field-val.str { color: var(--str); white-space: pre-wrap; }
+.field-val { font-size: 16px; line-height: 1.7; color: var(--text-0); padding-left: 4px; word-break: break-word; }
+.field-val.str { color: var(--str-bright); white-space: pre-wrap; }
 .field-val.bool { color: var(--bool); font-weight: 600; }
 .field-val.null { color: var(--text-dim); font-style: italic; }
 .field-val.obj, .field-val.arr { color: var(--text-2); }
