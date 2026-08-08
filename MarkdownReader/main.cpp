@@ -438,15 +438,18 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     case WM_SIZE:
         if (r) r->Resize(LOWORD(lParam), HIWORD(lParam));
         return 0;
-    case WM_PAINT:
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
         if (r) r->Render();
-        else { PAINTSTRUCT ps; BeginPaint(hwnd, &ps); EndPaint(hwnd, &ps); }
+        EndPaint(hwnd, &ps);
         // D2D HWND RenderTarget 不尊重 WS_CLIPSIBLINGS，会画到浮于其上的搜索栏区域。
         // 绘制完成后同步通知框架重绘搜索栏控件，覆盖回 D2D 内容。
         SendMessageW(GetParent(hwnd), WM_APP_REFRESH_SEARCHBAR, 0, 0);
         // 同样把链接 Tooltip 提到最前并重绘，避免被 D2D 后续绘制覆盖。
         if (r) r->RefreshTooltip();
         return 0;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_VSCROLL:
@@ -546,10 +549,13 @@ static LRESULT CALLBACK TocWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_SIZE:
         if (t) t->Resize(LOWORD(lParam), HIWORD(lParam));
         return 0;
-    case WM_PAINT:
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        BeginPaint(hwnd, &ps);
         if (t) t->Paint();
-        else { PAINTSTRUCT ps; BeginPaint(hwnd, &ps); EndPaint(hwnd, &ps); }
+        EndPaint(hwnd, &ps);
         return 0;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_VSCROLL:

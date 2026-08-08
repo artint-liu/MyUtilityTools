@@ -226,7 +226,9 @@ void MarkdownRenderer::SetDocument(const Document& doc) {
     if (!m_searchQuery.empty()) {
         SearchInDocument(m_searchQuery, m_searchCaseSensitive);
     }
-    InvalidateRect(m_hwnd, nullptr, FALSE);
+    // 用 PostMessage 替代 InvalidateRect：在 WinMain 的 GetMessage 循环之前调用时，
+    // InvalidateRect 可能无法可靠触发 WM_PAINT；PostMessage 确保消息进入队列
+    PostMessageW(m_hwnd, WM_PAINT, 0, 0);
 }
 
 float MarkdownRenderer::MaxScroll() const {

@@ -1,183 +1,419 @@
 #include "TocPanel.h"
+#define NOMINMAX
+#include <algorithm>
+#include <cmath>
 #include "Common.h"
 #include "FontManager.h"
-#include <algorithm>
 
 TocPanel::~TocPanel() {
     Cleanup();
 }
 
 void TocPanel::Cleanup() {
-    if (m_font) { DeleteObject(m_font); m_font = nullptr; }
-    if (m_fontBold) { DeleteObject(m_fontBold); m_fontBold = nullptr; }
-    if (m_fontTitle) { DeleteObject(m_fontTitle); m_fontTitle = nullptr; }
-}
-
-void TocPanel::CreateFonts() {
-    if (m_font) return;
-    // 确保 fonts\*.ttf 已加载（幂等）。GDI 端通过 AddFontResourceEx(FR_PRIVATE)
-    // 进程私有加载，CreateFontW 可用其 family name。
-    FontManager::Instance().LoadFonts();
-    const std::wstring& fam = FontManager::Instance().GetTocFamilyGdi();
-    const wchar_t* family = fam.c_str();
-    const int sizeBase = FontManager::Instance().GetTocSizePt();
-    const int lineBase = FontManager::Instance().GetTocLineSpacing();
-
-    // 三种字体仅在字号/字重上不同，其余参数一致
-    auto makeFont = [family](int height, int weight) {
-        return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-            DEFAULT_PITCH | FF_SWISS, family);
-    };
-    // 磅值 -> 设备像素高度（负值表示字符高度而非单元格高度）
-    auto ptToHeight = [this](int pt) { return -MulDiv(pt * 60, (int)m_dpi, 72 * 100); };
-
-    m_font     = makeFont(ptToHeight(sizeBase), FW_NORMAL);
-    m_fontBold = makeFont(ptToHeight(sizeBase), FW_SEMIBOLD);
-    m_fontTitle = makeFont(ptToHeight(sizeBase + 1), FW_SEMIBOLD);
-
-    m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
-    m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
+    DiscardDeviceResources();
+    m_d2d.Reset();
+    m_dwrite.Reset();
+    m_textRenderer.Reset();
 }
 
 void TocPanel::Init(HWND hwnd) {
     m_hwnd = hwnd;
     m_dpi = GetDpiForWindow(hwnd);
     if (m_dpi == 0) m_dpi = 96;
+    FontManager::Instance().LoadFonts();
+    CreateDeviceResources();
+    CreateFormats();
+    // 行高与原版 GDI 一致：MulDiv(lineBase * 60, dpi, 96 * 100)
+    int lineBase = FontManager::Instance().GetTocLineSpacing();
+    m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
+    m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
     m_padX = Scaled(10);
-    m_arrowSize = Scaled(10);
     m_arrowSlot = Scaled(16);
-    CreateFonts();
+    m_arrowSize = Scaled(6);
 }
 
-void TocPanel::SetEntries(const std::vector<Document::TocEntry>& entries) {
-    m_entries = entries;
-    BuildTree();
-    RebuildVisible();
-    m_selected = -1;
-    m_hover = -1;
-    m_scroll = 0;
-    UpdateScroll();
-    InvalidateRect(m_hwnd, nullptr, FALSE);
-}
-
-void TocPanel::BuildTree() {
-    m_nodes.clear();
-    m_nodes.reserve(m_entries.size());
-    std::vector<int> levelStack;   // 维护每层最后一个节点在 m_nodes 的下标
-    for (int i = 0; i < (int)m_entries.size(); ++i) {
-        int lvl = m_entries[i].level;
-        TocNode node;
-        node.entryIndex = i;
-        node.level = lvl;
-        node.depth = (std::max)(0, lvl - 1);
-
-        // 找到深度小于当前层级的栈顶作为父节点
-        while (!levelStack.empty() &&
-               m_nodes[levelStack.back()].level >= lvl) {
-            levelStack.pop_back();
-        }
-        if (!levelStack.empty()) {
-            int p = levelStack.back();
-            node.parent = p;
-            m_nodes[p].hasChildren = true;
-        }
-        m_nodes.push_back(node);
-        levelStack.push_back((int)m_nodes.size() - 1);
+void TocPanel::OnDpiChanged(UINT dpi) {
+    if (dpi == m_dpi) return;
+    m_dpi = dpi;
+    int lineBase = FontManager::Instance().GetTocLineSpacing();
+    m_lineHeight = MulDiv(lineBase * 60, (int)m_dpi, 96 * 100);
+    m_titleLineHeight = MulDiv(m_lineHeight, 7, 10);
+    m_padX = Scaled(10);
+    m_arrowSlot = Scaled(16);
+    m_arrowSize = Scaled(6);
+    if (m_rt) {
+        m_rt->SetDpi((float)m_dpi, (float)m_dpi);
+        m_rt->Resize(D2D1::SizeU(m_widthPx, m_heightPx));
     }
+    CreateFormats();
+    RebuildLayoutCache();
+    ClampScroll();
+    UpdateScroll();
 }
 
-void TocPanel::RebuildVisible() {
-    m_visible.clear();
-    m_visible.reserve(m_nodes.size());
-    for (int i = 0; i < (int)m_nodes.size(); ++i) {
-        // 跳过被折叠祖先隐藏的节点
-        if (m_nodes[i].parent >= 0) {
-            int p = m_nodes[i].parent;
-            while (p >= 0) {
-                if (m_nodes[p].collapsed) { p = -2; break; }
-                p = m_nodes[p].parent;
-            }
-            if (p == -2) continue;
-        }
-        m_visible.push_back(i);
+void TocPanel::CreateDeviceResources() {
+    DiscardDeviceResources();
+
+    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+        __uuidof(ID2D1Factory),
+        reinterpret_cast<void**>(m_d2d.GetAddressOf()));
+    if (!m_d2d) return;
+
+    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(m_dwrite.GetAddressOf()));
+    if (!m_dwrite) return;
+
+    RECT rc;
+    GetClientRect(m_hwnd, &rc);
+    m_widthPx = rc.right - rc.left;
+    m_heightPx = rc.bottom - rc.top;
+
+    D2D1_RENDER_TARGET_PROPERTIES rtProps =
+        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            (float)m_dpi, (float)m_dpi);
+    m_d2d->CreateHwndRenderTarget(
+        rtProps,
+        D2D1::HwndRenderTargetProperties(m_hwnd, D2D1::SizeU(m_widthPx, m_heightPx)),
+        m_rt.GetAddressOf());
+    if (!m_rt) return;
+
+    // 取 DeviceContext 接口（彩色字体绘制需要 ID2D1DeviceContext）
+    m_rt.As(&m_dc);
+
+    m_textRenderer = new CustomTextRenderer(m_dwrite.Get());
+
+    // 背景
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0xF5F6F8, 1.0f), m_brBg.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0xE3E6EA, 1.0f), m_brLine.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0x6B7280, 1.0f), m_brTitle.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0x1F2328, 1.0f), m_brText.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0xE8F0FF, 1.0f), m_brSelBg.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0x2F6FEB, 1.0f), m_brSelBar.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0xEDF0F3, 1.0f), m_brHover.GetAddressOf());
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0x4A5568, 1.0f), m_brArrow.GetAddressOf());
+    // 选中项文字：浅蓝底(0xE8F0FF)上配深蓝字，保证对比度清晰可读
+    m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0B3D91, 1.0f), m_brSelText.GetAddressOf());
+
+    // 文本绘制效果：普通文本用 m_brText，选中项用深蓝字（在浅蓝底上保证对比度）
+    m_effText = new ColorEffect(m_brText.Get());
+    m_effSel = new ColorEffect(m_brSelText.Get());
+}
+
+void TocPanel::DiscardDeviceResources() {
+    m_rt.Reset();
+    m_dc.Reset();
+    m_brBg.Reset();
+    m_brLine.Reset();
+    m_brTitle.Reset();
+    m_brText.Reset();
+    m_brSelBg.Reset();
+    m_brSelBar.Reset();
+    m_brHover.Reset();
+    m_brArrow.Reset();
+    m_brSelText.Reset();
+    m_effText.Reset();
+    m_effSel.Reset();
+    m_fmtBody.Reset();
+    m_fmtBold.Reset();
+    m_fmtTitle.Reset();
+    m_layoutCache.clear();
+}
+
+void TocPanel::CreateFormats() {
+    FontManager& fm = FontManager::Instance();
+    IDWriteFontCollection* col = fm.GetDWriteCollection();
+    const wchar_t* fam = fm.GetTocFamily().c_str();
+    // 原版 GDI 用 N*60 体系：lfHeight = -MulDiv(pt * 60, dpi, 72 * 100)
+    // 像素高度(绝对值) = pt * 60 * dpi / 7200 = pt * dpi / 120
+    // DWrite 字号(DIP) = 像素高度 * 96 / dpi = pt * 96 / 120 = pt * 0.8
+    int sizePt = fm.GetTocSizePt();
+    FLOAT baseDip = (FLOAT)sizePt * 96.0f / 120.0f;
+    FLOAT titleDip = baseDip + (FLOAT)fm.GetTocSizePt() * 96.0f / 120.0f * (1.0f / 15.0f); // 标题略大
+    if (titleDip <= baseDip) titleDip = baseDip + 1.0f;
+
+    m_dwrite->CreateTextFormat(fam, col, DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        baseDip, L"", m_fmtBody.GetAddressOf());
+    m_dwrite->CreateTextFormat(fam, col, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        baseDip, L"", m_fmtBold.GetAddressOf());
+    m_dwrite->CreateTextFormat(fam, col, DWRITE_FONT_WEIGHT_BOLD,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        titleDip, L"", m_fmtTitle.GetAddressOf());
+
+    if (m_fmtBody) m_fmtBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    if (m_fmtBold) m_fmtBold->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    if (m_fmtTitle) {
+        m_fmtTitle->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
 
 void TocPanel::Resize(int widthPx, int heightPx) {
     m_widthPx = widthPx;
     m_heightPx = heightPx;
+    if (m_rt) {
+        m_rt->Resize(D2D1::SizeU(widthPx, heightPx));
+    }
+    RebuildLayoutCache();
+    ClampScroll();
     UpdateScroll();
+}
+
+int TocPanel::TitleHeight() const {
+    return m_titleLineHeight;
+}
+
+void TocPanel::SetEntries(const std::vector<Document::TocEntry>& entries) {
+    m_entries = entries;
+    m_scroll = 0;
+    m_selected = -1;
+    m_hover = -1;
+    BuildTree();
+    RebuildVisible();
+    ClampScroll();
+    UpdateScroll();
+    RebuildLayoutCache();
+    // 数据已更新，立即触发重绘，避免目录内容停留到鼠标移动才刷新
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+void TocPanel::BuildTree() {
+    m_nodes.clear();
+    m_nodes.reserve(m_entries.size());
+    // 栈：记录当前各级别最后一个节点（下标）作为父节点候选
+    int lastByLevel[8];
+    std::fill(lastByLevel, lastByLevel + 8, -1);
+    int lastAny = -1;
+
+    for (size_t i = 0; i < m_entries.size(); ++i) {
+        int lvl = m_entries[i].level;
+        if (lvl < 1) lvl = 1;
+        if (lvl > 6) lvl = 6;
+
+        TocNode node;
+        node.entryIndex = (int)i;
+        node.level = lvl;
+        node.depth = lvl - 1;
+        node.collapsed = false;
+        node.hasChildren = false;
+
+        int parent = -1;
+        if (lvl > 1) {
+            // 父级别应是比当前级别小的最近一个
+            for (int p = lvl - 1; p >= 1; --p) {
+                if (lastByLevel[p] != -1) {
+                    parent = lastByLevel[p];
+                    break;
+                }
+            }
+        }
+        node.parent = parent;
+        node.hasChildren = false; // 由后续设置
+        m_nodes.push_back(node);
+
+        // 更新父节点的 hasChildren
+        if (parent != -1) m_nodes[parent].hasChildren = true;
+
+        lastByLevel[lvl] = (int)i;
+        lastAny = (int)i;
+        (void)lastAny;
+    }
+}
+
+void TocPanel::RebuildVisible() {
+    m_visible.clear();
+    for (int i = 0; i < (int)m_nodes.size(); ++i) {
+        // 跳过被折叠的子孙：若某祖先 collapsed，则不显示
+        bool hidden = false;
+        int p = m_nodes[i].parent;
+        while (p != -1) {
+            if (m_nodes[p].collapsed) { hidden = true; break; }
+            p = m_nodes[p].parent;
+        }
+        if (!hidden) m_visible.push_back(i);
+    }
+    m_totalHeight = (int)m_visible.size() * m_lineHeight;
+}
+
+void TocPanel::RebuildLayoutCache() {
+    if (!m_rt || !m_fmtBody) { m_layoutCache.clear(); return; }
+    m_layoutCache.clear();
+    m_layoutCache.resize(m_visible.size());
+    int arrowArea = m_padX + m_arrowSlot;
+    for (size_t k = 0; k < m_visible.size(); ++k) {
+        int nodeIdx = m_visible[k];
+        const Document::TocEntry& e = m_entries[m_nodes[nodeIdx].entryIndex];
+        LayoutCache& c = m_layoutCache[k];
+        c.text = e.text;
+        FLOAT maxW = (FLOAT)(std::max)(1, m_widthPx - arrowArea - m_padX);
+        if (FAILED(m_dwrite->CreateTextLayout(c.text.c_str(), (UINT32)c.text.size(),
+                m_fmtBody.Get(), maxW, (FLOAT)ToDip(m_lineHeight), c.layout.GetAddressOf()))) {
+            c.layout.Reset();
+        } else {
+            // 单行不换行：超长文本横向截断，避免多行重叠在同一行高矩形内
+            c.layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            // 文本在行高矩形（DIP）内垂直居中
+            c.layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            // 超出部分以省略号结尾，提示内容被截断
+            DWRITE_TRIMMING tri{ DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> ellipsis;
+            if (SUCCEEDED(m_dwrite->CreateEllipsisTrimmingSign(c.layout.Get(), ellipsis.GetAddressOf()))) {
+                c.layout->SetTrimming(&tri, ellipsis.Get());
+            }
+        }
+    }
+}
+
 void TocPanel::ClampScroll() {
-    const int maxScroll = (std::max)(0, m_totalHeight - m_heightPx);
-    m_scroll = (std::min)((std::max)(m_scroll, 0), maxScroll);
+    int maxScroll = m_totalHeight - (m_heightPx - TitleHeight());
+    if (maxScroll < 0) maxScroll = 0;
+    if (m_scroll < 0) m_scroll = 0;
+    if (m_scroll > maxScroll) m_scroll = maxScroll;
 }
 
 void TocPanel::UpdateScroll() {
-    m_totalHeight = (int)m_visible.size() * m_lineHeight;
-    if (!m_hwnd) return;
-    ClampScroll();
-
+    int maxScroll = m_totalHeight - (m_heightPx - TitleHeight());
+    if (maxScroll < 0) maxScroll = 0;
     SCROLLINFO si = {};
     si.cbSize = sizeof(si);
-    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     si.nMin = 0;
-    si.nMax = m_totalHeight > 0 ? m_totalHeight - 1 : 0;
-    si.nPage = (UINT)m_heightPx;
+    si.nMax = maxScroll + (m_heightPx - TitleHeight());
+    si.nPage = (m_heightPx - TitleHeight());
     si.nPos = m_scroll;
     SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
 }
 
-int TocPanel::TitleHeight() const {
-    return Scaled(8) + m_titleLineHeight + Scaled(4);
-}
-
 int TocPanel::IndentForLevel(int level) const {
-    // 每行缩进 = 基础 padding + 深度步进 + 箭头槽位
-    return DepthOffset((std::max)(0, level - 1)) + m_arrowSlot;
+    return DepthOffset(level - 1);
 }
 
 int TocPanel::ArrowXForDepth(int depth) const {
-    // 箭头绘制在该深度的箭头槽位中心
-    return DepthOffset(depth) + m_arrowSlot / 2;
+    return m_padX + depth * Scaled(14);
 }
 
 int TocPanel::ItemAtY(int yPx) const {
-    int titleH = TitleHeight();
-    int y = yPx - titleH + m_scroll;
-    if (y < 0) return -1;
-    int idx = y / m_lineHeight;
+    int top = TitleHeight() - m_scroll;
+    int idx = (yPx - top) / m_lineHeight;
     if (idx < 0 || idx >= (int)m_visible.size()) return -1;
-    return m_visible[idx];
+    return idx;
+}
+
+void TocPanel::Paint() {
+    if (!m_rt) return;
+    m_rt->BeginDraw();
+    m_rt->SetTransform(D2D1::IdentityMatrix());
+
+    m_rt->Clear(D2D1::ColorF(0xF5F6F8, 1.0f));
+
+    int titleH = TitleHeight();
+
+    // 标题
+    if (m_fmtTitle) {
+        float y = (float)(titleH - m_lineHeight) / 2.0f;
+        if (y < 0) y = 2.0f;
+        m_rt->DrawText(L"目录", (UINT32)wcslen(L"目录"), m_fmtTitle.Get(),
+            D2D1::RectF(ToDip(m_padX), ToDip((int)y), ToDip(m_widthPx - m_padX), ToDip(titleH)),
+            m_brTitle.Get());
+    }
+
+    // 标题下分隔线
+    m_rt->DrawLine(D2D1::Point2F(0, ToDip(titleH)),
+        D2D1::Point2F(ToDip(m_widthPx), ToDip(titleH)),
+        m_brLine.Get(), 1.0f);
+
+    // 裁剪区域（标题以下）
+    D2D1_RECT_F clip = D2D1::RectF(0, ToDip(titleH), ToDip(m_widthPx), ToDip(m_heightPx));
+    m_rt->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
+
+    int top = titleH - m_scroll;
+    for (size_t k = 0; k < m_visible.size(); ++k) {
+        int nodeIdx = m_visible[k];
+        const TocNode& node = m_nodes[nodeIdx];
+        int y = top + (int)k * m_lineHeight;
+        if (y + m_lineHeight < titleH) continue;
+        if (y > m_heightPx) break;
+
+        bool isSel = (nodeIdx == m_selected);
+        bool isHover = (k == (size_t)m_hover);
+
+        int xText = DepthOffset(node.depth) + (node.hasChildren ? m_arrowSlot : 0);
+
+        if (isSel) {
+            m_rt->FillRectangle(
+                D2D1::RectF(0, ToDip(y), ToDip(m_widthPx), ToDip(y + m_lineHeight)),
+                m_brSelBg.Get());
+            m_rt->FillRectangle(
+                D2D1::RectF(0, ToDip(y), ToDip(Scaled(3)), ToDip(y + m_lineHeight)),
+                m_brSelBar.Get());
+        } else if (isHover) {
+            m_rt->FillRectangle(
+                D2D1::RectF(0, ToDip(y), ToDip(m_widthPx), ToDip(y + m_lineHeight)),
+                m_brHover.Get());
+        }
+
+        // 折叠箭头（有子节点的项）
+        if (node.hasChildren) {
+            int ax = ArrowXForDepth(node.depth);
+            int ay = y + m_lineHeight / 2;
+            int s = m_arrowSize;
+            D2D1_POINT_2F p1, p2, p3;
+            if (node.collapsed) {
+                // 折叠：向右的 V —— 顶(ax,ay-s) → 右(ax+s,ay) → 底(ax,ay+s)
+                p1 = D2D1::Point2F(ToDip(ax), ToDip(ay - s));
+                p2 = D2D1::Point2F(ToDip(ax + s), ToDip(ay));
+                p3 = D2D1::Point2F(ToDip(ax), ToDip(ay + s));
+            } else {
+                // 展开：向下开口的 V —— 左(ax-s,ay-s/2) → 下中(ax,ay+s/2) → 右上(ax+s,ay-s/2)
+                p1 = D2D1::Point2F(ToDip(ax - s), ToDip(ay - s / 2));
+                p2 = D2D1::Point2F(ToDip(ax), ToDip(ay + s / 2));
+                p3 = D2D1::Point2F(ToDip(ax + s), ToDip(ay - s / 2));
+            }
+            m_rt->DrawLine(p1, p2, m_brArrow.Get(), 1.5f);
+            m_rt->DrawLine(p2, p3, m_brArrow.Get(), 1.5f);
+        }
+
+        // 文本（彩色 emoji 由 CustomTextRenderer 处理）
+        LayoutCache& c = m_layoutCache[k];
+        if (c.layout) {
+            ColorEffect* eff = isSel ? m_effSel.Get() : m_effText.Get();
+            c.layout->SetDrawingEffect(eff,
+                DWRITE_TEXT_RANGE{ 0, (UINT32)c.text.size() });
+            RenderContext ctx{ m_rt.Get(), m_dc.Get(), m_brText.Get() };
+            c.layout->Draw(&ctx, m_textRenderer.Get(), ToDip(xText), ToDip(y));
+        }
+    }
+
+    m_rt->PopAxisAlignedClip();
+    m_rt->EndDraw();
 }
 
 void TocPanel::OnLButtonDown(int xPx, int yPx) {
-    int nodeIdx = ItemAtY(yPx);
-    if (nodeIdx < 0) return;
-
+    int idx = ItemAtY(yPx);
+    if (idx < 0) return;
+    int nodeIdx = m_visible[idx];
     TocNode& node = m_nodes[nodeIdx];
-    if (node.hasChildren) {
-        // 箭头区域：以 ArrowX 为中心、m_arrowSize 为宽
-        int ax = ArrowXForDepth(node.depth);
-        if (xPx >= ax - m_arrowSize / 2 && xPx <= ax + m_arrowSize / 2) {
-            node.collapsed = !node.collapsed;
-            RebuildVisible();
-            UpdateScroll();
-            InvalidateRect(m_hwnd, nullptr, FALSE);
-            return;
-        }
+
+    // 点击箭头区域：折叠/展开
+    int arrowX = ArrowXForDepth(node.depth);
+    if (node.hasChildren && xPx >= arrowX - m_arrowSize && xPx <= arrowX + m_arrowSize + 2) {
+        node.collapsed = !node.collapsed;
+        RebuildVisible();
+        ClampScroll();
+        UpdateScroll();
+        RebuildLayoutCache();
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
     }
 
     m_selected = nodeIdx;
     InvalidateRect(m_hwnd, nullptr, FALSE);
-    HWND parent = GetParent(m_hwnd);
-    if (parent) {
-        PostMessageW(parent, WM_APP_TOC_SELECT,
-            (WPARAM)m_entries[node.entryIndex].blockIndex, 0);
-    }
+
+    // 通知框架滚动正文
+    int block = m_entries[node.entryIndex].blockIndex;
+    HWND frame = GetParent(m_hwnd);
+    if (frame) SendMessageW(frame, WM_APP_TOC_SELECT, (WPARAM)block, 0);
 }
 
 void TocPanel::OnMouseMove(int xPx, int yPx) {
@@ -185,11 +421,6 @@ void TocPanel::OnMouseMove(int xPx, int yPx) {
     if (idx != m_hover) {
         m_hover = idx;
         InvalidateRect(m_hwnd, nullptr, FALSE);
-        TRACKMOUSEEVENT tme = {};
-        tme.cbSize = sizeof(tme);
-        tme.dwFlags = TME_LEAVE;
-        tme.hwndTrack = m_hwnd;
-        TrackMouseEvent(&tme);
     }
 }
 
@@ -201,153 +432,43 @@ void TocPanel::OnMouseLeave() {
 }
 
 void TocPanel::OnMouseWheel(int delta) {
-    m_scroll -= delta * m_lineHeight / WHEEL_DELTA;
+    int step = m_lineHeight;
+    m_scroll -= (delta > 0 ? step : -step);
     ClampScroll();
     UpdateScroll();
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void TocPanel::HandleVScroll(WPARAM wParam) {
-    SCROLLINFO si = {};
-    si.cbSize = sizeof(si);
-    si.fMask = SIF_ALL;
-    GetScrollInfo(m_hwnd, SB_VERT, &si);
-    int oldPos = si.nPos;
+    int maxScroll = m_totalHeight - (m_heightPx - TitleHeight());
+    if (maxScroll < 0) maxScroll = 0;
+    int step = m_lineHeight;
+    int page = m_heightPx - TitleHeight();
     switch (LOWORD(wParam)) {
-    case SB_LINEUP: si.nPos -= m_lineHeight; break;
-    case SB_LINEDOWN: si.nPos += m_lineHeight; break;
-    case SB_PAGEUP: si.nPos -= (int)si.nPage; break;
-    case SB_PAGEDOWN: si.nPos += (int)si.nPage; break;
+    case SB_LINEUP:   m_scroll -= step; break;
+    case SB_LINEDOWN: m_scroll += step; break;
+    case SB_PAGEUP:   m_scroll -= page; break;
+    case SB_PAGEDOWN: m_scroll += page; break;
     case SB_THUMBTRACK:
-    case SB_THUMBPOSITION: si.nPos = si.nTrackPos; break;
+    case SB_THUMBPOSITION:
+        m_scroll = HIWORD(wParam); break;
+    default: return;
     }
-    si.fMask = SIF_POS;
-    SetScrollInfo(m_hwnd, SB_VERT, &si, TRUE);
-    GetScrollInfo(m_hwnd, SB_VERT, &si);
-    if (si.nPos != oldPos) {
-        m_scroll = si.nPos;
-        InvalidateRect(m_hwnd, nullptr, FALSE);
-    }
+    ClampScroll();
+    UpdateScroll();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void TocPanel::SetSelectedByBlock(int blockIndex) {
-    for (int i = 0; i < (int)m_entries.size(); ++i) {
-        if (m_entries[i].blockIndex == blockIndex) {
-            if (m_selected != i) {
-                m_selected = i;
-                InvalidateRect(m_hwnd, nullptr, FALSE);
-            }
-            return;
+    int newSel = -1;
+    for (size_t i = 0; i < m_nodes.size(); ++i) {
+        if (m_entries[m_nodes[i].entryIndex].blockIndex == blockIndex) {
+            newSel = (int)i;
+            break;
         }
     }
-}
-
-void TocPanel::Paint() {
-    PAINTSTRUCT ps;
-    HDC hdc = BeginPaint(m_hwnd, &ps);
-    if (!hdc) return;
-
-    int w = m_widthPx;
-    int h = m_heightPx;
-    if (w <= 0 || h <= 0) { EndPaint(m_hwnd, &ps); return; }
-
-    HDC mem = CreateCompatibleDC(hdc);
-    HBITMAP bmp = CreateCompatibleBitmap(hdc, w, h);
-    HBITMAP oldBmp = (HBITMAP)SelectObject(mem, bmp);
-
-    // 用指定纯色填充矩形（画刷即用即弃）
-    auto fillRect = [mem](const RECT& rc, COLORREF color) {
-        HBRUSH brush = CreateSolidBrush(color);
-        FillRect(mem, &rc, brush);
-        DeleteObject(brush);
-    };
-
-    RECT rcAll = { 0, 0, w, h };
-    fillRect(rcAll, RGB(0xF6, 0xF8, 0xFA));
-
-    int titleH = TitleHeight();
-
-    const int titleTop = Scaled(8);
-    RECT rcTitle = { m_padX, titleTop, w, titleTop + m_titleLineHeight };
-    HFONT oldFont = (HFONT)SelectObject(mem, m_fontTitle);
-    SetBkMode(mem, TRANSPARENT);
-    SetTextColor(mem, RGB(0x24, 0x29, 0x2F));
-    DrawTextW(mem, L"目录", -1, &rcTitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-
-    HPEN pen = CreatePen(PS_SOLID, 1, RGB(0xD0, 0xD7, 0xDE));
-    HPEN oldPen = (HPEN)SelectObject(mem, pen);
-    MoveToEx(mem, 0, titleH, nullptr);
-    LineTo(mem, w, titleH);
-
-    HRGN clip = CreateRectRgn(0, titleH, w, h);
-    SelectClipRgn(mem, clip);
-
-    int startY = titleH - m_scroll;
-    for (int row = 0; row < (int)m_visible.size(); ++row) {
-        int i = m_visible[row];
-        int y = startY + row * m_lineHeight;
-        if (y + m_lineHeight < titleH) continue;
-        if (y > h) break;
-
-        RECT rcItem = { 0, y, w, y + m_lineHeight };
-        if (i == m_selected) {
-            fillRect(rcItem, RGB(0xDD, 0xEA, 0xFF));
-            // 选中项左侧的高亮竖条
-            RECT rcInd = { 0, y, Scaled(3), y + m_lineHeight };
-            fillRect(rcInd, RGB(0x09, 0x69, 0xDA));
-        } else if (i == m_hover) {
-            fillRect(rcItem, RGB(0xE4, 0xEA, 0xF0));
-        }
-
-        const TocNode& node = m_nodes[i];
-        const Document::TocEntry& e = m_entries[node.entryIndex];
-
-        // 折叠箭头：略粗线条的 chevron，钝角观感
-        // 折叠（向右）：长宽对调，瘦高 V 形；展开（向下）：扁宽 V 形
-        if (node.hasChildren) {
-            int ax = ArrowXForDepth(node.depth);
-            int ay = y + m_lineHeight / 2;
-            int dxWide = m_arrowSize / 2;     // 水平半跨度（宽）
-            int dyWide = m_arrowSize / 4 + 1; // 竖直半跨度（扁）
-            int weight = (std::max)(2, Scaled(2));
-            HPEN arrowPen = CreatePen(PS_SOLID, weight, RGB(0x8A, 0x94, 0xA6));
-            HPEN prevPen = (HPEN)SelectObject(mem, arrowPen);
-            if (node.collapsed) {
-                // 指向右：瘦高 V 形（水平窄、竖直高）
-                MoveToEx(mem, ax - dyWide, ay - dxWide, nullptr);
-                LineTo(mem, ax + dyWide, ay);
-                LineTo(mem, ax - dyWide, ay + dxWide);
-            } else {
-                // 指向下：扁宽 V 形 ⌄
-                MoveToEx(mem, ax - dxWide, ay - dyWide, nullptr);
-                LineTo(mem, ax, ay + dyWide);
-                LineTo(mem, ax + dxWide, ay - dyWide);
-            }
-            SelectObject(mem, prevPen);
-            DeleteObject(arrowPen);
-        }
-
-        if (e.level == 1) SelectObject(mem, m_fontBold);
-        else SelectObject(mem, m_font);
-
-        SetTextColor(mem, RGB(0x1F, 0x23, 0x28));
-        int x = IndentForLevel(e.level);
-        RECT rcText = { x, y, w - m_padX, y + m_lineHeight };
-        std::wstring label = e.text;
-        DrawTextW(mem, label.c_str(), (int)label.size(), &rcText,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    if (newSel != m_selected) {
+        m_selected = newSel;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
     }
-
-    SelectClipRgn(mem, nullptr);
-    DeleteObject(clip);
-    SelectObject(mem, oldPen);
-    DeleteObject(pen);
-    SelectObject(mem, oldFont);
-
-    BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, oldBmp);
-    DeleteObject(bmp);
-    DeleteDC(mem);
-
-    EndPaint(m_hwnd, &ps);
 }
