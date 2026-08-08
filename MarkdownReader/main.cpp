@@ -490,6 +490,9 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     case WM_LBUTTONUP:
         if (r) r->OnLButtonUp(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
+    case WM_LBUTTONDBLCLK:
+        if (r) r->OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        return 0;
     case WM_RBUTTONUP: {
         // 右键菜单：提供复制选取文本的入口（不依赖键盘焦点）
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -999,7 +1002,7 @@ static void RegisterClasses(HINSTANCE hInst) {
 
     wc.lpfnWndProc = ContentWndProc;
     wc.lpszClassName = kContentClass;
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;  // CS_DBLCLKS 使窗口能收到 WM_LBUTTONDBLCLK（双击选词）
     RegisterClassExW(&wc);
 
     wc.lpfnWndProc = TocWndProc;

@@ -31,6 +31,7 @@ public:
     void OnLButtonDown(int xPx, int yPx);
     void OnMouseMove(int xPx, int yPx);
     void OnLButtonUp(int xPx, int yPx);
+    void OnLButtonDblClk(int xPx, int yPx); // 双击：全词选择
     void CopySelection();
     void ClearSelection();
     void ClearHover();
@@ -76,6 +77,9 @@ private:
         D2D1_RECT_F bgRect{};
         float hrY = 0;
         bool hasBar = false;   // 引用左侧竖条
+        bool hasHeadingRule = false; // 一级/二级标题下方的横线
+        float headingRuleY = 0;      // 横线相对块顶的 y（DIP）
+        float headingRuleGap = 0;    // 文本与横线的间距（DIP）
         D2D1_RECT_F barRect{};
         std::wstring markerText;
         float markerX = 0;

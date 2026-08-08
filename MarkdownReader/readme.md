@@ -101,6 +101,24 @@ illo inventore veritatis et quasi architecto beatae vitae dicta sunt explicabo.
 
 ###### 六级标题
 
+## 📝 emoji 显示测试
+
+本章节用于测试 emoji 表情符号在标题与正文中的渲染效果。
+
+### 🚀 子标题中的 emoji
+
+正文里也可以直接使用 emoji，例如：🌟 ✨ 🔥 💡 📚 🎉 🐱 🌈 ⚡ 🍎
+
+> 💬 引用块内同样支持 emoji：😊 愿你拥有美好的一天！
+
+- ☕ 喝杯咖啡
+- 🎯 专注目标
+- 🧩 拼图般的细节
+
+```text
+emoji: 🤖 🛠️ ⚙️ 📦 🔧
+```
+
 ## 结语
 
 感谢使用 MarkdownReader。你可以通过命令行 `MarkdownReader readme.md` 直接打开本文件，

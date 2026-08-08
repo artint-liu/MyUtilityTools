@@ -451,6 +451,12 @@ void MarkdownRenderer::BuildLayout() {
             fmt = m_fmtHeading[li].Get();
             marginTop = (li == 0) ? 18.0f : (li == 1) ? 16.0f : (li == 2) ? 14.0f : 12.0f;
             marginBottom = (li <= 1) ? 8.0f : 4.0f;
+            // 一级/二级标题下方绘制一条横线（横线位置在得到文本高度后再计算）
+            if (li == 0 || li == 1) {
+                lb.hasHeadingRule = true;
+                lb.headingRuleGap = 5.0f;   // 文本与横线间距
+                marginBottom += 7.0f;       // 为横线预留额外底部间距
+            }
         } else if (b.type == BlockType::BlockQuote) {
             indent = 18.0f;
             maxW = m_contentWidth - indent;
@@ -507,6 +513,9 @@ void MarkdownRenderer::BuildLayout() {
         lb.textX = textX;
         lb.textTopRel = marginTop;
         lb.height = marginTop + m.height + marginBottom;
+        if (lb.hasHeadingRule) {
+            lb.headingRuleY = marginTop + m.height + lb.headingRuleGap;
+        }
         if (b.type == BlockType::BlockQuote) {
             lb.barRect = D2D1::RectF(kPadding + 6, marginTop - 2,
                 kPadding + 6 + 3, marginTop + m.height + 2);
@@ -553,6 +562,12 @@ void MarkdownRenderer::Render() {
             D2D1_RECT_F bar = lb.barRect;
             bar.top += top; bar.bottom += top;
             m_rt->FillRectangle(bar, m_brBar.Get());
+        }
+        if (lb.hasHeadingRule && m_brHr) {
+            float y = top + lb.headingRuleY;
+            m_rt->DrawLine(D2D1::Point2F(kPadding, y),
+                D2D1::Point2F(kPadding + m_contentWidth, y),
+                m_brHr.Get(), 1.0f);
         }
         if (lb.markerLayout) {
             RenderContext ctx{ m_rt.Get(), m_dc.Get(), defBrush };
@@ -1263,6 +1278,49 @@ void MarkdownRenderer::OnLButtonUp(int xPx, int yPx) {
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+}
+
+// 判断字符是否属于"单词"的一部分：字母/数字，以及中日韩等表意文字。
+static bool IsWordChar(wchar_t c) {
+    if (iswalnum(c)) return true;
+    // CJK 统一表意文字等常见范围（含常用汉字、假名、谚文、全角标点外的一般表意）
+    if (c >= 0x3400 && c <= 0x9FFF) return true;   // CJK 扩展 A + 基本汉字
+    if (c >= 0xF900 && c <= 0xFAFF) return true;   // 兼容表意文字
+    if (c >= 0x3040 && c <= 0x30FF) return true;   // 平假名/片假名
+    if (c >= 0xAC00 && c <= 0xD7AF) return true;   // 谚文音节
+    return false;
+}
+
+void MarkdownRenderer::OnLButtonDblClk(int xPx, int yPx) {
+    int blk = -1;
+    UINT32 pos = 0;
+    if (!HitTestText(xPx, yPx, &blk, &pos)) return;
+    if (blk < 0 || blk >= (int)m_layout.size()) return;
+    const LayoutBlock& lb = m_layout[blk];
+    if (lb.fullText.empty()) return;
+
+    const std::wstring& text = lb.fullText;
+    UINT32 n = (UINT32)text.size();
+    if (pos > n) pos = n;
+    // 命中到单词内部字符（含 CJK），否则选择空（如点在空白/标点处时单选该字符）
+    UINT32 start = pos, end = pos;
+    if (pos < n && IsWordChar(text[pos])) {
+        // 向左扩展
+        while (start > 0 && IsWordChar(text[start - 1])) --start;
+        // 向右扩展（含当前字符）
+        while (end < n && IsWordChar(text[end])) ++end;
+    } else if (pos > 0 && IsWordChar(text[pos - 1])) {
+        // 命中到单词后的边界（trailing），归到前一个字符
+        end = pos; start = pos - 1;
+        while (start > 0 && IsWordChar(text[start - 1])) --start;
+        while (end < n && IsWordChar(text[end])) ++end;
+    }
+    m_selBlockStart = m_selBlockEnd = blk;
+    m_selPosStart = start;
+    m_selPosEnd = end;
+    m_selecting = false;
+    ReleaseCapture();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 // ==================== 复制到剪贴板 ====================
