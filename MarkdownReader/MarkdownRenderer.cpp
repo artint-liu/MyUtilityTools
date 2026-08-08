@@ -171,15 +171,15 @@ void MarkdownRenderer::CreateDeviceResources() {
         m_effLink.Attach(new ColorEffect(m_brLink.Get()));
         m_effCode.Attach(new ColorEffect(m_brCode.Get()));
 
-        // 语法高亮画笔（GitHub Light 风格，适配浅色代码背景）
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xCF222E), m_brSynKeyword.GetAddressOf());   // 关键字 红
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0550AE), m_brSynType.GetAddressOf());       // 类型   蓝
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0A3069), m_brSynString.GetAddressOf());    // 字符串 深蓝
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x953800), m_brSynNumber.GetAddressOf());    // 数字   棕橙
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x6E7781), m_brSynComment.GetAddressOf());    // 注释   灰
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x8250DF), m_brSynPreproc.GetAddressOf());   // 预处理器 紫
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x00838F), m_brSynFunc.GetAddressOf());       // 函数名 青（区别于预处理器紫）
-        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x116329), m_brSynRegister.GetAddressOf());   // 寄存器 绿
+        // 语法高亮画笔（Visual Assist X / 番茄助手 经典浅色配色）
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x0000FF), m_brSynKeyword.GetAddressOf());   // 关键字 蓝
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x2B91AF), m_brSynType.GetAddressOf());       // 类型   青蓝
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0xC00000), m_brSynString.GetAddressOf());    // 字符串 深红
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x9A5B00), m_brSynNumber.GetAddressOf());    // 数字   棕橙
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x008000), m_brSynComment.GetAddressOf());   // 注释   绿
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x800080), m_brSynPreproc.GetAddressOf());   // 预处理器 紫
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x008080), m_brSynFunc.GetAddressOf());      // 函数名 青（区别于预处理器紫）
+        m_rt->CreateSolidColorBrush(D2D1::ColorF(0x1E7145), m_brSynRegister.GetAddressOf());  // 寄存器 深绿（区别于注释绿）
         m_rt->CreateSolidColorBrush(D2D1::ColorF(0x9A6700), m_brSynLabel.GetAddressOf());      // 标签   琥珀（区别于数字棕橙）
     }
 
