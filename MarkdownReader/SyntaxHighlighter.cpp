@@ -227,6 +227,7 @@ std::vector<Token> HighlightCode(const std::wstring& code, const std::wstring& l
     };
 
     while (i < n) {
+        const size_t iterStart = i;   // 本轮起始位置，用于兜底防止死循环
         wchar_t c = code[i];
 
         // ---- 空白 ----
@@ -336,6 +337,9 @@ std::vector<Token> HighlightCode(const std::wstring& code, const std::wstring& l
         if (IsDigit(c) || (c == L'.' && i + 1 < n && IsDigit(code[i + 1]))) {
             size_t s = i;
             bool seenDot = (c == L'.');
+            // 若以 '.' 开头（如 .5），先吃掉这个点，保证本轮至少前进一个字符，
+            // 否则形如 "0.0.0.0" 的串会在第二个 '.' 处原地打转造成死循环。
+            if (seenDot) i++;
             while (i < n) {
                 wchar_t d = code[i];
                 if (IsDigit(d)) { i++; }
@@ -423,6 +427,14 @@ std::vector<Token> HighlightCode(const std::wstring& code, const std::wstring& l
                 i++;
             }
             if (i > s) push(s, i, TokenKind::Operator);
+        }
+
+        // ---- 兜底：任何分支都必须让 i 前进，否则强制推进一个字符 ----
+        // 防止个别字符（例如 hashComment 语言中未被消费的 '#'）在各分支间
+        // 互相 break 而原地打转，导致 UI 线程 100% CPU 卡死。
+        if (i == iterStart) {
+            push(i, i + 1, TokenKind::Default);
+            i++;
         }
     }
 
