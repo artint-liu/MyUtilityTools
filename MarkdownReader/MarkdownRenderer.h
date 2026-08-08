@@ -2,6 +2,7 @@
 #include <d2d1.h>
 #include <d2d1_1.h>
 #include <dwrite.h>
+#include <wincodec.h>   // WIC 图片解码（IWICImagingFactory 等）
 #include <wrl/client.h>
 #include <string>
 #include <vector>
@@ -106,11 +107,20 @@ private:
             TableAlign align = TableAlign::Left;
             std::vector<LinkRange> linkRanges; // 单元格内链接
         };
-        struct TableTextRange { UINT32 start = 0; UINT32 end = 0; size_t row = 0; size_t col = 0; };
+        struct TableTextRange { UINT32 start = 0; uint32_t end = 0; size_t row = 0; size_t col = 0; };
         std::vector<float> tableColWidths;
         std::vector<float> tableRowHeights;
         std::vector<std::vector<TableCellLayout>> tableCells; // [row][col]
         std::vector<TableTextRange> tableTextRanges; // 每个单元格在 fullText 中的范围
+        // 图片块专用
+        Microsoft::WRL::ComPtr<ID2D1Bitmap> imageBitmap; // 已解码的位图（未加载则为空）
+        float imageW = 0;   // 显示宽度（DIP）
+        float imageH = 0;   // 显示高度（DIP）
+        float imageMaxW = 0;// 允许的最大宽度（DIP，= 内容宽度）
+        D2D1_RECT_F imageRect{};  // 绘制矩形（相对块顶）
+        std::wstring imageUrl;    // 解析后的绝对/原始 URL
+        bool imageFailed = false; // 加载失败（显示占位文本）
+        Microsoft::WRL::ComPtr<IDWriteTextLayout> imageAltLayout; // alt 占位文本布局
     };
 
     HWND m_hwnd = nullptr;
@@ -118,6 +128,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID2D1Factory> m_d2d;
     Microsoft::WRL::ComPtr<IDWriteFactory> m_dwrite;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> m_wic; // WIC 工厂，用于图片解码
     Microsoft::WRL::ComPtr<ID2D1HwndRenderTarget> m_rt;
     Microsoft::WRL::ComPtr<ID2D1DeviceContext> m_dc;  // m_rt 的 D2D1.1 接口，用于彩色字体绘制
 
@@ -263,6 +274,10 @@ private:
     void DiscardDeviceResources();
     void EnsureResources();
     float ToDip(int px) const { return px * 96.0f / m_dpi; }
+    // 将图片 src 解析为可访问路径（相对路径基于当前文档目录；URL 原样返回）。
+    std::wstring ResolveImagePath(const std::wstring& src) const;
+    // 用 WIC 解码图片文件为 ID2D1Bitmap（失败返回空）。
+    Microsoft::WRL::ComPtr<ID2D1Bitmap> LoadImageBitmap(const std::wstring& path);
     void BuildLayout();
     void ApplyPendingResize();
     // 懒布局：确保块的绘制资源已创建（仅对进入视口/需要命中测试的块调用）

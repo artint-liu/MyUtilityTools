@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <wincodec.h>
 #include <cmath>
 #include <windowsx.h>
 
@@ -148,6 +149,10 @@ static HRESULT MakeFormat(IDWriteFactory* f, IDWriteTextFormat** out,
 
 void MarkdownRenderer::CreateDeviceResources() {
     if (m_d2d && m_rt) return;
+    if (!m_wic) {
+        CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(m_wic.GetAddressOf()));
+    }
     if (!m_d2d) {
         D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, m_d2d.GetAddressOf());
     }
@@ -406,6 +411,23 @@ void MarkdownRenderer::BuildLayout() {
             lb.marginTop = 14.0f;
             lb.height = lb.marginTop + 24.0f;
             lb.hrY = lb.marginTop + 12.0f;
+            lb.y = m_totalHeight;
+            m_totalHeight += lb.height;
+            m_layout.push_back(std::move(lb));
+            lastListLevel = -1;
+            continue;
+        }
+
+        if (b.type == BlockType::Image) {
+            // 测量阶段只记录占位高度；真正的位图在 Materialize 时懒加载。
+            // 这里先用一个保守的占位高度（图片最大高度），载入后再修正。
+            constexpr float kImageMarginTop = 14.0f;
+            constexpr float kImageMaxH = 360.0f;   // 单张图片显示高度上限（DIP）
+            lb.marginTop = kImageMarginTop;
+            lb.imageMaxW = m_contentWidth;
+            lb.imageH = kImageMaxH;                 // 占位高度（精确高度在 Materialize 后更新）
+            lb.height = lb.marginTop + lb.imageH;
+            lb.imageUrl = ResolveImagePath(b.image.src);
             lb.y = m_totalHeight;
             m_totalHeight += lb.height;
             m_layout.push_back(std::move(lb));
@@ -802,6 +824,53 @@ void MarkdownRenderer::EnsureBlockMaterialized(LayoutBlock& lb) {
 
     if (b.type == BlockType::HorizontalRule) return;
 
+    if (b.type == BlockType::Image) {
+        // 懒加载位图：解码失败则显示 alt 占位文本。
+        if (!lb.imageBitmap && !lb.imageFailed) {
+            lb.imageUrl = ResolveImagePath(b.image.src);
+            ComPtr<ID2D1Bitmap> bmp = LoadImageBitmap(lb.imageUrl);
+            if (bmp) {
+                lb.imageBitmap = bmp;   // 直接保存 ID2D1Bitmap（也是 IWICBitmapSource）
+                UINT32 pw = bmp->GetPixelSize().width;
+                UINT32 ph = bmp->GetPixelSize().height;
+                if (pw > 0 && ph > 0) {
+                    float maxW = lb.imageMaxW;
+                    float maxH = 360.0f;   // 显示高度上限
+                    float scale = (std::min)(maxW / pw, maxH / ph);
+                    if (scale > 1.0f) scale = 1.0f;  // 不放大
+                    lb.imageW = pw * scale;
+                    lb.imageH = ph * scale;
+                }
+            } else {
+                lb.imageFailed = true;
+                // 构建 alt 占位文本布局
+                std::wstring alt = b.image.alt.empty() ? L"[图片加载失败]" : (L"[图片] " + b.image.alt);
+                ComPtr<IDWriteTextLayout> alay;
+                m_dwrite->CreateTextLayout(alt.c_str(), (UINT32)alt.size(),
+                    m_fmtBody.Get(), lb.imageMaxW, 1e6f, alay.GetAddressOf());
+                lb.imageAltLayout = alay;
+                lb.imageH = 24.0f;
+            }
+            // 计算相对块顶的绘制矩形（水平居中于内容宽度）
+            {
+                float ix = (lb.imageMaxW - lb.imageW) * 0.5f;
+                lb.imageRect = D2D1::RectF(ix, lb.marginTop, ix + lb.imageW, lb.marginTop + lb.imageH);
+            }
+            // 图片真实高度确定后，更新布局高度与后续块偏移
+            lb.height = lb.marginTop + lb.imageH;
+            // 重排后续块的 y 坐标
+            for (size_t k = (size_t)lb.blockIndex + 1; k < m_layout.size(); ++k) {
+                m_layout[k].y = m_layout[k - 1].y + m_layout[k - 1].height;
+            }
+            m_totalHeight = m_layout.empty() ? 0.0f : (m_layout.back().y + m_layout.back().height);
+            UpdateScrollInfo();
+            ClampScroll();
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        lb.materialized = true;
+        return;
+    }
+
     // 文本类块（段落/标题/引用/列表项）
     if (!lb.markerText.empty() && !lb.markerLayout) {
         ComPtr<IDWriteTextLayout> mlay;
@@ -904,6 +973,18 @@ void MarkdownRenderer::Render() {
             float y = top + lb.hrY;
             m_rt->DrawLine(D2D1::Point2F(kPadding, y), D2D1::Point2F(kPadding + m_contentWidth, y),
                 m_brHr.Get(), 1.0f);
+        }
+        if (lb.type == BlockType::Image) {
+            float ix = kPadding + (m_contentWidth - lb.imageW) * 0.5f;  // 居中
+            float iy = top + lb.marginTop;
+            D2D1_RECT_F rc = D2D1::RectF(ix, iy, ix + lb.imageW, iy + lb.imageH);
+            if (lb.imageBitmap) {
+                m_rt->DrawBitmap(lb.imageBitmap.Get(), rc);
+            } else if (lb.imageFailed && lb.imageAltLayout) {
+                // 占位文本
+                RenderContext ctx{ m_rt.Get(), m_dc.Get(), defBrush };
+                lb.imageAltLayout->Draw(&ctx, m_textRenderer.Get(), kPadding, iy);
+            }
         }
         if (lb.type == BlockType::Table && !lb.tableCells.empty() && m_brTableBorder) {
             float yBase = top + lb.marginTop;
@@ -1255,6 +1336,7 @@ bool MarkdownRenderer::HitTestText(int xPx, int yPx, int* blockIdx, UINT32* text
     for (const auto& lb : m_layout) {
         if (yDip < lb.y || yDip >= lb.y + lb.height) continue;
         if (lb.type == BlockType::HorizontalRule) continue;
+        if (lb.type == BlockType::Image) continue;
         EnsureBlockMaterialized(lb);
         // 表格：定位到具体单元格
         if (lb.type == BlockType::Table && !lb.tableCells.empty()) {
@@ -1317,11 +1399,78 @@ int MarkdownRenderer::HitTestCopyButton(int xPx, int yPx) const {
     return -1;
 }
 
+// ==================== 图片路径解析与加载 ====================
+
+// 将图片 src 解析为可访问路径：
+//  - 绝对/相对文件路径 -> 基于当前文档目录解析为绝对路径
+//  - http(s) URL -> 原样返回（本项目不支持网络下载，仅记录以便后续扩展）
+std::wstring MarkdownRenderer::ResolveImagePath(const std::wstring& src) const {
+    if (src.empty()) return src;
+    if (PathIsURLW(src.c_str())) return src;
+
+    // 已经是绝对路径
+    if (PathIsRelativeW(src.c_str()) == FALSE) {
+        return PathFileExistsW(src.c_str()) ? src : src;
+    }
+    // 相对路径：基于当前文档所在目录
+    if (!m_currentFile.empty()) {
+        wchar_t dir[MAX_PATH] = { 0 };
+        wcscpy_s(dir, m_currentFile.c_str());
+        PathRemoveFileSpecW(dir);
+        wchar_t out[MAX_PATH] = { 0 };
+        if (PathCombineW(out, dir, src.c_str())) {
+            return std::wstring(out);
+        }
+    }
+    return src; // 回退：当作相对当前工作目录的路径
+}
+
+// 用 WIC 解码图片文件为 ID2D1Bitmap（失败返回空）。
+Microsoft::WRL::ComPtr<ID2D1Bitmap> MarkdownRenderer::LoadImageBitmap(const std::wstring& path) {
+    ComPtr<ID2D1Bitmap> result;
+    if (!m_wic || !m_rt || path.empty()) return result;
+    if (PathIsURLW(path.c_str())) return result; // 不支持网络图片
+    if (!PathFileExistsW(path.c_str())) return result;
+
+    ComPtr<IWICBitmapDecoder> decoder;
+    HRESULT hr = m_wic->CreateDecoderFromFilename(path.c_str(), nullptr,
+        GENERIC_READ, WICDecodeMetadataCacheOnLoad, decoder.GetAddressOf());
+    if (FAILED(hr) || !decoder) return result;
+
+    ComPtr<IWICBitmapFrameDecode> frame;
+    hr = decoder->GetFrame(0, frame.GetAddressOf());
+    if (FAILED(hr) || !frame) return result;
+
+    // 转换为 32bppPBGRA（D2D 期望的像素格式）
+    ComPtr<IWICFormatConverter> converter;
+    hr = m_wic->CreateFormatConverter(converter.GetAddressOf());
+    if (FAILED(hr)) return result;
+    hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeMedianCut);
+    if (FAILED(hr)) return result;
+
+    m_rt->CreateBitmapFromWicBitmap(converter.Get(), nullptr, result.GetAddressOf());
+    return result;
+}
+
 // ==================== 光标类型 ====================
 
 int MarkdownRenderer::GetCursorType(int xPx, int yPx) const {
     if (HitTestCopyButton(xPx, yPx) >= 0) return 1; // 手型
     if (!HitTestLink(xPx, yPx).empty()) return 1;   // 手型
+    // 图片：手型（点击打开原图）
+    {
+        float xDip = ToDip(xPx);
+        float yDip = ToDip(yPx) + m_scrollOffset;
+        for (const auto& lb : m_layout) {
+            if (lb.type != BlockType::Image) continue;
+            D2D1_RECT_F r = lb.imageRect;
+            float top = lb.y + lb.marginTop;
+            r.top += top; r.bottom += top;
+            if (xDip >= r.left && xDip <= r.right && yDip >= r.top && yDip <= r.bottom)
+                return 1;
+        }
+    }
     int blk = -1; UINT32 pos = 0;
     if (HitTestText(xPx, yPx, &blk, &pos)) return 2; // 文本 I
     return 0; // 箭头
@@ -1535,6 +1684,23 @@ void MarkdownRenderer::OnLButtonDown(int xPx, int yPx) {
         m_pressingCopy = copyBlk;
         SetCapture(m_hwnd);
         return;
+    }
+    // 点击图片：打开原图（用系统默认程序）
+    {
+        float xDip = ToDip(xPx);
+        float yDip = ToDip(yPx) + m_scrollOffset;
+        for (const auto& lb : m_layout) {
+            if (lb.type != BlockType::Image) continue;
+            D2D1_RECT_F r = lb.imageRect;
+            float top = lb.y + lb.marginTop;
+            r.top += top; r.bottom += top;
+            if (xDip >= r.left && xDip <= r.right && yDip >= r.top && yDip <= r.bottom) {
+                if (!lb.imageUrl.empty()) {
+                    ShellExecuteW(nullptr, L"open", lb.imageUrl.c_str(), nullptr, nullptr, SW_SHOW);
+                }
+                return;
+            }
+        }
     }
     // 开始文本选取
     m_mouseDownX = xPx;

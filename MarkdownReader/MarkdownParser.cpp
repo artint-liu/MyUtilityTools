@@ -180,6 +180,66 @@ void ParseInline(const std::wstring& s, const InlineState& base, std::vector<Inl
     flush();
 }
 
+// 解析独立成行的图片：![alt](src "title")  返回是否匹配
+static bool ParseImageLine(const std::wstring& line, ImageData& out) {
+    size_t i = 0;
+    while (i < line.size() && (line[i] == L' ' || line[i] == L'\t')) i++;
+    if (i >= line.size() || line[i] != L'!') return false;
+    if (i + 1 >= line.size() || line[i + 1] != L'[') return false;
+    size_t altStart = i + 2;
+    size_t altEnd = altStart;
+    while (altEnd < line.size() && line[altEnd] != L']') altEnd++;
+    if (altEnd >= line.size()) return false;
+    std::wstring alt = line.substr(altStart, altEnd - altStart);
+
+    size_t p = altEnd + 1;
+    if (p >= line.size() || line[p] != L'(') return false;
+    p++;
+    while (p < line.size() && (line[p] == L' ' || line[p] == L'\t')) p++;
+    if (p >= line.size()) return false;
+
+    bool isUrl = (line[p] == L'<');
+    size_t srcStart = isUrl ? p + 1 : p;
+    size_t srcEnd;
+    std::wstring src;
+    if (isUrl) {
+        srcEnd = srcStart;
+        while (srcEnd < line.size() && line[srcEnd] != L'>') srcEnd++;
+        if (srcEnd >= line.size()) return false;
+        src = line.substr(srcStart, srcEnd - srcStart);
+        p = srcEnd + 1;
+    } else {
+        srcEnd = srcStart;
+        while (srcEnd < line.size() && line[srcEnd] != L')' && line[srcEnd] != L' ' && line[srcEnd] != L'\t') srcEnd++;
+        if (srcEnd >= line.size()) return false;
+        src = line.substr(srcStart, srcEnd - srcStart);
+        p = srcEnd;
+    }
+    if (src.empty()) return false;
+
+    while (p < line.size() && (line[p] == L' ' || line[p] == L'\t')) p++;
+    std::wstring title;
+    if (p < line.size() && (line[p] == L'"' || line[p] == L'\'')) {
+        wchar_t q = line[p];
+        size_t tStart = p + 1;
+        size_t tEnd = tStart;
+        while (tEnd < line.size() && line[tEnd] != q) tEnd++;
+        if (tEnd >= line.size()) return false;
+        title = line.substr(tStart, tEnd - tStart);
+        p = tEnd + 1;
+    }
+    while (p < line.size() && (line[p] == L' ' || line[p] == L'\t')) p++;
+    if (p >= line.size() || line[p] != L')') return false;
+    p++;
+    while (p < line.size() && (line[p] == L' ' || line[p] == L'\t')) p++;
+    if (p != line.size()) return false;
+
+    out.src = src;
+    out.alt = alt;
+    out.title = title;
+    return true;
+}
+
 // ---- 表格解析（GFM）----
 
 // 按列拆分表格行，处理 \| 转义，自动去除首尾管道符产生的空单元格
@@ -331,6 +391,19 @@ Document ParseMarkdown(const std::wstring& content) {
                 AddTextBlock(doc, BlockType::BlockQuote, collected);
             }
             continue;
+        }
+
+        // 独立成行的图片
+        {
+            ImageData img;
+            if (ParseImageLine(line, img)) {
+                Block b;
+                b.type = BlockType::Image;
+                b.image = img;
+                doc.blocks.push_back(std::move(b));
+                i++;
+                continue;
+            }
         }
 
         // 列表项

@@ -12,6 +12,7 @@ enum class BlockType {
     ListItem,
     HorizontalRule,
     Table,
+    Image,   // 独立成行的图片 ![alt](src "title")
 };
 
 // 行内格式片段
@@ -42,6 +43,13 @@ struct TableRow {
     bool isHeader = false;
 };
 
+// 图片数据（独立成行的图片）
+struct ImageData {
+    std::wstring src;          // 图片源（路径或 URL）
+    std::wstring alt;          // 替代文本
+    std::wstring title;        // 标题
+};
+
 // 文档块
 struct Block {
     BlockType type = BlockType::Paragraph;
@@ -51,6 +59,7 @@ struct Block {
     std::wstring codeLang;      // 代码块语言
     std::vector<InlineRun> runs;// 文本类块的行内片段
     std::wstring rawText;       // 代码块原始文本（保留空白/换行）
+    ImageData image;            // 图片块数据
     // 表格专用
     std::vector<TableAlign> columnAligns; // 列对齐
     std::vector<TableRow> tableRows;      // 含表头行(首行 isHeader=true)
