@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 import config
 from config import (
@@ -84,6 +85,16 @@ class MarkRequest(BaseModel):
 
 class NavigateRequest(BaseModel):
     index: int
+
+
+class SearchRequest(BaseModel):
+    query: str
+
+
+class SearchNextRequest(BaseModel):
+    query: str
+    from_index: int = 0
+    forward: bool = True  # True=向后查找, False=向前查找
 
 
 class OpenRequest(BaseModel):
@@ -182,6 +193,24 @@ def _sample_payload(index: int) -> dict:
     }
 
 
+def _extract_value_strings(obj, out: list) -> None:
+    """递归提取所有叶子值（不含键名）的字符串表示，用于关键字匹配。"""
+    if obj is None:
+        out.append("null")
+    elif isinstance(obj, bool):
+        out.append("true" if obj else "false")
+    elif isinstance(obj, (int, float)):
+        out.append(str(obj))
+    elif isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, list):
+        for item in obj:
+            _extract_value_strings(item, out)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _extract_value_strings(v, out)
+
+
 # ---- 路由 ----
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -221,6 +250,70 @@ async def api_navigate(req: NavigateRequest):
         raise HTTPException(status_code=404, detail="样本索引越界")
     st.progress.set_current(req.index)
     return _sample_payload(req.index)
+
+
+@app.post("/api/search")
+async def api_search(req: SearchRequest):
+    """按关键字搜索样本，仅匹配值内容（不匹配键名），空格分词做 AND 查找。
+
+    返回所有匹配样本的索引列表。
+    """
+    st = _require_data()
+    keywords = req.query.split()
+    if not keywords:
+        return {"indices": [], "total": 0, "query": req.query}
+
+    def _do_search() -> list[int]:
+        kws_lower = [k.lower() for k in keywords]
+        matches: list[int] = []
+        for i in range(st.reader.total):
+            data = st.reader.read(i)
+            # 跳过解析失败的样本
+            if isinstance(data, dict) and data.get("__parse_error__"):
+                continue
+            values: list[str] = []
+            _extract_value_strings(data, values)
+            blob = "\n".join(values).lower()
+            if all(kw in blob for kw in kws_lower):
+                matches.append(i)
+        return matches
+
+    matches = await run_in_threadpool(_do_search)
+    return {"indices": matches, "total": len(matches), "query": req.query}
+
+
+@app.post("/api/search_next")
+async def api_search_next(req: SearchNextRequest):
+    """快速查找：从 from_index 之后（forward=True）或之前（forward=False）查找第一个匹配样本。
+
+    不统计全部匹配项，命中即返回，适合海量数据。返回 index（-1 表示未找到）。
+    """
+    st = _require_data()
+    keywords = req.query.split()
+    if not keywords:
+        return {"index": -1, "query": req.query}
+
+    def _do_find() -> int:
+        kws_lower = [k.lower() for k in keywords]
+        total = st.reader.total
+        start = req.from_index
+        if req.forward:
+            rng = range(start + 1, total)
+        else:
+            rng = range(start - 1, -1, -1)
+        for i in rng:
+            data = st.reader.read(i)
+            if isinstance(data, dict) and data.get("__parse_error__"):
+                continue
+            values: list[str] = []
+            _extract_value_strings(data, values)
+            blob = "\n".join(values).lower()
+            if all(kw in blob for kw in kws_lower):
+                return i
+        return -1
+
+    idx = await run_in_threadpool(_do_find)
+    return {"index": idx, "query": req.query}
 
 
 @app.post("/api/save")

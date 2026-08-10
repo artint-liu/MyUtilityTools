@@ -73,6 +73,57 @@ body {
 .stat-reject .value { color: var(--reject); }
 .stat-rate .value { color: var(--primary-3); }
 
+/* UI 锁定态：搜索中等场景禁用一切交互并灰化 */
+.ui-disabled {
+  opacity: .4 !important;
+  cursor: not-allowed !important;
+  pointer-events: none !important;
+  filter: grayscale(.5) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* ===== 过滤栏 ===== */
+.filter-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.filter-bar input {
+  flex: 1; max-width: 420px;
+  background: var(--bg-3); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font-family: inherit; font-size: 13px;
+  outline: none; transition: border-color .2s, box-shadow .2s;
+}
+.filter-bar input:focus { border-color: var(--primary-3); box-shadow: 0 0 8px rgba(79,195,247,0.3); }
+.filter-bar input::placeholder { color: var(--text-dim); }
+.quick-find-label {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-2); cursor: pointer;
+  user-select: none; white-space: nowrap;
+}
+.quick-find-label input { cursor: pointer; accent-color: var(--primary-3); }
+.quick-find-label:hover { color: var(--primary-3); }
+.btn-filter {
+  background: linear-gradient(135deg, #1f6feb, var(--primary-3)); color: #fff;
+  padding: 8px 18px; font-size: 13px; font-weight: 600;
+  border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;
+  transition: filter .2s, box-shadow .2s;
+}
+.btn-filter:hover { filter: brightness(1.08); box-shadow: 0 0 12px rgba(79,195,247,0.4); }
+.btn-filter:disabled { opacity: .5; cursor: not-allowed; }
+.btn-clear-filter {
+  background: var(--bg-3); color: var(--text-1); padding: 8px 14px; font-size: 13px;
+  border: 1px solid var(--border); border-radius: 8px; cursor: pointer; white-space: nowrap;
+  transition: all .2s;
+}
+.btn-clear-filter:hover { background: var(--reject); color: #fff; border-color: var(--reject); }
+.filter-status { font-size: 12px; color: var(--text-dim); }
+.filter-status.active { color: var(--primary-3); font-weight: 600; }
+
 /* ===== 主内容区 ===== */
 .main { flex: 1; overflow-y: auto; padding: 22px; display: flex; justify-content: center; }
 .sample-card {
@@ -115,6 +166,14 @@ body {
 .field-val.bool { color: var(--bool); font-weight: 600; }
 .field-val.null { color: var(--text-dim); font-style: italic; }
 .field-val.obj, .field-val.arr { color: var(--text-2); }
+/* 关键字高亮 */
+.field-val mark, .num-chip mark {
+  background: rgba(255, 213, 79, 0.45);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  box-shadow: 0 0 6px rgba(255, 213, 79, 0.3);
+}
 /* 数值列表 */
 .num-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .num-chip {
@@ -255,6 +314,33 @@ body {
   box-shadow: 0 4px 14px rgba(31,111,235,0.35);
 }
 .overlay-btn:hover { filter: brightness(1.08); box-shadow: 0 6px 22px var(--glow-blue); }
+
+/* ===== 模态确认对话框 ===== */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 400; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(13,17,23,0.8); backdrop-filter: blur(3px);
+}
+.modal-overlay.show { display: flex; animation: popIn .18s ease; }
+.modal-box {
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 28px 32px 22px; max-width: 440px; width: 90%;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  text-align: center;
+}
+.modal-icon { font-size: 36px; margin-bottom: 10px; }
+.modal-title { font-size: 17px; font-weight: 600; color: var(--text-0); margin-bottom: 8px; }
+.modal-msg { font-size: 13px; color: var(--text-2); line-height: 1.7; margin-bottom: 22px; }
+.modal-btn {
+  padding: 10px 36px; border: none; border-radius: 10px; cursor: pointer;
+  font-family: inherit; font-size: 14px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, #1f6feb, var(--primary-3));
+  box-shadow: 0 4px 14px rgba(31,111,235,0.35);
+  transition: filter .2s, box-shadow .2s;
+}
+.modal-btn:hover { filter: brightness(1.08); box-shadow: 0 6px 22px rgba(79,195,247,0.5); }
+.modal-btn:active { transform: scale(0.97); }
 /* 历史文件列表面板 */
 .history-panel {
   margin-top: 10px; width: 100%; max-width: 480px;
@@ -303,6 +389,14 @@ body {
     </div>
   </div>
 
+  <div class="filter-bar">
+    <input type="text" id="filterInput" placeholder="输入关键字过滤（空格分隔 = 与查找，仅匹配值内容，不匹配键）" />
+    <label class="quick-find-label" title="勾选后仅从当前位置查找下一个匹配，不扫描全文件"><input type="checkbox" id="quickFindChk" /> 快速查找</label>
+    <button class="btn-filter" id="filterBtn" title="点击过滤或跳转到下一条匹配">🔍 过滤</button>
+    <button class="btn-clear-filter" id="clearFilterBtn" style="display:none" title="清除过滤">✕ 清除</button>
+    <span class="filter-status" id="filterStatus"></span>
+  </div>
+
   <div class="main">
     <div class="sample-card" id="sampleCard">
       <div class="index-badge" id="indexBadge">#0</div>
@@ -318,6 +412,10 @@ body {
       <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝</div>
       <div><kbd>→</kbd> / 下一条 跳过 &nbsp; <kbd>←</kbd> 上一条</div>
       <div><kbd>Ctrl/⌘+S</kbd> 存盘</div>
+      <div style="margin-top:6px"><b>过滤</b>：输入框输入关键字后回车或点「过滤」</div>
+      <div>空格分词 = 与查找，仅匹配值不匹配键</div>
+      <div>过滤后 <kbd>←</kbd>/<kbd>→</kbd> 在匹配项间跳转</div>
+      <div>勾选「快速查找」：仅找下一条，不扫描全文件</div>
       <div style="margin-top:6px;color:var(--text-dim)">可将 .json/.jsonl 文件拖入窗口打开</div>
     </div>
     <button class="btn btn-nav" id="prevBtn">← 上一条</button>
@@ -345,6 +443,16 @@ body {
   <!-- 隐藏的文件选择器 -->
   <input type="file" id="fileInput" accept=".json,.jsonl" style="display:none" />
 
+  <!-- 模态确认对话框（搜索无匹配等需用户明确确认的提示） -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box">
+      <div class="modal-icon" id="modalIcon">🔍</div>
+      <div class="modal-title" id="modalTitle">提示</div>
+      <div class="modal-msg" id="modalMsg"></div>
+      <button class="modal-btn" id="modalOkBtn">确定</button>
+    </div>
+  </div>
+
 <script>
 "use strict";
 const API = "";
@@ -353,6 +461,12 @@ let total = 0;
 let isAnimating = false;
 // 打开/加载文件期间为 true：拦截所有按键与按钮操作，避免大文件加载耗时中状态错乱
 let isBusy = false;
+// 过滤状态
+let filterActive = false;
+let filterMatches = [];     // 匹配样本的索引列表（快速查找模式下为空）
+let lastFilterQuery = "";   // 上次搜索的关键字（用于判断是否需要重新搜索 + 高亮）
+let isSearching = false;    // 搜索进行中标志，防止重复请求
+let quickFindMode = false;  // 快速查找模式：不统计全部匹配，仅逐条查找
 
 const $ = (id) => document.getElementById(id);
 
@@ -387,9 +501,54 @@ function toast(msg, type) {
   }, 2600);
 }
 
+// ---------- 模态确认对话框 ----------
+// 显示模态提示，需用户点击「确定」关闭。返回 Promise（确定后 resolve）
+function showModal(title, msg, icon) {
+  $("modalTitle").textContent = title || "提示";
+  $("modalMsg").textContent = msg || "";
+  $("modalIcon").textContent = icon || "🔍";
+  const ov = $("modalOverlay");
+  ov.classList.add("show");
+  return new Promise((resolve) => {
+    const btn = $("modalOkBtn");
+    const handler = () => {
+      btn.removeEventListener("click", handler);
+      ov.classList.remove("show");
+      resolve();
+    };
+    btn.addEventListener("click", handler);
+    // 自动聚焦按钮，方便回车确认
+    btn.focus();
+  });
+}
+
 // ---------- 工具 ----------
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// 转义正则特殊字符
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 获取当前过滤的关键字列表（小写，去空）
+function getHighlightKeywords() {
+  if (!filterActive || !lastFilterQuery) return [];
+  return lastFilterQuery.split(/\s+/).map((k) => k.trim()).filter(Boolean);
+}
+
+// escape HTML 后对关键字做大小写不敏感高亮（仅用于"值"内容，不用于键名）
+function escapeHtmlHighlight(s) {
+  let html = escapeHtml(s);
+  const kws = getHighlightKeywords();
+  if (kws.length === 0) return html;
+  // 按长度降序避免短关键字先匹配破坏长关键字边界；对已 escape 的 HTML 做匹配
+  const sorted = kws.slice().sort((a, b) => b.length - a.length);
+  const pattern = sorted.map((k) => escapeRegExp(escapeHtml(k))).join("|");
+  if (!pattern) return html;
+  const re = new RegExp("(" + pattern + ")", "gi");
+  return html.replace(re, '<mark>$1</mark>');
 }
 
 // 判断是否为「纯数值列表」（数组内所有元素均为 number）
@@ -403,19 +562,19 @@ function renderValue(val) {
   if (val === null) return '<span class="field-val null">null</span>';
   const t = typeof val;
   if (t === "string") {
-    // 多行文本保留换行
-    return '<span class="field-val str">' + escapeHtml(val) + "</span>";
+    // 多行文本保留换行；过滤激活时对值做关键字高亮
+    return '<span class="field-val str">' + escapeHtmlHighlight(val) + "</span>";
   }
   if (t === "number") {
-    return '<span class="field-val num">' + escapeHtml(val) + "</span>";
+    return '<span class="field-val num">' + escapeHtmlHighlight(val) + "</span>";
   }
   if (t === "boolean") {
-    return '<span class="field-val bool">' + (val ? "true" : "false") + "</span>";
+    return '<span class="field-val bool">' + escapeHtmlHighlight(val ? "true" : "false") + "</span>";
   }
   if (Array.isArray(val)) {
     if (isNumericArray(val)) {
       // 数值列表：用 chip 平铺显示
-      const chips = val.map((n) => '<span class="num-chip">' + escapeHtml(n) + "</span>").join("");
+      const chips = val.map((n) => '<span class="num-chip">' + escapeHtmlHighlight(n) + "</span>").join("");
       return '<div class="field-val num-list">' + chips + "</div>";
     }
     // 普通数组：逐元素渲染（字符串/布尔/数值 inline，对象则缩进显示）
@@ -431,7 +590,7 @@ function renderValue(val) {
     // 嵌套对象：逐字段渲染（键名带前缀）
     return renderFields(val, true);
   }
-  return '<span class="field-val">' + escapeHtml(String(val)) + "</span>";
+  return '<span class="field-val">' + escapeHtmlHighlight(String(val)) + "</span>";
 }
 
 // 渲染字段集合（键值卡片列表）
@@ -597,7 +756,7 @@ async function renderHistoryPanel() {
 
 // ---------- 标记 + 自动跳转 ----------
 async function doMark(status) {
-  if (isAnimating || isBusy) return;
+  if (isAnimating || isBusy || isSearching) return;
   isAnimating = true;
   const card = $("sampleCard");
   const cls = status === "pass" ? "swipe-pass" : "swipe-reject";
@@ -611,12 +770,31 @@ async function doMark(status) {
   }
   setTimeout(async () => {
     card.classList.remove(cls);
-    if (currentIndex + 1 < total) {
+    // 快速查找模式：标记后用快速查找跳到下一条匹配
+    if (filterActive && quickFindMode) {
+      isAnimating = false;
+      await applyQuickFind(lastFilterQuery, true);
+      return;
+    }
+    let nextIdx = -1;
+    if (filterActive && filterMatches.length > 0) {
+      // 全量过滤模式：跳转到下一条匹配
+      const nextPos = filterMatches.findIndex((idx) => idx > currentIndex);
+      if (nextPos !== -1) {
+        nextIdx = filterMatches[nextPos];
+      } else {
+        toast("已是最后一条匹配", "ok");
+      }
+    } else if (currentIndex + 1 < total) {
+      nextIdx = currentIndex + 1;
+    }
+    if (nextIdx >= 0) {
       try {
-        const next = await getSample(currentIndex + 1);
+        const next = await getSample(nextIdx);
         renderSample(next);
+        if (filterActive) updateFilterUI();
       } catch (e) { toast("加载失败: " + e.message, "err"); }
-    } else {
+    } else if (!filterActive) {
       toast("已是最后一条", "ok");
     }
     isAnimating = false;
@@ -625,7 +803,8 @@ async function doMark(status) {
 
 // 跳过 / 下一条：仅翻页不标记
 async function skipNext() {
-  if (isAnimating) return;
+  if (isAnimating || isSearching) return;
+  if (filterActive) { filterNext(); return; }
   if (currentIndex + 1 < total) {
     try {
       const next = await getSample(currentIndex + 1);
@@ -637,19 +816,250 @@ async function skipNext() {
 }
 
 async function goTo(idx) {
-  if (isAnimating) return;
+  if (isAnimating || isSearching) return;
   if (idx < 0 || idx >= total) { toast("已到边界", "ok"); return; }
+  await _loadSampleAt(idx);
+}
+
+// 内部加载样本（无锁定检查，供 goTo 与搜索内部跳转复用）
+async function _loadSampleAt(idx) {
+  if (idx < 0 || idx >= total) return false;
   try {
     const sample = await getSample(idx);
     renderSample(sample);
-  } catch (e) { toast("加载失败: " + e.message, "err"); }
+    return true;
+  } catch (e) { toast("加载失败: " + e.message, "err"); return false; }
+}
+
+// ---------- 过滤功能 ----------
+// 搜索中需要禁用的 UI 元素 id 列表
+const _SEARCH_LOCK_IDS = [
+  "passBtn", "rejectBtn", "prevBtn", "nextBtn", "exportBtn",
+  "openLabel", "fileSelect", "clearFilterBtn", "quickFindChk",
+];
+// 进入/退出搜索状态时锁定/解锁所有 UI（仅过滤按钮变为「取消搜索」可点）
+// 用 ui-disabled class 统一处理：pointer-events:none 彻底阻断点击/hover，
+// 对 <button>/<span>/<select> 均生效（span 不支持 disabled 属性）
+function setSearchingUI(searching) {
+  _SEARCH_LOCK_IDS.forEach((id) => {
+    const el = $(id);
+    if (!el) return;
+    if (searching) el.classList.add("ui-disabled");
+    else el.classList.remove("ui-disabled");
+  });
+  const input = $("filterInput");
+  if (input) input.disabled = searching;
+  const btn = $("filterBtn");
+  if (btn) {
+    btn.classList.remove("ui-disabled"); // 过滤按钮始终可点：搜索中变为「取消搜索」
+    btn.textContent = searching ? "✕ 取消搜索" : "🔍 过滤";
+  }
+}
+
+// 更新过滤状态 UI
+function updateFilterUI() {
+  const status = $("filterStatus");
+  const clearBtn = $("clearFilterBtn");
+  if (filterActive && quickFindMode) {
+    // 快速查找模式：不显示匹配总数
+    clearBtn.style.display = "";
+    status.textContent = "快速查找：「" + lastFilterQuery + "」";
+    status.classList.add("active");
+  } else if (filterActive && filterMatches.length > 0) {
+    clearBtn.style.display = "";
+    // 计算当前位置在匹配列表中的序号
+    const pos = filterMatches.indexOf(currentIndex);
+    const displayPos = pos >= 0 ? pos + 1 : "—";
+    status.textContent = "匹配 " + filterMatches.length + " 条 · 当前第 " + displayPos + " 条";
+    status.classList.add("active");
+  } else if (filterActive) {
+    clearBtn.style.display = "";
+    status.textContent = "无匹配";
+    status.classList.add("active");
+  } else {
+    clearBtn.style.display = "none";
+    status.textContent = "";
+    status.classList.remove("active");
+  }
+}
+
+// 当前搜索的 AbortController（用于取消正在进行的搜索请求）
+let _searchAbort = null;
+
+// 应用过滤：搜索并跳转到下一条匹配
+async function applyFilter() {
+  // 搜索中再次点击过滤按钮 = 取消搜索
+  if (isSearching) {
+    if (_searchAbort) { _searchAbort.abort(); }
+    return;
+  }
+  if (isBusy) return;
+  const query = $("filterInput").value.trim();
+  if (!query) { clearFilter(); return; }
+
+  const quick = $("quickFindChk").checked;
+
+  // 快速查找模式：从当前位置查找下一条匹配，不扫描全文件
+  if (quick) {
+    await applyQuickFind(query, true);
+    return;
+  }
+
+  // 全量过滤模式：如果查询未变且过滤已激活，直接跳转到下一条匹配
+  if (query === lastFilterQuery && filterActive && !quickFindMode && filterMatches.length > 0) {
+    filterNext();
+    return;
+  }
+
+  // 重新全量搜索：锁定全部 UI，过滤按钮变为「取消搜索」
+  isSearching = true;
+  setSearchingUI(true);
+  _searchAbort = new AbortController();
+  quickFindMode = false;
+  try {
+    const r = await fetch(API + "/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query }),
+      signal: _searchAbort.signal,
+    });
+    if (!r.ok) throw new Error("search " + r.status);
+    const data = await r.json();
+    filterMatches = data.indices || [];
+    lastFilterQuery = query;
+
+    if (filterMatches.length === 0) {
+      filterActive = true; // 标记为已搜索但无结果
+      updateFilterUI();
+      await showModal("未找到匹配", "已扫描全部 " + total + " 条样本，未找到包含「" + query + "」的样本。", "🔍");
+      return;
+    }
+
+    filterActive = true;
+    // 跳转到当前位置之后的下一条匹配；若没有则回绕到第一条
+    let nextPos = filterMatches.findIndex((idx) => idx > currentIndex);
+    if (nextPos === -1) {
+      nextPos = 0;
+      toast("当前已超过最后一条匹配，跳转到第一条", "ok");
+    }
+    await _loadSampleAt(filterMatches[nextPos]);
+    updateFilterUI();
+  } catch (e) {
+    if (e.name === "AbortError") {
+      toast("已取消搜索", "ok");
+    } else {
+      toast("过滤失败: " + e.message, "err");
+    }
+  } finally {
+    isSearching = false;
+    _searchAbort = null;
+    setSearchingUI(false);
+  }
+}
+
+// 快速查找：从当前位置向前/向后查找第一条匹配，不统计全部匹配项
+async function applyQuickFind(query, forward) {
+  isSearching = true;
+  setSearchingUI(true);
+  _searchAbort = new AbortController();
+  // 进入快速查找模式：清空全量匹配列表
+  filterMatches = [];
+  quickFindMode = true;
+  lastFilterQuery = query;
+  filterActive = true;
+  try {
+    const r = await fetch(API + "/api/search_next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query, from_index: currentIndex, forward: forward }),
+      signal: _searchAbort.signal,
+    });
+    if (!r.ok) throw new Error("search " + r.status);
+    const data = await r.json();
+    if (data.index < 0) {
+      updateFilterUI();
+      await showModal(
+        "未找到匹配",
+        (forward ? "当前位置之后" : "当前位置之前") + "未找到包含「" + query + "」的样本。",
+        "🔍"
+      );
+      return;
+    }
+    await _loadSampleAt(data.index);
+    updateFilterUI();
+  } catch (e) {
+    if (e.name === "AbortError") {
+      toast("已取消查找", "ok");
+    } else {
+      toast("查找失败: " + e.message, "err");
+    }
+  } finally {
+    isSearching = false;
+    _searchAbort = null;
+    setSearchingUI(false);
+  }
+}
+
+// 清除过滤（silent=true 时不显示 toast，用于文件切换等场景）
+function clearFilter(silent) {
+  filterActive = false;
+  quickFindMode = false;
+  filterMatches = [];
+  lastFilterQuery = "";
+  $("filterInput").value = "";
+  updateFilterUI();
+  // 清除高亮：重新渲染当前样本（无数据时 total=0 跳过）
+  if (total > 0) {
+    _loadSampleAt(currentIndex);
+  }
+  if (!silent) toast("已清除过滤", "ok");
+}
+function clearFilterSilent() { clearFilter(true); }
+
+// 过滤模式：跳转到下一条匹配（相对于当前位置）
+async function filterNext() {
+  if (!filterActive) { toast("没有匹配的样本", "err"); return; }
+  // 快速查找模式：从当前位置向后查找
+  if (quickFindMode) {
+    await applyQuickFind(lastFilterQuery, true);
+    return;
+  }
+  if (filterMatches.length === 0) { toast("没有匹配的样本", "err"); return; }
+  let nextPos = filterMatches.findIndex((idx) => idx > currentIndex);
+  if (nextPos === -1) {
+    nextPos = 0;
+    toast("已到末尾，跳转到第一条匹配", "ok");
+  }
+  await goTo(filterMatches[nextPos]);
+  updateFilterUI();
+}
+
+// 过滤模式：跳转到上一条匹配（相对于当前位置）
+async function filterPrev() {
+  if (!filterActive) { toast("没有匹配的样本", "err"); return; }
+  // 快速查找模式：从当前位置向前查找
+  if (quickFindMode) {
+    await applyQuickFind(lastFilterQuery, false);
+    return;
+  }
+  if (filterMatches.length === 0) { toast("没有匹配的样本", "err"); return; }
+  let prevPos = -1;
+  for (let i = filterMatches.length - 1; i >= 0; i--) {
+    if (filterMatches[i] < currentIndex) { prevPos = i; break; }
+  }
+  if (prevPos === -1) {
+    prevPos = filterMatches.length - 1;
+    toast("已到开头，跳转到最后一条匹配", "ok");
+  }
+  await goTo(filterMatches[prevPos]);
+  updateFilterUI();
 }
 
 // 将标记为「通过」的条目导出为新文件
 async function exportPassed() {
   if (!window.__dataFile) { toast("请先打开一个文件", "err"); return; }
   const btn = $("exportBtn");
-  btn.disabled = true;
+  btn.classList.add("ui-disabled");
   const oldText = btn.textContent;
   btn.textContent = "导出中…";
   try {
@@ -681,15 +1091,16 @@ async function exportPassed() {
   } catch (e) {
     toast("导出失败: " + e.message, "err");
   } finally {
-    btn.disabled = false;
+    btn.classList.remove("ui-disabled");
     btn.textContent = oldText;
   }
 }
 
 // 打开文件并加载到上次进度位置
 async function openAndLoad(path) {
-  if (isBusy) return;
+  if (isBusy || isSearching) return;
   showOpening("正在打开文件：\n" + path.split(/[\\/]/).pop() + "\n（构建索引可能需要一些时间，请勿重复操作）");
+  clearFilterSilent();
   try {
     const res = await openFile(path);
     window.__dataFile = path;
@@ -708,8 +1119,9 @@ async function openAndLoad(path) {
 
 // 通过上传（拖拽/选择）打开文件
 async function uploadAndLoad(file) {
-  if (isBusy) return;
+  if (isBusy || isSearching) return;
   showOpening("正在打开文件：\n" + file.name + "\n（构建索引可能需要一些时间，请勿重复操作）");
+  clearFilterSilent();
   try {
     const fd = new FormData();
     fd.append("file", file);
@@ -734,8 +1146,19 @@ async function uploadAndLoad(file) {
 $("passBtn").onclick = () => doMark("pass");
 $("rejectBtn").onclick = () => doMark("reject");
 $("nextBtn").onclick = () => skipNext();
-$("prevBtn").onclick = () => goTo(currentIndex - 1);
+$("prevBtn").onclick = () => { if (filterActive) { filterPrev(); } else { goTo(currentIndex - 1); } };
 $("exportBtn").onclick = () => exportPassed();
+
+// 过滤按钮
+$("filterBtn").onclick = () => applyFilter();
+$("clearFilterBtn").onclick = () => clearFilter();
+// 过滤输入框：Enter 触发过滤，Esc 清除过滤
+$("filterInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); applyFilter(); }
+  else if (e.key === "Escape") { e.preventDefault(); clearFilter(); }
+});
+// 快速查找复选框：切换时清除当前过滤，避免模式混杂
+$("quickFindChk").onchange = () => { if (filterActive) clearFilter(true); };
 
 $("helpBtn").onclick = (e) => { e.stopPropagation(); $("helpPop").classList.toggle("show"); };
 document.addEventListener("click", () => $("helpPop").classList.remove("show"));
@@ -758,6 +1181,7 @@ $("fileInput").onchange = (e) => {
 const dropOverlay = $("dropOverlay");
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
+  if (isSearching) return;
   if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
     e.preventDefault(); dragDepth++; dropOverlay.classList.add("show");
   }
@@ -769,6 +1193,7 @@ window.addEventListener("dragleave", (e) => {
 });
 window.addEventListener("drop", (e) => {
   e.preventDefault(); dragDepth = 0; dropOverlay.classList.remove("show");
+  if (isSearching) { toast("搜索中，请先取消搜索", "err"); return; }
   const files = e.dataTransfer.files;
   if (files && files.length) {
     const f = files[0];
@@ -783,15 +1208,24 @@ window.addEventListener("drop", (e) => {
 
 // 键盘
 document.addEventListener("keydown", (e) => {
+  // 模态对话框打开时：Enter/Esc/空格 均触发确定，拦截其它快捷键
+  if ($("modalOverlay").classList.contains("show")) {
+    if (e.key === "Enter" || e.key === "Escape" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      $("modalOkBtn").click();
+    }
+    return;
+  }
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
   const key = e.key;
   if ((e.ctrlKey || e.metaKey) && key.toLowerCase() === "s") {
     e.preventDefault(); save().then(() => toast("已存盘", "ok")); return;
   }
-  if (isAnimating || isBusy) return;
+  // 搜索中禁止所有操作快捷键（仅过滤输入框的 Enter/Esc 由其自身监听处理取消）
+  if (isSearching || isAnimating || isBusy) return;
   if (key === " " || key === "Spacebar") { e.preventDefault(); doMark("pass"); }
   else if (key === "n" || key === "N") doMark("reject");
-  else if (key === "ArrowLeft") { e.preventDefault(); goTo(currentIndex - 1); }
+  else if (key === "ArrowLeft") { e.preventDefault(); if (filterActive) { filterPrev(); } else { goTo(currentIndex - 1); } }
   else if (key === "ArrowRight") { e.preventDefault(); skipNext(); }
 });
 
