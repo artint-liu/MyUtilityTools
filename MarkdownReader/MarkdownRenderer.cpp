@@ -243,6 +243,12 @@ void MarkdownRenderer::OnDpiChanged(UINT dpi) {
 }
 
 void MarkdownRenderer::Resize(int widthPx, int heightPx) {
+    // 窗口最小化时会收到 0×0 尺寸（也可能由拆分条拖到极窄等路径传入）。
+    // 跳过 RT Resize 和重排，避免以 0 宽度执行 BuildLayout 污染测量缓存——
+    // 否则还原后 BuildLayout 以真实宽度重测全部块，长文档耗时数秒表现为黑屏。
+    // m_widthPx/m_heightPx 保持最小化前的值，还原后 widthChanged=false，无需重排。
+    if (widthPx <= 0 || heightPx <= 0) return;
+
     const bool widthChanged = (widthPx != m_widthPx);
     m_widthPx = widthPx;
     m_heightPx = heightPx;
@@ -930,6 +936,13 @@ void MarkdownRenderer::TrimFarBlocks() {
 void MarkdownRenderer::Render() {
     EnsureResources();
     if (!m_rt) { ValidateRect(m_hwnd, nullptr); return; }
+
+    // 窗口最小化或完全被遮挡时跳过渲染，避免 D2D EndDraw 返回
+    // D2DERR_RECREATE_TARGET 导致资源反复丢弃重建。
+    if (m_rt->CheckWindowState() & D2D1_WINDOW_STATE_OCCLUDED) {
+        ValidateRect(m_hwnd, nullptr);
+        return;
+    }
 
     // 懒布局：绘制前确保视口内（含上下缓冲）的块已具备 DWrite 资源
     MaterializeVisible();

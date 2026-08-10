@@ -670,7 +670,10 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         return 0;
     }
     case WM_SIZE:
-        if (fs) LayoutChildren(fs, LOWORD(lParam), HIWORD(lParam));
+        // 最小化时（SIZE_MINIMIZED）跳过子窗口布局：避免把内容窗口缩为 0×0
+        // 进而触发 MarkdownRenderer 以 0 宽度重排——那会污染测量缓存，导致
+        // 还原后全部块被迫重新测量，长文档表现为数秒黑屏。
+        if (fs && wParam != SIZE_MINIMIZED) LayoutChildren(fs, LOWORD(lParam), HIWORD(lParam));
         return 0;
     case WM_PAINT: {
         // 绘制拆分条
