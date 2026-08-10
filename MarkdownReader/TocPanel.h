@@ -23,6 +23,9 @@ public:
     void OnMouseWheel(int delta);
     void HandleVScroll(WPARAM wParam);
     void SetSelectedByBlock(int blockIndex);
+    // 确保当前选中项在目录可视区域内：若被折叠则展开祖先，并滚动使其可见。
+    // 供搜索定位后立即同步目录高亮位置使用。
+    void EnsureSelectedVisible();
     void Cleanup();
     // DPI 变化（如窗口移到不同 DPI 显示器）时重建 D2D 资源
     void OnDpiChanged(UINT dpi);

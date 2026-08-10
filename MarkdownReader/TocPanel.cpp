@@ -473,3 +473,56 @@ void TocPanel::SetSelectedByBlock(int blockIndex) {
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
 }
+
+void TocPanel::EnsureSelectedVisible() {
+    if (m_selected < 0 || m_selected >= (int)m_nodes.size()) return;
+
+    // 选中节点可能被折叠（不在 m_visible 中），先展开其所有祖先
+    bool expanded = false;
+    bool inVisible = false;
+    for (int idx : m_visible) {
+        if (idx == m_selected) { inVisible = true; break; }
+    }
+    if (!inVisible) {
+        int p = m_nodes[m_selected].parent;
+        while (p != -1) {
+            m_nodes[p].collapsed = false;
+            p = m_nodes[p].parent;
+        }
+        RebuildVisible();
+        RebuildLayoutCache();
+        ClampScroll();
+        UpdateScroll();
+        expanded = true;
+    }
+
+    // 定位选中项在 m_visible 中的序号 k，据此调整 m_scroll
+    int k = -1;
+    for (size_t i = 0; i < m_visible.size(); ++i) {
+        if (m_visible[i] == m_selected) { k = (int)i; break; }
+    }
+    if (k < 0) return;
+
+    const int titleH = TitleHeight();
+    // 第 k 项的客户区 y（顶部）= titleH - m_scroll + k * m_lineHeight
+    const int itemTop = titleH - m_scroll + k * m_lineHeight;
+    const int itemBottom = itemTop + m_lineHeight;
+    bool scrolled = false;
+    if (itemTop < titleH) {
+        // 项在可视区上方：上移使其顶部对齐标题栏底部
+        m_scroll = k * m_lineHeight;
+        scrolled = true;
+    } else if (itemBottom > m_heightPx) {
+        // 项在可视区下方：下移使其底部对齐窗口底部
+        m_scroll = titleH + (k + 1) * m_lineHeight - m_heightPx;
+        scrolled = true;
+    }
+    if (scrolled) {
+        ClampScroll();
+        UpdateScroll();
+    }
+    // 展开折叠或发生滚动都需要重绘；二者皆无则选中项本就可见，无需重绘
+    if (expanded || scrolled) {
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}

@@ -52,6 +52,11 @@ struct FrameState {
     // ESC 退出选项（持久化到注册表）
     bool escExit = false;
 
+    // 文件外部修改检测：记录加载时的最后写入时间，窗口重新激活时比较
+    FILETIME lastWriteTime = {};
+    bool hasFileTime = false;
+    bool reloadCheckInProgress = false;
+
     // 最近打开文件子菜单句柄（动态填充）
     HMENU hRecentMenu = nullptr;
     // 最近文件列表缓存（与菜单项顺序一致，点击时取用）
@@ -188,6 +193,8 @@ static const wchar_t* PathFileName(const std::wstring& p);
 static std::wstring ToLower(std::wstring s);
 static bool IsMarkdownExt(const std::wstring& path);
 static void UpdateSearchLabel(FrameState* fs);
+// 搜索定位后立即同步目录高亮，并把对应标题项滚动到目录可视区域
+static void SyncTocAfterSearch(FrameState* fs);
 static void LayoutChildren(FrameState* fs, int cx, int cy);
 static void BringSearchBarToTop(FrameState* fs);
 static void RefreshRecentMenu(FrameState* fs);
@@ -239,6 +246,14 @@ static void LoadFileIntoFrame(FrameState* fs, const std::wstring& path) {
     }
     fs->currentFile = path;
     RegAddRecentFile(path);
+    // 记录文件当前最后写入时间，用于窗口重新激活时检测外部修改
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fad)) {
+        fs->lastWriteTime = fad.ftLastWriteTime;
+        fs->hasFileTime = true;
+    } else {
+        fs->hasFileTime = false;
+    }
     fs->doc = ParseMarkdown(content);
     if (fs->renderer) {
         fs->renderer->SetDocument(fs->doc);
@@ -255,6 +270,30 @@ static void LoadFileIntoFrame(FrameState* fs, const std::wstring& path) {
     }
     HWND frame = GetParent(fs->hContent);
     if (frame) SetWindowTextW(frame, title.c_str());
+}
+
+// 窗口重新激活时检查当前文件是否被外部修改，已修改则弹窗询问是否重新加载。
+static void CheckFileReload(FrameState* fs, HWND hwnd) {
+    if (!fs || fs->currentFile.empty() || !fs->hasFileTime) return;
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExW(fs->currentFile.c_str(), GetFileExInfoStandard, &fad)) {
+        // 文件可能已被删除或重命名，静默忽略
+        return;
+    }
+    if (fad.ftLastWriteTime.dwLowDateTime == fs->lastWriteTime.dwLowDateTime &&
+        fad.ftLastWriteTime.dwHighDateTime == fs->lastWriteTime.dwHighDateTime) {
+        return;  // 文件未修改
+    }
+    std::wstring msg = L"文件已被外部修改，是否重新加载？\n\n" + fs->currentFile;
+    int ret = MessageBoxW(hwnd, msg.c_str(), L"MarkdownReader",
+                          MB_YESNOCANCEL | MB_ICONQUESTION | MB_DEFBUTTON1);
+    if (ret == IDYES) {
+        LoadFileIntoFrame(fs, fs->currentFile);  // 重新加载并更新时间戳
+    } else if (ret == IDNO) {
+        // 用户选择不重载，更新记录的时间避免下次激活重复弹窗
+        fs->lastWriteTime = fad.ftLastWriteTime;
+    }
+    // IDCANCEL：不更新时间，下次激活仍会提示
 }
 
 static void LayoutChildren(FrameState* fs, int cx, int cy) {
@@ -301,6 +340,7 @@ static void RunSearch(FrameState* fs) {
     wchar_t buf[512] = { 0 };
     GetWindowTextW(fs->hSearchEdit, buf, 512);
     fs->renderer->SearchInDocument(buf, fs->searchCaseSensitive);
+    SyncTocAfterSearch(fs);
 }
 
 static void UpdateSearchLabel(FrameState* fs) {
@@ -319,6 +359,17 @@ static void UpdateSearchLabel(FrameState* fs) {
         swprintf_s(out, L"%d/%zu", cur + 1, total);
     }
     SetWindowTextW(fs->hSearchLabel, out);
+}
+
+// 搜索定位会改变正文滚动位置，据此立即同步目录当前章节高亮，
+// 并让目录中对应的标题项滚动到可视区域（无需等待 150ms 轮询定时器）。
+static void SyncTocAfterSearch(FrameState* fs) {
+    if (!fs || !fs->renderer || !fs->toc) return;
+    int blk = fs->renderer->GetTocBlockAtScrollTop();
+    if (blk >= 0) {
+        fs->toc->SetSelectedByBlock(blk);
+        fs->toc->EnsureSelectedVisible();
+    }
 }
 
 static void ShowSearchBar(FrameState* fs) {
@@ -365,6 +416,7 @@ static LRESULT CALLBACK SearchEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
             if (fs && fs->renderer) {
                 if (shift) fs->renderer->FindPrev(); else fs->renderer->FindNext();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
                 SendMessageW(hwnd, EM_SETSEL, 0, -1);
             }
             return 0;
@@ -380,6 +432,7 @@ static LRESULT CALLBACK SearchEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
             if (fs && fs->renderer) {
                 if (shift) fs->renderer->FindPrev(); else fs->renderer->FindNext();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
             }
             return 0;
         }
@@ -669,6 +722,14 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         DragAcceptFiles(hwnd, TRUE);
         return 0;
     }
+    case WM_ACTIVATE:
+        // 窗口重新激活（非失活）时检查当前文件是否被外部修改
+        if (fs && LOWORD(wParam) != WA_INACTIVE && !fs->reloadCheckInProgress) {
+            fs->reloadCheckInProgress = true;
+            CheckFileReload(fs, hwnd);
+            fs->reloadCheckInProgress = false;
+        }
+        break;
     case WM_SIZE:
         // 最小化时（SIZE_MINIMIZED）跳过子窗口布局：避免把内容窗口缩为 0×0
         // 进而触发 MarkdownRenderer 以 0 宽度重排——那会污染测量缓存，导致
@@ -839,12 +900,14 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             if (fs && fs->searchBarVisible && fs->renderer) {
                 fs->renderer->FindNext();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
             }
             return 0;
         case IDM_EDIT_FIND_PREV:
             if (fs && fs->searchBarVisible && fs->renderer) {
                 fs->renderer->FindPrev();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
             }
             return 0;
         case IDC_SEARCH_EDIT:
@@ -857,6 +920,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             if (fs && fs->renderer) {
                 fs->renderer->FindNext();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
                 SetFocus(fs->hSearchEdit);
             }
             return 0;
@@ -864,6 +928,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             if (fs && fs->renderer) {
                 fs->renderer->FindPrev();
                 UpdateSearchLabel(fs);
+                SyncTocAfterSearch(fs);
                 SetFocus(fs->hSearchEdit);
             }
             return 0;
