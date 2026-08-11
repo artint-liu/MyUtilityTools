@@ -114,6 +114,22 @@ def _try_b64_image(s: str) -> str | None:
     return None
 
 
+def _try_parse_json_string(s: str) -> object | None:
+    """若字符串是 JSON 对象/数组的序列化文本，解析并返回结果；否则返回 None。
+
+    仅对去空白后以 '{' 或 '[' 开头的字符串尝试 json.loads，避免误判普通文本
+    或数字字符串。用于 Parquet 等列存中以 string 形式存储的结构化字段（如
+    conversations），使其能被前端结构化渲染而非当作整段文本显示。
+    """
+    stripped = s.lstrip()
+    if not stripped or stripped[0] not in "[{":
+        return None
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def process_media_in_value(val):
     """递归遍历样本值，把图片字节/base64 字符串转成可前端渲染的标记对象。
 
@@ -164,6 +180,11 @@ def process_media_in_value(val):
                 "bytes": len(raw),
                 "too_large": True,
             }
+        # 非图片字符串：若为 JSON 对象/数组序列化文本则解析为结构化值，
+        # 递归处理（如 conversations 字段），前端可结构化渲染
+        parsed = _try_parse_json_string(val)
+        if parsed is not None:
+            return process_media_in_value(parsed)
         return val
     if isinstance(val, dict):
         return {k: process_media_in_value(v) for k, v in val.items()}

@@ -154,7 +154,7 @@ body {
 .status-badge.unmarked { background: rgba(128,128,128,0.1); color: var(--text-dim); }
 
 /* ===== 字段渲染（键值卡片） ===== */
-.fields { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; }
+.fields { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; user-select: text; -webkit-user-select: text; }
 .field { border-left: 3px solid var(--primary); padding: 8px 0 8px 14px; }
 .field-key {
   display: inline-block; font-size: 13px; font-weight: 600; color: var(--key);
@@ -186,11 +186,12 @@ body {
   border-radius: 8px; background: rgba(244,67,54,0.08); line-height: 1.7;
 }
 /* ===== 图片 / 二进制展示 ===== */
-.img-wrap { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.img-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 100%; }
 .sample-img {
   max-width: 100%; max-height: 460px; border-radius: 8px;
   border: 1px solid var(--border); display: block; cursor: zoom-in;
   background: #000; transition: transform .2s ease;
+  object-fit: contain; width: auto; height: auto;
 }
 .sample-img:hover { transform: scale(1.02); }
 .img-meta { font-size: 11px; color: var(--text-dim); }
@@ -1234,6 +1235,9 @@ document.addEventListener("click", () => $("helpPop").classList.remove("show"));
 
 // 图片点击放大（事件委托，处理动态渲染的图片）
 $("fields").addEventListener("click", (e) => {
+  // 划词选择文本时不触发放大，避免与正文选择冲突
+  const sel = window.getSelection ? window.getSelection().toString() : "";
+  if (sel) return;
   const img = e.target.closest("img.sample-img");
   if (!img) return;
   $("imgLightboxImg").src = img.src;
