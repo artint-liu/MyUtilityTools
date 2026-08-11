@@ -368,6 +368,60 @@ class AIPredictor:
                 json=payload,
             )
 
+    async def _call_llm_stream(self, messages: list[dict]):
+        """流式调用 LLM，yield (type, text) 元组。
+
+        type: 'thinking' (reasoning_content 思维链) | 'content' (最终回答)
+        流式 read timeout 设为 None，避免推理慢被中断（靠 [DONE] 或连接关闭结束）。
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": config.AI_TEMPERATURE,
+            "max_tokens": config.AI_MAX_TOKENS,
+            "stream": True,
+        }
+        # 流式：connect/write/pool 用常规超时，read 设 None（等待 chunk 不限时）
+        timeout = httpx.Timeout(
+            connect=float(config.AI_CONNECT_TIMEOUT),
+            read=None,
+            write=float(config.AI_CONNECT_TIMEOUT),
+            pool=float(config.AI_CONNECT_TIMEOUT),
+        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{self.api_base}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            ) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    raise RuntimeError(
+                        f"LLM 返回 HTTP {resp.status_code}: {body.decode('utf-8', errors='replace')[:300]}"
+                    )
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {}) or {}
+                    # reasoning 模型（如 deepseek-r1）的思维链
+                    reasoning = delta.get("reasoning_content") or ""
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    content = delta.get("content") or ""
+                    if content:
+                        yield ("content", content)
+
     @staticmethod
     def _find_json_objects(text: str) -> list[str]:
         """用栈匹配提取所有顶层 JSON 对象字符串，正确处理字符串内的 {} 和转义。"""
@@ -537,6 +591,66 @@ class AIPredictor:
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("AI 预测失败: %s", exc)
             return {"error": True, "reason": f"调用失败: {exc}"}
+
+    async def predict_one_stream(self, sample: dict):
+        """流式预测单条样本，yield 事件 dict，供前端实时展示推理过程。
+
+        事件类型：
+        - {type: 'thinking', text: str}    思维链片段（reasoning 模型）
+        - {type: 'content', text: str}     回答内容片段
+        - {type: 'result', result: dict, raw: str, reasoning: str}  解析后的最终结果
+        - {type: 'error', reason: str}     调用失败
+        """
+        if isinstance(sample, dict) and sample.get("__parse_error__"):
+            yield {"type": "error", "reason": "样本解析失败，无法预测"}
+            return
+
+        examples = self._current_examples
+        messages = self.build_messages(examples, sample)
+
+        full_content = ""
+        full_reasoning = ""
+        try:
+            async for evt_type, text in self._call_llm_stream(messages):
+                if evt_type == "thinking":
+                    full_reasoning += text
+                    yield {"type": "thinking", "text": text}
+                elif evt_type == "content":
+                    full_content += text
+                    yield {"type": "content", "text": text}
+        except httpx.ReadTimeout:
+            yield {
+                "type": "error",
+                "reason": f"请求超时（推理超过 {config.AI_REQUEST_TIMEOUT}s）",
+            }
+            return
+        except httpx.ConnectError as exc:
+            yield {"type": "error", "reason": f"无法连接 {self.api_base}：{exc}"}
+            return
+        except httpx.HTTPError as exc:
+            yield {"type": "error", "reason": f"HTTP 错误: {exc}"}
+            return
+        except RuntimeError as exc:
+            yield {"type": "error", "reason": str(exc)}
+            return
+        except Exception as exc:  # noqa: BLE001
+            yield {"type": "error", "reason": f"调用失败: {exc}"}
+            return
+
+        # 解析最终结果（优先用 content，为空则用 reasoning）
+        raw_to_parse = full_content or full_reasoning
+        result = self.parse_response(raw_to_parse)
+        if result.get("error"):
+            result["raw"] = raw_to_parse[:500]
+            LOGGER.warning(
+                "AI 响应解析失败，原始返回（前500字符）: %s", raw_to_parse[:500]
+            )
+        yield {
+            "type": "result",
+            "result": result,
+            "raw": full_content,
+            "reasoning": full_reasoning,
+        }
 
     # few-shot 示例缓存（批量预测前设置，避免每条都重新收集）
     _current_examples: dict[str, list[dict]] = {"pass": [], "reject": []}

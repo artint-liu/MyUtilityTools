@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -737,8 +737,93 @@ async def ai_predict(req: AIPredictRequest):
     return {"success": True, "result": result, "auto_accepted": auto}
 
 
-@app.post("/api/ai/predict_all")
-async def ai_predict_all():
+@app.post("/api/ai/predict_stream")
+async def ai_predict_stream(req: AIPredictRequest):
+    """流式预测单条样本，以 SSE 推送推理过程给前端实时显示。
+
+    事件流：
+    - event: thinking  data: {text}        思维链片段（reasoning 模型）
+    - event: content   data: {text}        回答内容片段
+    - event: result    data: {result, raw, reasoning}  解析后的最终结果
+    - event: done      data: {auto_accepted, result} 或 {error, reason, raw, log_file}
+    - event: error     data: {reason}      调用失败（连接/超时等）
+    """
+    st = _require_data()
+    if req.index < 0 or req.index >= st.reader.total:
+        raise HTTPException(status_code=404, detail="样本索引越界")
+    predictor = _get_predictor()
+    examples = await run_in_threadpool(
+        predictor.collect_examples, st.progress, st.reader
+    )
+    if not examples["pass"] or not examples["reject"]:
+        raise HTTPException(
+            status_code=400,
+            detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
+        )
+    predictor.set_examples(examples)
+    data = st.reader.read(req.index)
+
+    def _sse(event: str, payload: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    async def _stream():
+        try:
+            final_result = None
+            full_raw = ""
+            full_reasoning = ""
+            async for evt in predictor.predict_one_stream(data):
+                evt_type = evt["type"]
+                if evt_type == "thinking":
+                    full_reasoning += evt["text"]
+                    yield _sse("thinking", {"text": evt["text"]})
+                elif evt_type == "content":
+                    full_raw += evt["text"]
+                    yield _sse("content", {"text": evt["text"]})
+                elif evt_type == "result":
+                    final_result = evt["result"]
+                    yield _sse("result", {
+                        "result": final_result,
+                        "raw": evt["raw"],
+                        "reasoning": evt["reasoning"],
+                    })
+                elif evt_type == "error":
+                    yield _sse("error", {"reason": evt["reason"]})
+                    return
+
+            # 处理最终结果：自动采纳 / 存建议
+            if final_result and not final_result.get("error"):
+                current_status = st.progress.status_of(req.index)
+                auto = False
+                if final_result["confidence"] >= config.AI_CONFIDENCE_THRESHOLD and current_status not in ("pass", "reject", "skip"):
+                    ai_status = f"{final_result['label']}_ai"
+                    st.progress.mark(req.index, ai_status, confidence=final_result["confidence"])
+                    auto = True
+                else:
+                    state.ai_predictions[req.index] = final_result
+                    _save_ai_predictions()
+                yield _sse("done", {"auto_accepted": auto, "result": final_result})
+            else:
+                reason = final_result.get("reason", "未知错误") if final_result else "未知错误"
+                _log_ai_failure(req.index, reason, full_raw or full_reasoning)
+                log_file = (
+                    str(state.data_path.with_suffix(state.data_path.suffix + ".ai_failures.log"))
+                    if state.data_path else ""
+                )
+                yield _sse("done", {
+                    "error": True,
+                    "reason": reason,
+                    "raw": full_raw,
+                    "log_file": log_file,
+                })
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("流式预测异常: %s", exc)
+            yield _sse("error", {"reason": str(exc)})
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
     """批量预测所有未标记样本（后台任务）。"""
     st = _require_data()
     if state.ai_task_progress.get("running"):

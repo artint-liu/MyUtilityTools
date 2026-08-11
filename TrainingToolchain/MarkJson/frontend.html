@@ -202,9 +202,21 @@ body {
 .ai-panel .btn-ai:disabled { opacity: .4; cursor: not-allowed; }
 .ai-panel .btn-ai.danger { border-color: var(--reject); color: var(--reject); background: rgba(244,67,54,0.1); }
 .ai-panel .btn-ai.danger:hover { background: var(--reject); color: #fff; }
+.ai-panel .btn-ai .keyhint { font-size: 10px; opacity: .7; background: rgba(0,0,0,0.18); padding: 0 5px; border-radius: 4px; margin-left: 4px; }
+.ai-panel .btn-ai:hover .keyhint { background: rgba(255,255,255,0.25); opacity: 1; }
 .ai-progress { font-size: 11px; color: var(--text-dim); min-width: 100px; }
 .ai-progress-bar { height: 4px; background: var(--bg-3); border-radius: 3px; overflow: hidden; margin-top: 3px; }
 .ai-progress-fill { height: 100%; background: var(--primary-3); transition: width .3s; }
+/* 单条预测运行指示：常驻显示，不自动消失 */
+.ai-progress.running { color: var(--primary-3); min-width: 180px; }
+.ai-progress-row { display: inline-flex; align-items: center; gap: 6px; }
+.mini-spinner {
+  width: 12px; height: 12px; border: 2px solid var(--bg-3);
+  border-top-color: var(--primary-3); border-radius: 50%;
+  display: inline-block; animation: spin 0.9s linear infinite; flex-shrink: 0;
+}
+.ai-progress .elapsed { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* ===== 字段渲染（键值卡片） ===== */
 .fields { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; user-select: text; -webkit-user-select: text; }
@@ -296,6 +308,8 @@ body {
   position: absolute; left: 18px; width: 34px; height: 34px; border-radius: 50%;
   background: var(--bg-3); color: var(--primary-3); border: 1px solid var(--border);
   cursor: pointer; font-size: 16px; font-weight: 700; transition: all .2s;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1; padding: 0; box-sizing: border-box;
 }
 .help-btn:hover { background: var(--primary); color: #fff; box-shadow: 0 0 12px rgba(79,195,247,0.5); }
 .help-pop {
@@ -340,6 +354,57 @@ body {
 .toast.ok { border-color: var(--pass); color: #a5d6a7; }
 .toast.err { border-color: var(--reject); color: #ef9a9a; }
 @keyframes toastIn { from {opacity:0; transform: translateY(-12px);} to {opacity:1; transform:none;} }
+
+/* ===== AI 推理过程面板 ===== */
+.ai-thinking-overlay {
+  position: fixed; bottom: 16px; right: 16px; z-index: 350;
+  width: 560px; max-width: calc(100vw - 32px); max-height: 65vh;
+  display: none; flex-direction: column;
+}
+.ai-thinking-overlay.show { display: flex; animation: slideUp .3s ease; }
+.ai-thinking-panel {
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  border: 1px solid var(--primary-3); border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 20px rgba(79,195,247,0.2);
+  display: flex; flex-direction: column; overflow: hidden;
+  max-height: 65vh;
+}
+.ai-thinking-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; background: rgba(0,122,204,0.15);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.ai-thinking-title { font-size: 13px; font-weight: 600; color: var(--primary-3); white-space: nowrap; }
+.ai-thinking-status { font-size: 11px; color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-thinking-status.running { color: var(--primary-3); }
+.ai-thinking-status.done { color: var(--pass); }
+.ai-thinking-status.err { color: var(--reject); }
+.ai-thinking-close {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 14px; padding: 2px 8px; border-radius: 4px; line-height: 1;
+}
+.ai-thinking-close:hover { background: var(--bg-3); color: var(--text-0); }
+.ai-thinking-body { overflow-y: auto; padding: 12px 14px; flex: 1; min-height: 80px; }
+.ai-thinking-section { margin-bottom: 12px; }
+.ai-thinking-section:last-child { margin-bottom: 0; }
+.ai-thinking-section-title {
+  font-size: 11px; color: var(--text-dim); font-weight: 600;
+  margin-bottom: 4px; letter-spacing: .3px; display: flex; align-items: center; gap: 4px;
+}
+.ai-thinking-content {
+  font-size: 12px; line-height: 1.65; color: var(--text-1);
+  white-space: pre-wrap; word-break: break-word;
+  font-family: "Consolas", "Source Code Pro", "Microsoft YaHei", monospace;
+  user-select: text; -webkit-user-select: text;
+  padding: 6px 8px; background: rgba(0,0,0,0.25); border-radius: 6px;
+  border-left: 2px solid var(--border);
+}
+.ai-thinking-content.thinking { color: var(--text-dim); border-left-color: var(--skip); font-style: italic; }
+.ai-thinking-content.answer { color: var(--text-0); border-left-color: var(--primary-3); }
+.ai-thinking-cursor::after { content: "▋"; color: var(--primary-3); animation: blink 1s step-end infinite; }
+.ai-thinking-empty { color: var(--text-dim); font-size: 12px; font-style: italic; padding: 20px; text-align: center; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+@keyframes blink { 50% { opacity: 0; } }
 
 /* ===== 拖拽打开遮罩 ===== */
 .drop-overlay {
@@ -486,12 +551,13 @@ body {
     <label>阈值 <input type="range" id="aiThreshold" min="0.5" max="1" step="0.05" value="0.85"><span id="aiThresholdVal">85%</span></label>
     <label title="启用视觉模型发送图片（需加载 VL 模型）"><input type="checkbox" id="aiVision" /> 视觉</label>
     <button class="btn-ai" id="aiTestBtn">测试连接</button>
-    <button class="btn-ai" id="aiPredictOneBtn">预测当前</button>
+    <button class="btn-ai" id="aiPredictOneBtn">预测当前<span class="keyhint">P</span></button>
     <button class="btn-ai" id="aiPredictAllBtn">预测全部未标记</button>
     <button class="btn-ai" id="aiCancelBtn" style="display:none">取消</button>
+    <button class="btn-ai" id="aiShowThinkingBtn" style="display:none" title="重新打开上次 AI 推理过程面板">👁 查看推理</button>
     <span class="ai-progress" id="aiProgress"></span>
     <button class="btn-ai" id="aiAcceptAllBtn" title="批量采纳达到阈值的低置信度建议">采纳建议</button>
-    <button class="btn-ai" id="aiPromoteBtn" title="将所有 AI 标记提升为人工标记">提升为人工</button>
+    <button class="btn-ai" id="aiPromoteBtn" title="将所有 AI 标记提升为人工标记">提升为人工<span class="keyhint">M</span></button>
     <button class="btn-ai danger" id="aiClearBtn" title="清除所有 AI 标记和建议">清除AI</button>
   </div>
 
@@ -510,6 +576,7 @@ body {
       <div><b>键盘快捷键</b></div>
       <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝 &nbsp; <kbd>A</kbd> 采纳AI建议</div>
       <div><kbd>→</kbd> / 下一条 跳过 &nbsp; <kbd>←</kbd> 上一条</div>
+      <div><kbd>P</kbd> 预测当前 &nbsp; <kbd>M</kbd> 提升为人工</div>
       <div><kbd>Ctrl/⌘+S</kbd> 存盘</div>
       <div style="margin-top:6px"><b>过滤</b>：输入框输入关键字后回车或点「过滤」</div>
       <div>空格分词 = 与查找，仅匹配值不匹配键</div>
@@ -555,6 +622,27 @@ body {
 
   <!-- 图片放大遮罩 -->
   <div class="img-lightbox" id="imgLightbox"><img id="imgLightboxImg" alt="image" /></div>
+
+  <!-- AI 推理过程面板（流式输出） -->
+  <div class="ai-thinking-overlay" id="aiThinkingOverlay">
+    <div class="ai-thinking-panel">
+      <div class="ai-thinking-header">
+        <span class="ai-thinking-title">🤖 AI 推理过程</span>
+        <span class="ai-thinking-status running" id="aiThinkingStatus">正在思考…</span>
+        <button class="ai-thinking-close" id="aiThinkingClose" title="关闭">✕</button>
+      </div>
+      <div class="ai-thinking-body" id="aiThinkingBody">
+        <div class="ai-thinking-section" id="aiThinkingSection" style="display:none">
+          <div class="ai-thinking-section-title">💭 思考过程</div>
+          <div class="ai-thinking-content thinking" id="aiThinkingContent"></div>
+        </div>
+        <div class="ai-thinking-section" id="aiAnswerSection">
+          <div class="ai-thinking-section-title">📝 回答</div>
+          <div class="ai-thinking-content answer" id="aiAnswerContent"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
 <script>
 "use strict";
@@ -1445,12 +1533,14 @@ async function saveAIConfig() {
 // 更新 AI 进度显示
 function updateAIProgress(p) {
   const el = $("aiProgress");
+  _aiBatchRunning = !!(p && p.running);
   if (!p || !p.running) {
     if (p && p.total > 0 && p.done >= p.total) {
       el.innerHTML = "完成: " + p.done + "/" + p.total + " (自动采纳 " + (p.auto_accepted || 0) + ", 失败 " + (p.errors || 0) + ")";
     } else {
       el.innerHTML = "";
     }
+    el.classList.remove("running");
     $("aiPredictAllBtn").style.display = "";
     $("aiCancelBtn").style.display = "none";
     return;
@@ -1487,40 +1577,229 @@ async function pollAIPredictStatus() {
   }
 }
 
-// 预测单条
+// 单条预测的运行状态（常驻指示 + 计时器）
+let _predictOneTimer = null;
+let _predictOneStart = 0;
+
+// 显示单条预测的常驻运行指示（不自动消失，直到 hidePredictOneProgress 被调用）
+function showPredictOneProgress() {
+  _predictOneStart = Date.now();
+  // 禁用预测相关按钮，避免重复点击
+  $("aiPredictOneBtn").classList.add("ui-disabled");
+  $("aiPredictAllBtn").classList.add("ui-disabled");
+  _updatePredictOneText();
+  _predictOneTimer = setInterval(_updatePredictOneText, 1000);
+}
+
+// 更新已耗时文本（每秒调用）
+function _updatePredictOneText() {
+  const elapsed = Math.floor((Date.now() - _predictOneStart) / 1000);
+  const el = $("aiProgress");
+  el.classList.add("running");
+  el.innerHTML =
+    '<span class="ai-progress-row"><span class="mini-spinner"></span>' +
+    '正在预测第 ' + (currentIndex + 1) + ' 条… <span class="elapsed">' + elapsed + 's</span></span>' +
+    '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:100%;animation:pulse 1.5s ease-in-out infinite"></div></div>';
+}
+
+// 隐藏单条预测运行指示，恢复按钮
+function hidePredictOneProgress() {
+  if (_predictOneTimer) { clearInterval(_predictOneTimer); _predictOneTimer = null; }
+  $("aiPredictOneBtn").classList.remove("ui-disabled");
+  $("aiPredictAllBtn").classList.remove("ui-disabled");
+  // 若批量预测未在运行，则清空进度区域；否则保留批量进度显示
+  if (!_aiBatchRunning) {
+    $("aiProgress").classList.remove("running");
+    $("aiProgress").innerHTML = "";
+  }
+}
+
+// 批量预测是否在运行的标志（由 updateAIProgress 维护，供 hidePredictOneProgress 判断）
+let _aiBatchRunning = false;
+
+// ---------- AI 推理过程面板（流式输出） ----------
+// _hasThinkingHistory：是否有可回看的推理内容（新预测开始时清空，结束时置 true）
+let _hasThinkingHistory = false;
+
+function showThinkingPanel() {
+  // 新预测开始：清空旧内容，重置状态
+  _hasThinkingHistory = false;
+  $("aiShowThinkingBtn").style.display = "none";
+  $("aiThinkingContent").textContent = "";
+  $("aiAnswerContent").textContent = "";
+  $("aiThinkingSection").style.display = "none";
+  const status = $("aiThinkingStatus");
+  status.textContent = "正在思考…";
+  status.className = "ai-thinking-status running";
+  $("aiThinkingClose").style.display = "";
+  $("aiThinkingOverlay").classList.add("show");
+}
+
+function appendThinkingText(text) {
+  $("aiThinkingSection").style.display = "";
+  const el = $("aiThinkingContent");
+  el.textContent += text;
+  _scrollThinkingBottom();
+}
+
+function appendAnswerText(text) {
+  const el = $("aiAnswerContent");
+  el.textContent += text;
+  _scrollThinkingBottom();
+}
+
+function _scrollThinkingBottom() {
+  const body = $("aiThinkingBody");
+  body.scrollTop = body.scrollHeight;
+}
+
+function setThinkingStatus(text, cls) {
+  const status = $("aiThinkingStatus");
+  status.textContent = text;
+  status.className = "ai-thinking-status " + (cls || "");
+}
+
+// 关闭推理面板：仅隐藏，保留内容供回看
+function closeThinkingPanel() {
+  $("aiThinkingOverlay").classList.remove("show");
+  // 若有可回看内容，显示"查看推理"按钮
+  if (_hasThinkingHistory) {
+    $("aiShowThinkingBtn").style.display = "";
+  }
+}
+
+// 重新打开面板回看上次推理内容（不清空）
+function reopenThinkingPanel() {
+  $("aiThinkingOverlay").classList.add("show");
+  $("aiShowThinkingBtn").style.display = "none";
+}
+
+// 预测单条（流式：实时显示 AI 推理过程）
 async function predictOne() {
   if (isAnimating || isBusy) return;
+  if (_predictOneTimer) { toast("上一次预测仍在进行，请稍候", "err"); return; }
+  // 确保 AI 配置已保存
+  await saveAIConfig();
+  showPredictOneProgress();
+  showThinkingPanel();
+  let abortCtrl = new AbortController();
+  // 关闭按钮：中止流式请求
+  const closeHandler = () => { abortCtrl.abort(); };
+  $("aiThinkingClose").onclick = closeHandler;
   try {
-    toast("AI 预测中…", "ok");
-    const res = await aiAPI("predict", "POST", { index: currentIndex });
-    if (res.error) {
-      const reason = res.reason || "未知错误";
-      toast("AI 预测失败", "err");
-      // 用模态框显示完整错误详情（含 LLM 原始返回），便于诊断
-      let detail = "原因：" + reason;
-      if (res.log_file) {
-        detail += "\n\n失败详情已写入日志文件：\n" + res.log_file;
-      }
-      if (res.raw) {
-        detail += "\n\n━━ LLM 原始返回（可选中复制） ━━\n" + res.raw;
-      } else {
-        detail += "\n\n（LLM 未返回任何内容）";
-      }
-      showModal("AI 预测失败", detail, "⚠️");
-      // 控制台同步打印，方便复制
-      console.log("[AI预测失败] reason:", reason, "| raw:", res.raw, "| log:", res.log_file);
-      return;
+    const resp = await fetch(API + "/api/ai/predict_stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index: currentIndex }),
+      signal: abortCtrl.signal,
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "HTTP " + resp.status);
+      throw new Error(txt);
     }
-    if (res.auto_accepted) {
-      toast("AI 自动采纳: " + res.result.label + " (" + (res.result.confidence * 100).toFixed(0) + "%)", "ok");
-    } else {
-      toast("AI 建议: " + res.result.label + " (" + (res.result.confidence * 100).toFixed(0) + "%) — 置信度低于阈值", "ok");
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalResult = null;
+    let fullRaw = "";
+    let fullReasoning = "";
+    let hasThinking = false;
+    let hasAnswer = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE 事件以 \n\n 分隔
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const eventBlock = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        let eventType = "message";
+        let dataStr = "";
+        for (const line of eventBlock.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataStr += line.slice(6);
+        }
+        if (!dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch (e) { continue; }
+
+        if (eventType === "thinking") {
+          if (!hasThinking) { hasThinking = true; setThinkingStatus("思考中…"); _hasThinkingHistory = true; }
+          appendThinkingText(data.text);
+        } else if (eventType === "content") {
+          if (!hasAnswer) { hasAnswer = true; setThinkingStatus("生成回答中…"); _hasThinkingHistory = true; }
+          appendAnswerText(data.text);
+        } else if (eventType === "result") {
+          finalResult = data.result;
+          fullRaw = data.raw || "";
+          fullReasoning = data.reasoning || "";
+          // result 事件必定跟在 thinking/content 之后，内容已累积
+          if (hasThinking || hasAnswer) _hasThinkingHistory = true;
+        } else if (eventType === "error") {
+          setThinkingStatus("错误: " + (data.reason || "").slice(0, 60), "err");
+          toast("AI 预测失败: " + (data.reason || "未知错误"), "err");
+          // 有内容才可回看；无内容（如连接失败）则不显示回看按钮
+          if (hasThinking || hasAnswer) _hasThinkingHistory = true;
+          // 3 秒后自动关闭面板（内容保留，可回看）
+          setTimeout(closeThinkingPanel, 3000);
+          return;
+        } else if (eventType === "done") {
+          // done 事件必定收到了内容（或空内容），标记可回看
+          if (hasThinking || hasAnswer) _hasThinkingHistory = true;
+          if (data.error) {
+            setThinkingStatus("预测失败", "err");
+            // 用模态框显示完整错误详情
+            let detail = "原因：" + (data.reason || "未知错误");
+            if (data.log_file) detail += "\n\n失败详情已写入日志文件：\n" + data.log_file;
+            if (data.raw) detail += "\n\n━━ LLM 原始返回（可选中复制） ━━\n" + data.raw;
+            else detail += "\n\n（LLM 未返回任何内容）";
+            toast("AI 预测失败", "err");
+            showModal("AI 预测失败", detail, "⚠️");
+            console.log("[AI预测失败] reason:", data.reason, "| raw:", data.raw, "| log:", data.log_file);
+            // 不自动关闭，让用户查看推理内容；恢复关闭按钮默认行为
+            $("aiThinkingClose").onclick = closeThinkingPanel;
+          } else {
+            setThinkingStatus(
+              "完成 ✓ " + data.result.label + " " + (data.result.confidence * 100).toFixed(0) + "%",
+              "done"
+            );
+            if (data.auto_accepted) {
+              toast("AI 自动采纳: " + data.result.label + " (" + (data.result.confidence * 100).toFixed(0) + "%)", "ok");
+            } else {
+              toast("AI 建议: " + data.result.label + " (" + (data.result.confidence * 100).toFixed(0) + "%) — 置信度低于阈值", "ok");
+            }
+            // 恢复关闭按钮的默认行为（关闭面板）
+            $("aiThinkingClose").onclick = closeThinkingPanel;
+            // 5 秒后自动关闭面板（让用户有时间查看结果）；关闭后可点"查看推理"回看
+            setTimeout(() => {
+              if ($("aiThinkingStatus").classList.contains("done")) closeThinkingPanel();
+            }, 5000);
+          }
+        }
+      }
     }
+    // 刷新状态与当前样本
     const st = await getStatus();
     updateStats(st);
     const sample = await getSample(currentIndex);
     renderSample(sample);
-  } catch (e) { toast("预测失败: " + e.message, "err"); }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      toast("已取消预测", "ok");
+      setThinkingStatus("已取消", "err");
+      setTimeout(closeThinkingPanel, 2000);
+    } else {
+      setThinkingStatus("错误", "err");
+      toast("预测失败: " + e.message, "err");
+      setTimeout(closeThinkingPanel, 3000);
+    }
+  } finally {
+    // 恢复关闭按钮默认行为（推理已结束，点击仅关闭面板，不再 abort）
+    $("aiThinkingClose").onclick = closeThinkingPanel;
+    hidePredictOneProgress();
+  }
 }
 
 // 预测全部
@@ -1621,6 +1900,9 @@ $("aiCancelBtn").onclick = cancelPredict;
 $("aiAcceptAllBtn").onclick = acceptAll;
 $("aiPromoteBtn").onclick = promoteAll;
 $("aiClearBtn").onclick = clearAll;
+// 推理面板：关闭按钮 + 重新打开回看
+$("aiThinkingClose").onclick = closeThinkingPanel;
+$("aiShowThinkingBtn").onclick = reopenThinkingPanel;
 $("aiThreshold").oninput = (e) => {
   $("aiThresholdVal").textContent = (parseFloat(e.target.value) * 100).toFixed(0) + "%";
 };
@@ -1670,6 +1952,8 @@ document.addEventListener("keydown", (e) => {
       if (acceptBtn) acceptSuggestion(acceptBtn.getAttribute("data-label"));
     }
   }
+  else if (key === "p" || key === "P") { e.preventDefault(); predictOne(); }
+  else if (key === "m" || key === "M") { e.preventDefault(); promoteAll(); }
   else if (key === "ArrowLeft") { e.preventDefault(); if (filterActive) { filterPrev(); } else { goTo(currentIndex - 1); } }
   else if (key === "ArrowRight") { e.preventDefault(); skipNext(); }
 });
