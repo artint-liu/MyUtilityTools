@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 import config
+from ai_predictor import AIPredictor
 from config import (
     HEARTBEAT_TIMEOUT_SECONDS,
     SAVE_INTERVAL_SECONDS,
@@ -21,7 +22,7 @@ from config import (
 from file_indexer import FileIndexer
 from progress_manager import ProgressManager
 from sample_reader import ParquetSampleReader, SampleReader
-from utils import LOGGER, process_media_in_value
+from utils import LOGGER, atomic_write_json, process_media_in_value
 
 
 # ---- 全局状态 ----
@@ -37,6 +38,19 @@ class AppState:
         self.file_history: list[str] = []
         # 加载失败时的错误信息（供前端展示具体原因，而非静默回退到空闲界面）
         self.load_error: Optional[str] = None
+        # ---- AI 预测状态 ----
+        self.ai_predictor: Optional[AIPredictor] = None
+        # ai_predictions: {index: {label, confidence, reason}} —— 低置信度建议（未写入 marks）
+        self.ai_predictions: dict[int, dict] = {}
+        self.ai_task: Optional[asyncio.Task] = None
+        self.ai_task_progress: dict = {
+            "running": False,
+            "done": 0,
+            "total": 0,
+            "errors": 0,
+            "auto_accepted": 0,
+        }
+        self.ai_cancel: Optional[asyncio.Event] = None
 
 
 state = AppState()
@@ -138,7 +152,75 @@ def load_data_file(file_path: str | Path) -> None:
     state.reader = _make_reader(p)
     state.progress = ProgressManager(p, state.reader.total)
     state.load_error = None
+    # 加载 AI 预测缓存
+    state.ai_predictions = _load_ai_predictions(p)
+    # 重置 AI 任务状态
+    state.ai_task_progress = {
+        "running": False, "done": 0, "total": 0, "errors": 0, "auto_accepted": 0,
+    }
     LOGGER.info("数据文件已加载: %s, 共 %d 条样本", p, state.reader.total)
+
+
+def _ai_predictions_path(data_path: Path) -> Path:
+    """AI 预测缓存的持久化路径：<数据文件>.ai_predictions.json"""
+    return data_path.with_suffix(data_path.suffix + ".ai_predictions.json")
+
+
+def _load_ai_predictions(data_path: Path) -> dict[int, dict]:
+    """从磁盘加载 AI 预测缓存。"""
+    p = _ai_predictions_path(data_path)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return {int(k): v for k, v in data.items()}
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("AI 预测缓存损坏，忽略: %s", exc)
+        return {}
+
+
+def _save_ai_predictions() -> None:
+    """持久化 AI 预测缓存到磁盘。"""
+    if state.data_path is None:
+        return
+    p = _ai_predictions_path(state.data_path)
+    payload = {str(k): v for k, v in state.ai_predictions.items()}
+    try:
+        atomic_write_json(p, payload)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("保存 AI 预测缓存失败: %s", exc)
+
+
+def _log_ai_failure(index: int, reason: str, raw: str) -> None:
+    """把解析失败的 LLM 原始返回追加写入日志文件，方便诊断。
+
+    文件位置：<数据文件>.ai_failures.log（与数据文件同目录）。
+    """
+    if state.data_path is None:
+        return
+    log_path = state.data_path.with_suffix(
+        state.data_path.suffix + ".ai_failures.log"
+    )
+    import time
+
+    line = (
+        f"\n{'=' * 60}\n"
+        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] index={index}\n"
+        f"reason: {reason}\n"
+        f"raw (前800字符):\n{raw[:800] if raw else '(空)'}\n"
+    )
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("写入 AI 失败日志失败: %s", exc)
+
+
+def _get_predictor() -> AIPredictor:
+    """获取（惰性创建）AI 预测器实例。"""
+    if state.ai_predictor is None:
+        state.ai_predictor = AIPredictor()
+    return state.ai_predictor
 
 
 async def background_saver() -> None:
@@ -204,12 +286,19 @@ def _sample_payload(index: int) -> dict:
     # 把图片字节/base64 图片转成可前端渲染的标记对象（原数据不变，仅展示层处理）
     data = process_media_in_value(data)
     status = st.progress.status_of(index)
-    return {
+    payload = {
         "index": index,
         "total": st.reader.total,
         "data": data,
         "status": status,
     }
+    # AI 标记附带置信度
+    if status in ("pass_ai", "reject_ai"):
+        payload["ai_confidence"] = st.progress.confidence_of(index)
+    # 低置信度建议（未写入 marks 的预测）
+    if index in st.ai_predictions:
+        payload["ai_prediction"] = st.ai_predictions[index]
+    return payload
 
 
 def _extract_value_strings(obj, out: list) -> None:
@@ -252,13 +341,17 @@ async def api_status():
             "pass_count": 0,
             "reject_count": 0,
             "skip_count": 0,
+            "pass_ai_count": 0,
+            "reject_ai_count": 0,
             "marked_count": 0,
+            "ai_prediction_count": len(state.ai_predictions),
         }
     return {
         "data_file": str(state.data_path),
         "total": state.reader.total,
         "current_index": state.progress.current_index,
         "load_error": state.load_error,
+        "ai_prediction_count": len(state.ai_predictions),
         **state.progress.to_dict(),
     }
 
@@ -274,6 +367,10 @@ async def api_mark(req: MarkRequest):
     if req.index < 0 or req.index >= st.reader.total:
         raise HTTPException(status_code=404, detail="样本索引越界")
     st.progress.mark(req.index, req.status)
+    # 人工标记后清除该索引的 AI 建议（如有）
+    if req.index in st.ai_predictions:
+        st.ai_predictions.pop(req.index, None)
+        _save_ai_predictions()
     # 返回下一条（跳过已标记的，定位到下一个未标记项，便于连续标注）
     return {"success": True, "index": req.index, "status": req.status}
 
@@ -458,7 +555,7 @@ async def api_export(req: ExportRequest):
     if not file_path or not Path(file_path).is_file():
         raise HTTPException(status_code=400, detail="没有可导出的文件，请先打开文件")
 
-    valid = {"pass", "reject", "skip", "unmarked"}
+    valid = {"pass", "reject", "skip", "unmarked", "pass_ai", "reject_ai"}
     statuses = [s for s in (req.statuses or ["pass"]) if s in valid]
     if not statuses:
         raise HTTPException(status_code=400, detail="无效的导出状态")
@@ -510,6 +607,302 @@ async def api_export(req: ExportRequest):
         media_type="application/octet-stream",
         filename=os.path.basename(out_path),
     )
+
+
+# ---- AI 预测路由 ----
+class AIPredictRequest(BaseModel):
+    index: int
+
+
+class AIAcceptRequest(BaseModel):
+    index: int
+    label: Optional[str] = None  # 指定采纳为 pass/reject，默认用建议的 label
+
+
+class AIAcceptAllRequest(BaseModel):
+    threshold: Optional[float] = None  # 默认用配置阈值
+
+
+class AIConfigRequest(BaseModel):
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    vision_enabled: Optional[bool] = None
+    confidence_threshold: Optional[float] = None
+
+
+@app.get("/api/ai/config")
+async def ai_get_config():
+    return {
+        "backend": config.AI_BACKEND,
+        "api_base": config.AI_API_BASE,
+        "model": config.AI_MODEL,
+        "vision_enabled": config.AI_VISION_ENABLED,
+        "confidence_threshold": config.AI_CONFIDENCE_THRESHOLD,
+        "max_examples_per_class": config.AI_MAX_EXAMPLES_PER_CLASS,
+        "has_key": bool(config.AI_API_KEY),
+    }
+
+
+@app.post("/api/ai/config")
+async def ai_set_config(req: AIConfigRequest):
+    """运行时更新 AI 配置（仅内存生效，重启按 config.py/环境变量为准）。"""
+    if req.api_base is not None:
+        config.AI_API_BASE = req.api_base
+    if req.api_key is not None:
+        config.AI_API_KEY = req.api_key
+    if req.model is not None:
+        config.AI_MODEL = req.model
+    if req.vision_enabled is not None:
+        config.AI_VISION_ENABLED = req.vision_enabled
+    if req.confidence_threshold is not None:
+        config.AI_CONFIDENCE_THRESHOLD = max(0.0, min(1.0, req.confidence_threshold))
+    # 配置变更后重建预测器
+    state.ai_predictor = None
+    return {"success": True, **(await ai_get_config())}
+
+
+@app.post("/api/ai/test")
+async def ai_test_connection():
+    predictor = _get_predictor()
+    ok, msg = await predictor.test_connection()
+    return {"success": ok, "message": msg}
+
+
+@app.get("/api/ai/examples")
+async def ai_examples():
+    """预览将作为 few-shot 的已标注样本（精简后）。"""
+    st = _require_data()
+    predictor = _get_predictor()
+    examples = await run_in_threadpool(
+        predictor.collect_examples, st.progress, st.reader
+    )
+    # 精简展示，避免响应过大
+    compacted = {
+        label: [predictor._compact_sample(s) for s in samples]
+        for label, samples in examples.items()
+    }
+    return {
+        "pass_count": len(examples["pass"]),
+        "reject_count": len(examples["reject"]),
+        "examples": compacted,
+    }
+
+
+@app.post("/api/ai/predict")
+async def ai_predict(req: AIPredictRequest):
+    """预测单条样本。"""
+    st = _require_data()
+    if req.index < 0 or req.index >= st.reader.total:
+        raise HTTPException(status_code=404, detail="样本索引越界")
+    predictor = _get_predictor()
+    # 收集 few-shot 示例
+    examples = await run_in_threadpool(
+        predictor.collect_examples, st.progress, st.reader
+    )
+    if not examples["pass"] or not examples["reject"]:
+        raise HTTPException(
+            status_code=400,
+            detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
+        )
+    predictor.set_examples(examples)
+    data = st.reader.read(req.index)
+    result = await predictor.predict_one(data)
+    # 调用失败（网络/HTTP/解析错误）：不作为 pass/reject 处理，直接返回错误
+    if result.get("error"):
+        _log_ai_failure(req.index, result.get("reason", "未知错误"), result.get("raw", ""))
+        log_file = (
+            str(state.data_path.with_suffix(state.data_path.suffix + ".ai_failures.log"))
+            if state.data_path else ""
+        )
+        return {
+            "success": False,
+            "error": True,
+            "reason": result.get("reason", "未知错误"),
+            "raw": result.get("raw", ""),
+            "log_file": log_file,
+        }
+    current_status = st.progress.status_of(req.index)
+    # 高置信度且当前无人工标记（unmarked 或仅 AI 标记）→ 自动采纳
+    # 已有人工标记（pass/reject/skip）不覆盖，仅返回建议
+    auto = False
+    if result["confidence"] >= config.AI_CONFIDENCE_THRESHOLD and current_status not in ("pass", "reject", "skip"):
+        ai_status = f"{result['label']}_ai"
+        st.progress.mark(req.index, ai_status, confidence=result["confidence"])
+        auto = True
+    else:
+        # 低置信度或已有人工标记：存建议（不覆盖 marks）
+        state.ai_predictions[req.index] = result
+        _save_ai_predictions()
+    return {"success": True, "result": result, "auto_accepted": auto}
+
+
+@app.post("/api/ai/predict_all")
+async def ai_predict_all():
+    """批量预测所有未标记样本（后台任务）。"""
+    st = _require_data()
+    if state.ai_task_progress.get("running"):
+        raise HTTPException(status_code=409, detail="已有批量预测任务在运行")
+    predictor = _get_predictor()
+    # 收集 few-shot 示例
+    examples = await run_in_threadpool(
+        predictor.collect_examples, st.progress, st.reader
+    )
+    if not examples["pass"] or not examples["reject"]:
+        raise HTTPException(
+            status_code=400,
+            detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
+        )
+    predictor.set_examples(examples)
+    # 收集所有未标记索引
+    indices = [
+        i for i in range(st.reader.total) if st.progress.status_of(i) == "unmarked"
+    ]
+    if not indices:
+        return {"success": True, "message": "没有未标记的样本", "total": 0}
+
+    cancel_event = asyncio.Event()
+    state.ai_cancel = cancel_event
+    state.ai_task_progress = {
+        "running": True,
+        "done": 0,
+        "total": len(indices),
+        "errors": 0,
+        "auto_accepted": 0,
+    }
+
+    async def _run():
+        try:
+            done = 0
+            errors = 0
+            auto_accepted = 0
+
+            def _on_progress(idx: int, auto: bool) -> None:
+                nonlocal done, auto_accepted
+                done += 1
+                if auto:
+                    auto_accepted += 1
+                state.ai_task_progress["done"] = done
+                state.ai_task_progress["auto_accepted"] = auto_accepted
+
+            results = await predictor.predict_batch(
+                indices, st.reader, on_progress=_on_progress, cancel_event=cancel_event
+            )
+            # 处理结果：错误跳过不写 marks，高置信度写入 marks，低置信度存建议
+            for idx, result in results.items():
+                if cancel_event.is_set():
+                    break
+                if result.get("error"):
+                    errors += 1
+                    _log_ai_failure(idx, result.get("reason", ""), result.get("raw", ""))
+                    continue  # 调用失败不作为预测结果
+                if result["confidence"] >= config.AI_CONFIDENCE_THRESHOLD:
+                    ai_status = f"{result['label']}_ai"
+                    st.progress.mark(idx, ai_status, confidence=result["confidence"])
+                else:
+                    state.ai_predictions[idx] = result
+            state.ai_task_progress["errors"] = errors
+            _save_ai_predictions()
+            await st.progress.save()
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("批量预测任务异常: %s", exc)
+        finally:
+            state.ai_task_progress["running"] = False
+            state.ai_cancel = None
+
+    state.ai_task = asyncio.create_task(_run())
+    return {"success": True, "total": len(indices)}
+
+
+@app.get("/api/ai/predict_status")
+async def ai_predict_status():
+    """查询批量预测进度。"""
+    return state.ai_task_progress
+
+
+@app.get("/api/ai/predictions")
+async def ai_predictions():
+    """获取所有低置信度建议（未写入 marks 的预测）。"""
+    return {"predictions": state.ai_predictions, "count": len(state.ai_predictions)}
+
+
+@app.post("/api/ai/accept")
+async def ai_accept(req: AIAcceptRequest):
+    """采纳某条 AI 建议，写入 marks（转为人工标记）。"""
+    st = _require_data()
+    if req.index not in state.ai_predictions:
+        raise HTTPException(status_code=404, detail="该样本没有 AI 建议")
+    pred = state.ai_predictions.pop(req.index)
+    label = req.label or pred["label"]
+    if label not in ("pass", "reject"):
+        raise HTTPException(status_code=400, detail="label 必须为 pass 或 reject")
+    st.progress.mark(req.index, label)
+    _save_ai_predictions()
+    return {"success": True, "index": req.index, "status": label}
+
+
+@app.post("/api/ai/accept_all")
+async def ai_accept_all(req: AIAcceptAllRequest):
+    """批量采纳高置信度建议。threshold 默认用配置阈值。"""
+    st = _require_data()
+    threshold = req.threshold if req.threshold is not None else config.AI_CONFIDENCE_THRESHOLD
+    accepted = []
+    for idx in list(state.ai_predictions.keys()):
+        pred = state.ai_predictions[idx]
+        if pred.get("confidence", 0.0) >= threshold:
+            label = pred["label"]
+            if label in ("pass", "reject"):
+                st.progress.mark(idx, label)
+                state.ai_predictions.pop(idx)
+                accepted.append(idx)
+    _save_ai_predictions()
+    return {"success": True, "accepted_count": len(accepted), "indices": accepted}
+
+
+@app.post("/api/ai/clear")
+async def ai_clear():
+    """清除所有 AI 预测：pass_ai/reject_ai → unmarked，清空 ai_predictions。"""
+    st = _require_data()
+    cleared_marks = 0
+    for idx in list(st.progress.marks.keys()):
+        if st.progress.status_of(idx) in ("pass_ai", "reject_ai"):
+            st.progress.mark(idx, "unmarked")
+            cleared_marks += 1
+    cleared_preds = len(state.ai_predictions)
+    state.ai_predictions.clear()
+    _save_ai_predictions()
+    await st.progress.save()
+    return {
+        "success": True,
+        "cleared_marks": cleared_marks,
+        "cleared_predictions": cleared_preds,
+    }
+
+
+@app.post("/api/ai/cancel")
+async def ai_cancel():
+    """取消进行中的批量预测。"""
+    if state.ai_cancel is not None:
+        state.ai_cancel.set()
+        return {"success": True, "message": "已请求取消"}
+    return {"success": False, "message": "没有进行中的任务"}
+
+
+@app.post("/api/ai/promote")
+async def ai_promote():
+    """将所有 AI 标记提升为人工标记：pass_ai → pass, reject_ai → reject。"""
+    st = _require_data()
+    promoted = 0
+    for idx in list(st.progress.marks.keys()):
+        status = st.progress.status_of(idx)
+        if status == "pass_ai":
+            st.progress.mark(idx, "pass")
+            promoted += 1
+        elif status == "reject_ai":
+            st.progress.mark(idx, "reject")
+            promoted += 1
+    await st.progress.save()
+    return {"success": True, "promoted_count": promoted}
 
 
 # ---- 前端 HTML（从文件读取，保持开发可维护性） ----

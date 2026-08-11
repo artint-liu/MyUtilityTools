@@ -5,10 +5,10 @@ import json
 import threading
 from pathlib import Path
 
-from config import SAVE_EVERY_N_MARKS
+from config import AI_STATUSES, SAVE_EVERY_N_MARKS
 from utils import LOGGER, atomic_write_json
 
-VALID_STATUSES = {"pass", "reject", "skip", "unmarked"}
+VALID_STATUSES = {"pass", "reject", "skip", "pass_ai", "reject_ai", "unmarked"}
 
 
 class ProgressManager:
@@ -21,8 +21,10 @@ class ProgressManager:
         )
         self.total_samples = total_samples
         self.current_index: int = 0
-        # marks: { index: "pass" | "reject" | "skip" }
+        # marks: { index: "pass" | "reject" | "skip" | "pass_ai" | "reject_ai" }
         self.marks: dict[int, str] = {}
+        # ai_confidence: { index: float } —— 仅 pass_ai/reject_ai 有置信度
+        self.ai_confidence: dict[int, float] = {}
         self.dirty: bool = False
         self._unsaved_marks: int = 0
         self._lock = threading.Lock()
@@ -42,23 +44,47 @@ class ProgressManager:
         return sum(1 for v in self.marks.values() if v == "skip")
 
     @property
+    def pass_ai_count(self) -> int:
+        return sum(1 for v in self.marks.values() if v == "pass_ai")
+
+    @property
+    def reject_ai_count(self) -> int:
+        return sum(1 for v in self.marks.values() if v == "reject_ai")
+
+    @property
     def marked_count(self) -> int:
-        return self.pass_count + self.reject_count + self.skip_count
+        # 人工 + AI 标记均算已标记（不含 unmarked）
+        return len(self.marks)
 
     def status_of(self, index: int) -> str:
         """返回指定索引的标记状态。"""
         return self.marks.get(index, "unmarked")
 
+    def confidence_of(self, index: int) -> float | None:
+        """返回 AI 标记的置信度（非 AI 标记或未标记返回 None）。"""
+        return self.ai_confidence.get(index)
+
     # ---- 操作 ----
-    def mark(self, index: int, status: str) -> None:
-        """标记一条样本，设置 dirty 并检查定量存盘阈值。"""
+    def mark(self, index: int, status: str, confidence: float | None = None) -> None:
+        """标记一条样本，设置 dirty 并检查定量存盘阈值。
+
+        status 取值：pass / reject / skip / pass_ai / reject_ai / unmarked
+        confidence 仅在 pass_ai / reject_ai 时有意义，会被记录到 ai_confidence。
+        标记为非 AI 状态（含 unmarked）时清除该索引的 ai_confidence。
+        """
         if status not in VALID_STATUSES:
             raise ValueError(f"非法标记状态: {status}")
         with self._lock:
             if status == "unmarked":
                 self.marks.pop(index, None)
+                self.ai_confidence.pop(index, None)
             else:
                 self.marks[index] = status
+                if status in AI_STATUSES and confidence is not None:
+                    self.ai_confidence[index] = float(confidence)
+                else:
+                    # 切换为人工标记时清除 AI 置信度
+                    self.ai_confidence.pop(index, None)
             self.current_index = index
             self.dirty = True
             self._unsaved_marks += 1
@@ -97,6 +123,9 @@ class ProgressManager:
                 )
                 return
             self.marks = {int(k): v for k, v in data.get("marks", {}).items()}
+            self.ai_confidence = {
+                int(k): float(v) for k, v in data.get("ai_confidence", {}).items()
+            }
             self.current_index = data.get("current_index", 0)
             self.dirty = False
             LOGGER.info(
@@ -123,6 +152,7 @@ class ProgressManager:
                 "total_samples": self.total_samples,
                 "current_index": self.current_index,
                 "marks": {str(k): v for k, v in self.marks.items()},
+                "ai_confidence": {str(k): v for k, v in self.ai_confidence.items()},
             }
             self.dirty = False
         atomic_write_json(self.progress_path, payload)
@@ -135,5 +165,7 @@ class ProgressManager:
             "pass_count": self.pass_count,
             "reject_count": self.reject_count,
             "skip_count": self.skip_count,
+            "pass_ai_count": self.pass_ai_count,
+            "reject_ai_count": self.reject_ai_count,
             "marked_count": self.marked_count,
         }

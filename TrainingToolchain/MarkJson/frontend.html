@@ -152,6 +152,59 @@ body {
 .status-badge.pass { background: rgba(76,175,80,0.18); color: var(--pass); }
 .status-badge.reject { background: rgba(244,67,54,0.18); color: var(--reject); }
 .status-badge.unmarked { background: rgba(128,128,128,0.1); color: var(--text-dim); }
+.status-badge.pass_ai { background: rgba(76,175,80,0.1); color: var(--pass); border-style: dashed; }
+.status-badge.reject_ai { background: rgba(244,67,54,0.1); color: var(--reject); border-style: dashed; }
+.status-badge.skip { background: rgba(158,158,158,0.15); color: var(--skip); }
+
+/* AI 统计卡片 */
+.stat-pass-ai .value { color: var(--pass); opacity: .85; }
+.stat-reject-ai .value { color: var(--reject); opacity: .85; }
+
+/* AI 建议徽章（低置信度，未写入 marks） */
+.ai-suggestion {
+  margin: 8px 0; padding: 8px 12px; border-radius: 8px;
+  border: 1px dashed #FFC107; background: rgba(255,193,7,0.08);
+  font-size: 12px; color: var(--text-2);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.ai-suggestion .ai-label { font-weight: 600; }
+.ai-suggestion .ai-label.pass { color: var(--pass); }
+.ai-suggestion .ai-label.reject { color: var(--reject); }
+.ai-suggestion .ai-conf { color: #FFC107; font-weight: 600; }
+.ai-suggestion .ai-reason { color: var(--text-dim); flex: 1; min-width: 120px; }
+.ai-suggestion .ai-accept-btn, .ai-suggestion .ai-reject-sug-btn {
+  cursor: pointer; padding: 3px 10px; border-radius: 6px; font-size: 11px;
+  border: 1px solid var(--border); background: var(--bg-3); color: var(--text-1);
+  transition: all .15s;
+}
+.ai-suggestion .ai-accept-btn:hover { background: var(--pass); color: #fff; border-color: var(--pass); }
+.ai-suggestion .ai-reject-sug-btn:hover { background: var(--reject); color: #fff; border-color: var(--reject); }
+
+/* AI 控制面板 */
+.ai-panel {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 18px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ai-panel .ai-title { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+.ai-panel select, .ai-panel input[type="text"] {
+  background: var(--bg-3); color: var(--text-0); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 8px; font-family: inherit; font-size: 12px; outline: none;
+}
+.ai-panel input[type="range"] { width: 80px; vertical-align: middle; }
+.ai-panel label { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+.ai-panel .btn-ai {
+  padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--primary); background: rgba(0,122,204,0.15); color: var(--primary-3);
+  transition: all .15s;
+}
+.ai-panel .btn-ai:hover { background: var(--primary); color: #fff; }
+.ai-panel .btn-ai:disabled { opacity: .4; cursor: not-allowed; }
+.ai-panel .btn-ai.danger { border-color: var(--reject); color: var(--reject); background: rgba(244,67,54,0.1); }
+.ai-panel .btn-ai.danger:hover { background: var(--reject); color: #fff; }
+.ai-progress { font-size: 11px; color: var(--text-dim); min-width: 100px; }
+.ai-progress-bar { height: 4px; background: var(--bg-3); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.ai-progress-fill { height: 100%; background: var(--primary-3); transition: width .3s; }
 
 /* ===== 字段渲染（键值卡片） ===== */
 .fields { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; user-select: text; -webkit-user-select: text; }
@@ -352,7 +405,7 @@ body {
 }
 .modal-icon { font-size: 36px; margin-bottom: 10px; }
 .modal-title { font-size: 17px; font-weight: 600; color: var(--text-0); margin-bottom: 8px; }
-.modal-msg { font-size: 13px; color: var(--text-2); line-height: 1.7; margin-bottom: 22px; }
+.modal-msg { font-size: 13px; color: var(--text-2); line-height: 1.7; margin-bottom: 22px; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow-y: auto; text-align: left; user-select: text; cursor: text; }
 .modal-btn {
   padding: 10px 36px; border: none; border-radius: 10px; cursor: pointer;
   font-family: inherit; font-size: 14px; font-weight: 600; color: #fff;
@@ -401,6 +454,8 @@ body {
     <div class="stats">
       <div class="stat-card stat-pass"><div class="label">通过</div><div class="value" id="statPass">0</div></div>
       <div class="stat-card stat-reject"><div class="label">拒绝</div><div class="value" id="statReject">0</div></div>
+      <div class="stat-card stat-pass-ai"><div class="label">通过(AI)</div><div class="value" id="statPassAi">0</div></div>
+      <div class="stat-card stat-reject-ai"><div class="label">拒绝(AI)</div><div class="value" id="statRejectAi">0</div></div>
       <div class="stat-card stat-rate"><div class="label">通过率</div><div class="value" id="statRate">--</div></div>
     </div>
     <div class="file-select">
@@ -418,10 +473,33 @@ body {
     <span class="filter-status" id="filterStatus"></span>
   </div>
 
+  <div class="ai-panel" id="aiPanel">
+    <span class="ai-title">AI 预测</span>
+    <label>后端
+      <select id="aiBackend">
+        <option value="lmstudio">LM Studio</option>
+        <option value="codebuddy">Code Buddy</option>
+      </select>
+    </label>
+    <label>Base URL <input type="text" id="aiApiBase" value="http://localhost:1234/v1" size="22" title="OpenAI 兼容 API 地址"></label>
+    <label>模型 <input type="text" id="aiModel" value="default" size="10"></label>
+    <label>阈值 <input type="range" id="aiThreshold" min="0.5" max="1" step="0.05" value="0.85"><span id="aiThresholdVal">85%</span></label>
+    <label title="启用视觉模型发送图片（需加载 VL 模型）"><input type="checkbox" id="aiVision" /> 视觉</label>
+    <button class="btn-ai" id="aiTestBtn">测试连接</button>
+    <button class="btn-ai" id="aiPredictOneBtn">预测当前</button>
+    <button class="btn-ai" id="aiPredictAllBtn">预测全部未标记</button>
+    <button class="btn-ai" id="aiCancelBtn" style="display:none">取消</button>
+    <span class="ai-progress" id="aiProgress"></span>
+    <button class="btn-ai" id="aiAcceptAllBtn" title="批量采纳达到阈值的低置信度建议">采纳建议</button>
+    <button class="btn-ai" id="aiPromoteBtn" title="将所有 AI 标记提升为人工标记">提升为人工</button>
+    <button class="btn-ai danger" id="aiClearBtn" title="清除所有 AI 标记和建议">清除AI</button>
+  </div>
+
   <div class="main">
     <div class="sample-card" id="sampleCard">
       <div class="index-badge" id="indexBadge">#0</div>
       <div class="status-badge unmarked" id="statusBadge">未标记</div>
+      <div class="ai-suggestion" id="aiSuggestion" style="display:none"></div>
       <div class="fields" id="fields"></div>
     </div>
   </div>
@@ -430,7 +508,7 @@ body {
     <div class="help-btn" id="helpBtn">?</div>
     <div class="help-pop" id="helpPop">
       <div><b>键盘快捷键</b></div>
-      <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝</div>
+      <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝 &nbsp; <kbd>A</kbd> 采纳AI建议</div>
       <div><kbd>→</kbd> / 下一条 跳过 &nbsp; <kbd>←</kbd> 上一条</div>
       <div><kbd>Ctrl/⌘+S</kbd> 存盘</div>
       <div style="margin-top:6px"><b>过滤</b>：输入框输入关键字后回车或点「过滤」</div>
@@ -680,13 +758,43 @@ function renderSample(sample) {
     container.innerHTML = '<div class="parse-error">样本内容为空或格式异常。</div>';
   }
   updateProgressUI();
+  renderAISuggestion(sample);
+}
+
+// 渲染 AI 预测建议（低置信度，未写入 marks）
+function renderAISuggestion(sample) {
+  const el = $("aiSuggestion");
+  if (!el) return;
+  const pred = sample.ai_prediction;
+  if (!pred) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const label = pred.label || "reject";
+  const conf = ((pred.confidence || 0) * 100).toFixed(0);
+  const reason = escapeHtml(pred.reason || "");
+  el.style.display = "";
+  el.innerHTML =
+    '<span class="ai-label ' + label + '">🤖 建议: ' + (label === "pass" ? "通过" : "拒绝") + "</span>" +
+    '<span class="ai-conf">' + conf + "%</span>" +
+    '<span class="ai-reason" title="' + reason + '">' + reason + "</span>" +
+    '<span class="ai-accept-btn" data-label="' + label + '">采纳</span>' +
+    '<span class="ai-reject-sug-btn">忽略</span>';
 }
 
 function updateStatusBadge(status) {
   const el = $("statusBadge");
-  el.className = "status-badge " + (status === "reject" ? "reject" : status === "pass" ? "pass" : "unmarked");
-  const map = { pass: "已通过", reject: "已拒绝", unmarked: "未标记" };
-  el.textContent = map[status] || "未标记";
+  const clsMap = {
+    pass: "pass", reject: "reject", skip: "skip",
+    pass_ai: "pass_ai", reject_ai: "reject_ai", unmarked: "unmarked",
+  };
+  const textMap = {
+    pass: "已通过", reject: "已拒绝", skip: "已跳过",
+    pass_ai: "通过(AI)", reject_ai: "拒绝(AI)", unmarked: "未标记",
+  };
+  el.className = "status-badge " + (clsMap[status] || "unmarked");
+  el.textContent = textMap[status] || "未标记";
 }
 
 function updateProgressUI() {
@@ -697,10 +805,14 @@ function updateProgressUI() {
 }
 
 function updateStats(s) {
-  $("statPass").textContent = s.pass_count;
-  $("statReject").textContent = s.reject_count;
-  const passed = s.pass_count + s.reject_count;
-  $("statRate").textContent = passed > 0 ? ((s.pass_count / passed) * 100).toFixed(0) + "%" : "--";
+  $("statPass").textContent = s.pass_count || 0;
+  $("statReject").textContent = s.reject_count || 0;
+  $("statPassAi").textContent = s.pass_ai_count || 0;
+  $("statRejectAi").textContent = s.reject_ai_count || 0;
+  // 通过率：人工通过 + AI 通过 占所有已判定（pass+reject+pass_ai+reject_ai）
+  const allPass = (s.pass_count || 0) + (s.pass_ai_count || 0);
+  const allDecided = allPass + (s.reject_count || 0) + (s.reject_ai_count || 0);
+  $("statRate").textContent = allDecided > 0 ? ((allPass / allDecided) * 100).toFixed(0) + "%" : "--";
 }
 
 // ---------- API ----------
@@ -1293,6 +1405,244 @@ window.addEventListener("drop", (e) => {
   }
 });
 
+// ---------- AI 预测 ----------
+async function aiAPI(path, method, body) {
+  const opts = { method: method || "GET", headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(API + "/api/ai/" + path, opts);
+  if (!r.ok) {
+    const txt = await r.text().catch(() => r.status);
+    throw new Error(typeof txt === "string" ? txt : JSON.stringify(txt));
+  }
+  return r.json();
+}
+
+// 加载 AI 配置到面板
+async function loadAIConfig() {
+  try {
+    const cfg = await aiAPI("config");
+    $("aiApiBase").value = cfg.api_base || "";
+    $("aiModel").value = cfg.model || "default";
+    $("aiVision").checked = !!cfg.vision_enabled;
+    const thr = cfg.confidence_threshold || 0.85;
+    $("aiThreshold").value = thr;
+    $("aiThresholdVal").textContent = (thr * 100).toFixed(0) + "%";
+  } catch (e) {}
+}
+
+// 保存 AI 配置到后端
+async function saveAIConfig() {
+  try {
+    await aiAPI("config", "POST", {
+      api_base: $("aiApiBase").value.trim(),
+      model: $("aiModel").value.trim() || "default",
+      vision_enabled: $("aiVision").checked,
+      confidence_threshold: parseFloat($("aiThreshold").value),
+    });
+  } catch (e) { toast("保存AI配置失败: " + e.message, "err"); }
+}
+
+// 更新 AI 进度显示
+function updateAIProgress(p) {
+  const el = $("aiProgress");
+  if (!p || !p.running) {
+    if (p && p.total > 0 && p.done >= p.total) {
+      el.innerHTML = "完成: " + p.done + "/" + p.total + " (自动采纳 " + (p.auto_accepted || 0) + ", 失败 " + (p.errors || 0) + ")";
+    } else {
+      el.innerHTML = "";
+    }
+    $("aiPredictAllBtn").style.display = "";
+    $("aiCancelBtn").style.display = "none";
+    return;
+  }
+  const pct = p.total > 0 ? (p.done / p.total) * 100 : 0;
+  el.innerHTML = p.done + "/" + p.total + " (" + pct.toFixed(0) + "%)" +
+    '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:' + pct + '%"></div></div>';
+  $("aiPredictAllBtn").style.display = "none";
+  $("aiCancelBtn").style.display = "";
+}
+
+// 轮询批量预测进度
+let _aiPollTimer = null;
+async function pollAIPredictStatus() {
+  try {
+    const p = await aiAPI("predict_status");
+    updateAIProgress(p);
+    if (p.running) {
+      // 预测进行中：刷新统计 + 当前样本
+      const st = await getStatus();
+      updateStats(st);
+      _aiPollTimer = setTimeout(pollAIPredictStatus, 1500);
+    } else {
+      _aiPollTimer = null;
+      // 预测完成：刷新当前样本（可能已被自动标记）
+      const st = await getStatus();
+      updateStats(st);
+      const sample = await getSample(currentIndex);
+      renderSample(sample);
+      toast("AI 预测完成", "ok");
+    }
+  } catch (e) {
+    _aiPollTimer = setTimeout(pollAIPredictStatus, 3000);
+  }
+}
+
+// 预测单条
+async function predictOne() {
+  if (isAnimating || isBusy) return;
+  try {
+    toast("AI 预测中…", "ok");
+    const res = await aiAPI("predict", "POST", { index: currentIndex });
+    if (res.error) {
+      const reason = res.reason || "未知错误";
+      toast("AI 预测失败", "err");
+      // 用模态框显示完整错误详情（含 LLM 原始返回），便于诊断
+      let detail = "原因：" + reason;
+      if (res.log_file) {
+        detail += "\n\n失败详情已写入日志文件：\n" + res.log_file;
+      }
+      if (res.raw) {
+        detail += "\n\n━━ LLM 原始返回（可选中复制） ━━\n" + res.raw;
+      } else {
+        detail += "\n\n（LLM 未返回任何内容）";
+      }
+      showModal("AI 预测失败", detail, "⚠️");
+      // 控制台同步打印，方便复制
+      console.log("[AI预测失败] reason:", reason, "| raw:", res.raw, "| log:", res.log_file);
+      return;
+    }
+    if (res.auto_accepted) {
+      toast("AI 自动采纳: " + res.result.label + " (" + (res.result.confidence * 100).toFixed(0) + "%)", "ok");
+    } else {
+      toast("AI 建议: " + res.result.label + " (" + (res.result.confidence * 100).toFixed(0) + "%) — 置信度低于阈值", "ok");
+    }
+    const st = await getStatus();
+    updateStats(st);
+    const sample = await getSample(currentIndex);
+    renderSample(sample);
+  } catch (e) { toast("预测失败: " + e.message, "err"); }
+}
+
+// 预测全部
+async function predictAll() {
+  if (isBusy) return;
+  try {
+    await saveAIConfig();
+    const res = await aiAPI("predict_all", "POST");
+    if (res.total === 0) { toast("没有未标记的样本", "ok"); return; }
+    toast("开始批量预测 " + res.total + " 条…", "ok");
+    pollAIPredictStatus();
+  } catch (e) { toast("启动预测失败: " + e.message, "err"); }
+}
+
+// 取消预测
+async function cancelPredict() {
+  try {
+    await aiAPI("cancel", "POST");
+    toast("已请求取消", "ok");
+  } catch (e) {}
+}
+
+// 采纳当前建议
+async function acceptSuggestion(label) {
+  try {
+    await aiAPI("accept", "POST", { index: currentIndex, label: label });
+    toast("已采纳建议", "ok");
+    const st = await getStatus();
+    updateStats(st);
+    const sample = await getSample(currentIndex);
+    renderSample(sample);
+  } catch (e) { toast("采纳失败: " + e.message, "err"); }
+}
+
+// 忽略当前建议（仅前端隐藏，不从服务端删除，避免误操作）
+function ignoreSuggestion() {
+  const el = $("aiSuggestion");
+  el.style.display = "none";
+}
+
+// 批量采纳
+async function acceptAll() {
+  try {
+    const res = await aiAPI("accept_all", "POST", {});
+    toast("已采纳 " + res.accepted_count + " 条建议", "ok");
+    const st = await getStatus();
+    updateStats(st);
+    const sample = await getSample(currentIndex);
+    renderSample(sample);
+  } catch (e) { toast("批量采纳失败: " + e.message, "err"); }
+}
+
+// 提升为人工
+async function promoteAll() {
+  try {
+    const res = await aiAPI("promote", "POST");
+    toast("已提升 " + res.promoted_count + " 条为人工标记", "ok");
+    const st = await getStatus();
+    updateStats(st);
+    const sample = await getSample(currentIndex);
+    renderSample(sample);
+  } catch (e) { toast("提升失败: " + e.message, "err"); }
+}
+
+// 清除所有 AI 标记
+async function clearAll() {
+  if (!confirmModal("确定清除所有 AI 标记和建议？此操作不可撤销。")) return;
+  try {
+    const res = await aiAPI("clear", "POST");
+    toast("已清除 " + res.cleared_marks + " 个AI标记, " + res.cleared_predictions + " 条建议", "ok");
+    const st = await getStatus();
+    updateStats(st);
+    const sample = await getSample(currentIndex);
+    renderSample(sample);
+  } catch (e) { toast("清除失败: " + e.message, "err"); }
+}
+
+// 简单确认（同步返回，用于 clearAll）
+function confirmModal(msg) {
+  return window.confirm(msg);
+}
+
+// 测试连接
+async function testConnection() {
+  try {
+    await saveAIConfig();
+    toast("测试连接中…", "ok");
+    const res = await aiAPI("test", "POST");
+    toast(res.success ? "✓ " + res.message : "✗ " + res.message, res.success ? "ok" : "err");
+  } catch (e) { toast("测试失败: " + e.message, "err"); }
+}
+
+// AI 面板事件绑定
+$("aiTestBtn").onclick = testConnection;
+$("aiPredictOneBtn").onclick = predictOne;
+$("aiPredictAllBtn").onclick = predictAll;
+$("aiCancelBtn").onclick = cancelPredict;
+$("aiAcceptAllBtn").onclick = acceptAll;
+$("aiPromoteBtn").onclick = promoteAll;
+$("aiClearBtn").onclick = clearAll;
+$("aiThreshold").oninput = (e) => {
+  $("aiThresholdVal").textContent = (parseFloat(e.target.value) * 100).toFixed(0) + "%";
+};
+$("aiThreshold").onchange = saveAIConfig;
+$("aiVision").onchange = saveAIConfig;
+$("aiModel").onchange = saveAIConfig;
+$("aiApiBase").onchange = saveAIConfig;
+
+// AI 建议按钮（事件委托，处理动态渲染）
+$("aiSuggestion").addEventListener("click", (e) => {
+  const acceptBtn = e.target.closest(".ai-accept-btn");
+  const rejectBtn = e.target.closest(".ai-reject-sug-btn");
+  if (acceptBtn) {
+    acceptSuggestion(acceptBtn.getAttribute("data-label"));
+  } else if (rejectBtn) {
+    ignoreSuggestion();
+  }
+});
+
+// 启动时加载 AI 配置
+loadAIConfig();
+
 // 键盘
 document.addEventListener("keydown", (e) => {
   // 模态对话框打开时：Enter/Esc/空格 均触发确定，拦截其它快捷键
@@ -1312,6 +1662,14 @@ document.addEventListener("keydown", (e) => {
   if (isSearching || isAnimating || isBusy) return;
   if (key === " " || key === "Spacebar") { e.preventDefault(); doMark("pass"); }
   else if (key === "n" || key === "N") doMark("reject");
+  else if (key === "a" || key === "A") {
+    // 采纳当前 AI 建议（如果有）
+    const sug = $("aiSuggestion");
+    if (sug && sug.style.display !== "none") {
+      const acceptBtn = sug.querySelector(".ai-accept-btn");
+      if (acceptBtn) acceptSuggestion(acceptBtn.getAttribute("data-label"));
+    }
+  }
   else if (key === "ArrowLeft") { e.preventDefault(); if (filterActive) { filterPrev(); } else { goTo(currentIndex - 1); } }
   else if (key === "ArrowRight") { e.preventDefault(); skipNext(); }
 });
