@@ -94,6 +94,95 @@ def record_file(path: str) -> None:
     save_history()
 
 
+# ---- AI 凭证持久化（非本机地址才保存 host → api_key） ----
+_CREDENTIALS_PATH = Path(__file__).parent / ".ai_credentials.json"
+
+# 视为本机的 host
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", ""}
+
+
+def _extract_host(api_base: str) -> str | None:
+    """从 API Base URL 中提取 host（小写）。解析失败返回 None。"""
+    if not api_base:
+        return None
+    try:
+        from urllib.parse import urlparse
+        # 容错：缺 scheme 时补一个，否则 urlparse 会把 host 当 path
+        if "://" not in api_base:
+            parsed = urlparse("//" + api_base)
+        else:
+            parsed = urlparse(api_base)
+        return (parsed.hostname or "").lower()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _is_local_host(host: str | None) -> bool:
+    """判断 host 是否为本机地址。"""
+    if not host:
+        return True
+    return host.lower() in _LOCAL_HOSTS
+
+
+def _load_cred_store() -> dict:
+    """加载持久化凭证存储。
+
+    返回 {"last_api_base": str, "credentials": {host: api_key}}。
+    """
+    if not _CREDENTIALS_PATH.exists():
+        return {"last_api_base": "", "credentials": {}}
+    try:
+        data = json.loads(_CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        creds = data.get("credentials", {})
+        if not isinstance(creds, dict):
+            creds = {}
+        last_base = data.get("last_api_base", "")
+        if not isinstance(last_base, str):
+            last_base = ""
+        return {"last_api_base": last_base, "credentials": creds}
+    except Exception:  # noqa: BLE001
+        return {"last_api_base": "", "credentials": {}}
+
+
+def _save_cred_store(last_api_base: str, creds: dict[str, str]) -> None:
+    """持久化凭证存储到磁盘。"""
+    try:
+        atomic_write_json(
+            _CREDENTIALS_PATH,
+            {"last_api_base": last_api_base, "credentials": creds},
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("保存 AI 凭证失败: %s", exc)
+
+
+def _store_credential(api_base: str, api_key: str) -> None:
+    """保存非本机地址的 Base URL 与 API Key。
+
+    非本机地址：持久化 last_api_base 与 host → api_key；
+    本机地址：清空 last_api_base（下次启动回到默认 localhost）。
+    """
+    host = _extract_host(api_base)
+    store = _load_cred_store()
+    creds = store["credentials"]
+    if not host or _is_local_host(host):
+        # 本机地址：清空持久化的 last_api_base，回到默认
+        _save_cred_store("", creds)
+        return
+    if api_key:
+        creds[host] = api_key
+    else:
+        creds.pop(host, None)
+    _save_cred_store(api_base, creds)
+
+
+def _lookup_credential(api_base: str) -> str | None:
+    """根据 api_base 的 host 查找已保存的 api_key（非本机才有）。"""
+    host = _extract_host(api_base)
+    if not host or _is_local_host(host):
+        return None
+    return _load_cred_store()["credentials"].get(host)
+
+
 # ---- 请求模型 ----
 class MarkRequest(BaseModel):
     index: int
@@ -249,6 +338,18 @@ async def background_saver() -> None:
 async def lifespan(app: FastAPI):
     # 加载文件历史
     load_history()
+    # 启动时恢复上次保存的非本机 Base URL 与 API Key
+    store = _load_cred_store()
+    saved_base = store["last_api_base"]
+    if saved_base and not _is_local_host(_extract_host(saved_base)):
+        config.AI_API_BASE = saved_base
+        LOGGER.info("已恢复上次使用的 API Base: %s", saved_base)
+        # 若未显式配置 key，则用该 host 已保存的凭证
+        if not config.AI_API_KEY or config.AI_API_KEY == "lm-studio":
+            saved_key = store["credentials"].get(_extract_host(saved_base))
+            if saved_key:
+                config.AI_API_KEY = saved_key
+                LOGGER.info("已从凭证库加载 %s 的 API Key", _extract_host(saved_base))
     # 启动时若有默认文件则加载
     if config.DEFAULT_DATA_FILE:
         try:
@@ -259,12 +360,30 @@ async def lifespan(app: FastAPI):
             state.load_error = str(exc)
     saver = asyncio.create_task(background_saver())
     yield
+    # ---- 关闭流程（带超时保护，避免卡死） ----
     state._shutdown = True
+    # 取消批量 AI 任务（如有）
+    if state.ai_cancel is not None:
+        state.ai_cancel.set()
+    if state.ai_task is not None and not state.ai_task.done():
+        state.ai_task.cancel()
+        try:
+            await asyncio.wait_for(state.ai_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+    # 取消后台存盘任务并等待退出
     saver.cancel()
-    # 关闭时存盘
+    try:
+        await asyncio.wait_for(saver, timeout=2.0)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    # 关闭时存盘（失败不阻塞退出）
     if state.progress is not None:
-        await state.progress.save()
-        LOGGER.info("应用关闭，已存盘")
+        try:
+            await state.progress.save()
+            LOGGER.info("应用关闭，已存盘")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("关闭时存盘失败: %s", exc)
 
 
 app = FastAPI(title="JSON 训练数据标记工具", lifespan=lifespan)
@@ -633,9 +752,14 @@ class AIConfigRequest(BaseModel):
 
 @app.get("/api/ai/config")
 async def ai_get_config():
+    # 判断当前 Base URL 是否非本机（前端据此决定是否提示已保存凭证）
+    host = _extract_host(config.AI_API_BASE)
+    is_remote = bool(host) and not _is_local_host(host)
     return {
         "backend": config.AI_BACKEND,
         "api_base": config.AI_API_BASE,
+        "api_key": config.AI_API_KEY,
+        "is_remote": is_remote,
         "model": config.AI_MODEL,
         "vision_enabled": config.AI_VISION_ENABLED,
         "confidence_threshold": config.AI_CONFIDENCE_THRESHOLD,
@@ -646,7 +770,11 @@ async def ai_get_config():
 
 @app.post("/api/ai/config")
 async def ai_set_config(req: AIConfigRequest):
-    """运行时更新 AI 配置（仅内存生效，重启按 config.py/环境变量为准）。"""
+    """运行时更新 AI 配置。
+
+    非本机 Base URL 与 API Key 会持久化到 .ai_credentials.json，下次启动自动恢复；
+    本机地址不持久化（回到默认 localhost）。
+    """
     if req.api_base is not None:
         config.AI_API_BASE = req.api_base
     if req.api_key is not None:
@@ -657,6 +785,12 @@ async def ai_set_config(req: AIConfigRequest):
         config.AI_VISION_ENABLED = req.vision_enabled
     if req.confidence_threshold is not None:
         config.AI_CONFIDENCE_THRESHOLD = max(0.0, min(1.0, req.confidence_threshold))
+    # 持久化 Base URL 与凭证：非本机地址才保存
+    if req.api_base is not None:
+        _store_credential(config.AI_API_BASE, config.AI_API_KEY)
+    elif req.api_key is not None:
+        # Base URL 未变但 key 变了：更新该 host 的凭证
+        _store_credential(config.AI_API_BASE, req.api_key)
     # 配置变更后重建预测器
     state.ai_predictor = None
     return {"success": True, **(await ai_get_config())}
@@ -824,7 +958,20 @@ async def ai_predict_stream(req: AIPredictRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-    """批量预测所有未标记样本（后台任务）。"""
+
+
+class AIPredictAllRequest(BaseModel):
+    count: Optional[int] = None  # None = 全部未标记，数字 = 前 N 条未标记
+
+
+@app.post("/api/ai/predict_all")
+async def ai_predict_all(req: Optional[AIPredictAllRequest] = None):
+    """批量预测未标记样本（后台任务）。
+
+    count: None → 全部未标记；数字 → 前 N 条未标记样本。
+    """
+    if req is None:
+        req = AIPredictAllRequest()
     st = _require_data()
     if state.ai_task_progress.get("running"):
         raise HTTPException(status_code=409, detail="已有批量预测任务在运行")
@@ -840,9 +987,11 @@ async def ai_predict_stream(req: AIPredictRequest):
         )
     predictor.set_examples(examples)
     # 收集所有未标记索引
-    indices = [
+    all_unmarked = [
         i for i in range(st.reader.total) if st.progress.status_of(i) == "unmarked"
     ]
+    # count=None 表示全部，否则取前 N 条
+    indices = all_unmarked if req.count is None else all_unmarked[: req.count]
     if not indices:
         return {"success": True, "message": "没有未标记的样本", "total": 0}
 
@@ -862,31 +1011,26 @@ async def ai_predict_stream(req: AIPredictRequest):
             errors = 0
             auto_accepted = 0
 
-            def _on_progress(idx: int, auto: bool) -> None:
-                nonlocal done, auto_accepted
+            def _on_progress(idx: int, result: dict, auto: bool) -> None:
+                nonlocal done, errors, auto_accepted
                 done += 1
-                if auto:
-                    auto_accepted += 1
-                state.ai_task_progress["done"] = done
-                state.ai_task_progress["auto_accepted"] = auto_accepted
-
-            results = await predictor.predict_batch(
-                indices, st.reader, on_progress=_on_progress, cancel_event=cancel_event
-            )
-            # 处理结果：错误跳过不写 marks，高置信度写入 marks，低置信度存建议
-            for idx, result in results.items():
-                if cancel_event.is_set():
-                    break
+                # 立即处理结果：写 marks 或存建议，让前端轮询能实时看到变化
                 if result.get("error"):
                     errors += 1
                     _log_ai_failure(idx, result.get("reason", ""), result.get("raw", ""))
-                    continue  # 调用失败不作为预测结果
-                if result["confidence"] >= config.AI_CONFIDENCE_THRESHOLD:
+                elif auto:
                     ai_status = f"{result['label']}_ai"
                     st.progress.mark(idx, ai_status, confidence=result["confidence"])
+                    auto_accepted += 1
                 else:
                     state.ai_predictions[idx] = result
-            state.ai_task_progress["errors"] = errors
+                state.ai_task_progress["done"] = done
+                state.ai_task_progress["auto_accepted"] = auto_accepted
+                state.ai_task_progress["errors"] = errors
+
+            await predictor.predict_batch(
+                indices, st.reader, on_progress=_on_progress, cancel_event=cancel_event
+            )
             _save_ai_predictions()
             await st.progress.save()
         except Exception as exc:  # noqa: BLE001
@@ -897,6 +1041,147 @@ async def ai_predict_stream(req: AIPredictRequest):
 
     state.ai_task = asyncio.create_task(_run())
     return {"success": True, "total": len(indices)}
+
+
+@app.post("/api/ai/predict_batch_stream")
+async def ai_predict_batch_stream(req: Optional[AIPredictAllRequest] = None):
+    """流式批量预测，以 SSE 推送每条样本的推理过程给前端实时显示。
+
+    顺序执行（排队），适合本地 LLM。事件流：
+    - event: item_start  data: {index, done, total}        开始预测某条
+    - event: thinking     data: {text}                      思维链片段
+    - event: content      data: {text}                      回答内容片段
+    - event: item_done    data: {index, result, auto_accepted, done, total}  某条成功
+    - event: item_error   data: {reason, index, done, total}  某条失败（不中断）
+    - event: done         data: {total, auto_accepted, errors, cancelled}    全部完成
+    """
+    if req is None:
+        req = AIPredictAllRequest()
+    st = _require_data()
+    if state.ai_task_progress.get("running"):
+        raise HTTPException(status_code=409, detail="已有批量预测任务在运行")
+    predictor = _get_predictor()
+    examples = await run_in_threadpool(
+        predictor.collect_examples, st.progress, st.reader
+    )
+    if not examples["pass"] or not examples["reject"]:
+        raise HTTPException(
+            status_code=400,
+            detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
+        )
+    predictor.set_examples(examples)
+    all_unmarked = [
+        i for i in range(st.reader.total) if st.progress.status_of(i) == "unmarked"
+    ]
+    indices = all_unmarked if req.count is None else all_unmarked[: req.count]
+    total = len(indices)
+
+    cancel_event = asyncio.Event()
+    state.ai_cancel = cancel_event
+    state.ai_task_progress = {
+        "running": True, "done": 0, "total": total,
+        "errors": 0, "auto_accepted": 0,
+    }
+
+    def _sse(event: str, payload: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    async def _stream():
+        try:
+            if total == 0:
+                yield _sse("done", {"total": 0, "auto_accepted": 0, "errors": 0, "cancelled": False})
+                return
+            done = 0
+            errors = 0
+            auto_accepted = 0
+            for idx in indices:
+                if cancel_event.is_set():
+                    break
+                data = st.reader.read(idx)
+                yield _sse("item_start", {"index": idx, "done": done, "total": total})
+                final_result = None
+                had_error = False
+                try:
+                    async for evt in predictor.predict_one_stream(data):
+                        if cancel_event.is_set():
+                            had_error = True
+                            break
+                        evt_type = evt["type"]
+                        if evt_type == "thinking":
+                            yield _sse("thinking", {"text": evt["text"]})
+                        elif evt_type == "content":
+                            yield _sse("content", {"text": evt["text"]})
+                        elif evt_type == "result":
+                            final_result = evt["result"]
+                        elif evt_type == "error":
+                            had_error = True
+                            errors += 1
+                            done += 1
+                            _log_ai_failure(idx, evt.get("reason", ""), "")
+                            state.ai_task_progress["errors"] = errors
+                            state.ai_task_progress["done"] = done
+                            yield _sse("item_error", {
+                                "reason": evt.get("reason", "未知错误"),
+                                "index": idx, "done": done, "total": total,
+                            })
+                            break
+                except Exception as exc:  # noqa: BLE001
+                    had_error = True
+                    errors += 1
+                    done += 1
+                    _log_ai_failure(idx, str(exc), "")
+                    state.ai_task_progress["errors"] = errors
+                    state.ai_task_progress["done"] = done
+                    yield _sse("item_error", {
+                        "reason": str(exc), "index": idx, "done": done, "total": total,
+                    })
+                if had_error:
+                    continue
+                if final_result and not final_result.get("error"):
+                    current_status = st.progress.status_of(idx)
+                    auto = False
+                    if final_result["confidence"] >= config.AI_CONFIDENCE_THRESHOLD and current_status not in ("pass", "reject", "skip"):
+                        ai_status = f"{final_result['label']}_ai"
+                        st.progress.mark(idx, ai_status, confidence=final_result["confidence"])
+                        auto = True
+                        auto_accepted += 1
+                    else:
+                        state.ai_predictions[idx] = final_result
+                    done += 1
+                    state.ai_task_progress["done"] = done
+                    state.ai_task_progress["auto_accepted"] = auto_accepted
+                    yield _sse("item_done", {
+                        "index": idx, "result": final_result,
+                        "auto_accepted": auto, "done": done, "total": total,
+                    })
+                elif final_result:
+                    errors += 1
+                    done += 1
+                    _log_ai_failure(idx, final_result.get("reason", ""), final_result.get("raw", ""))
+                    state.ai_task_progress["errors"] = errors
+                    state.ai_task_progress["done"] = done
+                    yield _sse("item_error", {
+                        "reason": final_result.get("reason", "未知错误"),
+                        "index": idx, "done": done, "total": total,
+                    })
+            _save_ai_predictions()
+            await st.progress.save()
+            yield _sse("done", {
+                "total": total, "auto_accepted": auto_accepted,
+                "errors": errors, "cancelled": cancel_event.is_set(),
+            })
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("流式批量预测异常: %s", exc)
+            yield _sse("error", {"reason": str(exc)})
+        finally:
+            state.ai_task_progress["running"] = False
+            state.ai_cancel = None
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/ai/predict_status")

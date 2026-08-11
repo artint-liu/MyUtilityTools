@@ -187,10 +187,17 @@ body {
   flex-shrink: 0;
 }
 .ai-panel .ai-title { font-size: 12px; color: var(--text-dim); font-weight: 600; }
-.ai-panel select, .ai-panel input[type="text"] {
+.ai-panel select, .ai-panel input[type="text"], .ai-panel input[type="password"] {
   background: var(--bg-3); color: var(--text-0); border: 1px solid var(--border);
   border-radius: 6px; padding: 4px 8px; font-family: inherit; font-size: 12px; outline: none;
 }
+.apikey-wrap { display: inline-flex; align-items: center; position: relative; }
+.apikey-wrap input { padding-right: 22px; }
+.apikey-toggle {
+  position: absolute; right: 4px; cursor: pointer; font-size: 12px;
+  color: var(--text-dim); user-select: none; line-height: 1;
+}
+.apikey-toggle:hover { color: var(--primary-3); }
 .ai-panel input[type="range"] { width: 80px; vertical-align: middle; }
 .ai-panel label { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
 .ai-panel .btn-ai {
@@ -204,6 +211,16 @@ body {
 .ai-panel .btn-ai.danger:hover { background: var(--reject); color: #fff; }
 .ai-panel .btn-ai .keyhint { font-size: 10px; opacity: .7; background: rgba(0,0,0,0.18); padding: 0 5px; border-radius: 4px; margin-left: 4px; }
 .ai-panel .btn-ai:hover .keyhint { background: rgba(255,255,255,0.25); opacity: 1; }
+/* 预测N条：按钮+下拉菜单组合 */
+.ai-predict-group { display: inline-flex; align-items: stretch; gap: 0; }
+.ai-predict-group .btn-ai { border-radius: 6px 0 0 6px; }
+.ai-predict-group select {
+  border-radius: 0 6px 6px 0; border: 1px solid var(--primary); border-left: none;
+  background: rgba(0,122,204,0.1); color: var(--primary-3);
+  padding: 4px 6px; font-family: inherit; font-size: 12px; outline: none; cursor: pointer;
+}
+.ai-predict-group select:hover { background: rgba(0,122,204,0.2); }
+.ai-predict-group.ui-disabled select { cursor: not-allowed; }
 .ai-progress { font-size: 11px; color: var(--text-dim); min-width: 100px; }
 .ai-progress-bar { height: 4px; background: var(--bg-3); border-radius: 3px; overflow: hidden; margin-top: 3px; }
 .ai-progress-fill { height: 100%; background: var(--primary-3); transition: width .3s; }
@@ -543,16 +560,33 @@ body {
     <label>后端
       <select id="aiBackend">
         <option value="lmstudio">LM Studio</option>
-        <option value="codebuddy">Code Buddy</option>
+        <option value="openai">OpenAI 兼容</option>
       </select>
     </label>
     <label>Base URL <input type="text" id="aiApiBase" value="http://localhost:1234/v1" size="22" title="OpenAI 兼容 API 地址"></label>
+    <label>API Key
+      <span class="apikey-wrap">
+        <input type="password" id="aiApiKey" size="16" placeholder="非本机地址需填写" autocomplete="off" title="非本机地址会保存 IP 与 Key">
+        <span class="apikey-toggle" id="aiApiKeyToggle" title="显示/隐藏">👁</span>
+      </span>
+    </label>
     <label>模型 <input type="text" id="aiModel" value="default" size="10"></label>
     <label>阈值 <input type="range" id="aiThreshold" min="0.5" max="1" step="0.05" value="0.85"><span id="aiThresholdVal">85%</span></label>
     <label title="启用视觉模型发送图片（需加载 VL 模型）"><input type="checkbox" id="aiVision" /> 视觉</label>
     <button class="btn-ai" id="aiTestBtn">测试连接</button>
-    <button class="btn-ai" id="aiPredictOneBtn">预测当前<span class="keyhint">P</span></button>
-    <button class="btn-ai" id="aiPredictAllBtn">预测全部未标记</button>
+    <div class="ai-predict-group">
+      <button class="btn-ai" id="aiPredictBtn">预测1条<span class="keyhint">P</span></button>
+      <select id="aiPredictCount" title="选择预测数量">
+        <option value="1">1条</option>
+        <option value="2">2条</option>
+        <option value="5">5条</option>
+        <option value="10">10条</option>
+        <option value="20">20条</option>
+        <option value="50">50条</option>
+        <option value="100">100条</option>
+        <option value="all">全部未标记</option>
+      </select>
+    </div>
     <button class="btn-ai" id="aiCancelBtn" style="display:none">取消</button>
     <button class="btn-ai" id="aiShowThinkingBtn" style="display:none" title="重新打开上次 AI 推理过程面板">👁 查看推理</button>
     <span class="ai-progress" id="aiProgress"></span>
@@ -576,7 +610,7 @@ body {
       <div><b>键盘快捷键</b></div>
       <div><kbd>空格</kbd> 通过 &nbsp; <kbd>N</kbd> 拒绝 &nbsp; <kbd>A</kbd> 采纳AI建议</div>
       <div><kbd>→</kbd> / 下一条 跳过 &nbsp; <kbd>←</kbd> 上一条</div>
-      <div><kbd>P</kbd> 预测当前 &nbsp; <kbd>M</kbd> 提升为人工</div>
+      <div><kbd>P</kbd> 预测N条 &nbsp; <kbd>M</kbd> 提升为人工</div>
       <div><kbd>Ctrl/⌘+S</kbd> 存盘</div>
       <div style="margin-top:6px"><b>过滤</b>：输入框输入关键字后回车或点「过滤」</div>
       <div>空格分词 = 与查找，仅匹配值不匹配键</div>
@@ -1510,6 +1544,7 @@ async function loadAIConfig() {
   try {
     const cfg = await aiAPI("config");
     $("aiApiBase").value = cfg.api_base || "";
+    $("aiApiKey").value = cfg.api_key || "";
     $("aiModel").value = cfg.model || "default";
     $("aiVision").checked = !!cfg.vision_enabled;
     const thr = cfg.confidence_threshold || 0.85;
@@ -1521,12 +1556,17 @@ async function loadAIConfig() {
 // 保存 AI 配置到后端
 async function saveAIConfig() {
   try {
-    await aiAPI("config", "POST", {
+    const res = await aiAPI("config", "POST", {
       api_base: $("aiApiBase").value.trim(),
+      api_key: $("aiApiKey").value,
       model: $("aiModel").value.trim() || "default",
       vision_enabled: $("aiVision").checked,
       confidence_threshold: parseFloat($("aiThreshold").value),
     });
+    // 后端可能自动回填了已保存的 key（切换到曾保存过的非本机地址时）
+    if (res.api_key && !$("aiApiKey").value) {
+      $("aiApiKey").value = res.api_key;
+    }
   } catch (e) { toast("保存AI配置失败: " + e.message, "err"); }
 }
 
@@ -1541,14 +1581,18 @@ function updateAIProgress(p) {
       el.innerHTML = "";
     }
     el.classList.remove("running");
-    $("aiPredictAllBtn").style.display = "";
+    $("aiPredictBtn").classList.remove("ui-disabled");
+    $("aiPredictCount").classList.remove("ui-disabled");
+    $("aiPredictBtn").parentNode.classList.remove("ui-disabled");
     $("aiCancelBtn").style.display = "none";
     return;
   }
   const pct = p.total > 0 ? (p.done / p.total) * 100 : 0;
   el.innerHTML = p.done + "/" + p.total + " (" + pct.toFixed(0) + "%)" +
     '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:' + pct + '%"></div></div>';
-  $("aiPredictAllBtn").style.display = "none";
+  $("aiPredictBtn").classList.add("ui-disabled");
+  $("aiPredictCount").classList.add("ui-disabled");
+  $("aiPredictBtn").parentNode.classList.add("ui-disabled");
   $("aiCancelBtn").style.display = "";
 }
 
@@ -1559,9 +1603,11 @@ async function pollAIPredictStatus() {
     const p = await aiAPI("predict_status");
     updateAIProgress(p);
     if (p.running) {
-      // 预测进行中：刷新统计 + 当前样本
+      // 预测进行中：刷新统计 + 当前样本卡片（当前样本可能已被自动标记）
       const st = await getStatus();
       updateStats(st);
+      const sample = await getSample(currentIndex);
+      renderSample(sample);
       _aiPollTimer = setTimeout(pollAIPredictStatus, 1500);
     } else {
       _aiPollTimer = null;
@@ -1585,8 +1631,9 @@ let _predictOneStart = 0;
 function showPredictOneProgress() {
   _predictOneStart = Date.now();
   // 禁用预测相关按钮，避免重复点击
-  $("aiPredictOneBtn").classList.add("ui-disabled");
-  $("aiPredictAllBtn").classList.add("ui-disabled");
+  $("aiPredictBtn").classList.add("ui-disabled");
+  $("aiPredictCount").classList.add("ui-disabled");
+  $("aiPredictBtn").parentNode.classList.add("ui-disabled");
   _updatePredictOneText();
   _predictOneTimer = setInterval(_updatePredictOneText, 1000);
 }
@@ -1605,8 +1652,9 @@ function _updatePredictOneText() {
 // 隐藏单条预测运行指示，恢复按钮
 function hidePredictOneProgress() {
   if (_predictOneTimer) { clearInterval(_predictOneTimer); _predictOneTimer = null; }
-  $("aiPredictOneBtn").classList.remove("ui-disabled");
-  $("aiPredictAllBtn").classList.remove("ui-disabled");
+  $("aiPredictBtn").classList.remove("ui-disabled");
+  $("aiPredictCount").classList.remove("ui-disabled");
+  $("aiPredictBtn").parentNode.classList.remove("ui-disabled");
   // 若批量预测未在运行，则清空进度区域；否则保留批量进度显示
   if (!_aiBatchRunning) {
     $("aiProgress").classList.remove("running");
@@ -1802,20 +1850,169 @@ async function predictOne() {
   }
 }
 
-// 预测全部
-async function predictAll() {
+// 根据下拉菜单选择更新预测按钮文本
+function updatePredictButtonText() {
+  const sel = $("aiPredictCount");
+  const val = sel.value;
+  const btn = $("aiPredictBtn");
+  const label = val === "all" ? "全部未标记" : val + "条";
+  btn.innerHTML = "预测" + label + '<span class="keyhint">P</span>';
+}
+
+// 预测 N 条：根据下拉菜单的选择决定预测方式
+async function predictN() {
+  if (isAnimating || isBusy) return;
+  const val = $("aiPredictCount").value;
+  if (val === "1") {
+    // 单条：流式预测当前样本（展示推理过程）
+    predictOne();
+  } else {
+    // 批量：预测 N 条未标记样本
+    const count = val === "all" ? null : parseInt(val, 10);
+    predictBatch(count);
+  }
+}
+
+// 批量预测（流式：实时展示每条的推理过程）
+let _batchAbortCtrl = null;
+async function predictBatch(count) {
   if (isBusy) return;
+  await saveAIConfig();
+  showThinkingPanel();
+  // 禁用预测按钮组，显示取消按钮
+  $("aiPredictBtn").classList.add("ui-disabled");
+  $("aiPredictCount").classList.add("ui-disabled");
+  $("aiPredictBtn").parentNode.classList.add("ui-disabled");
+  $("aiCancelBtn").style.display = "";
+  _batchAbortCtrl = new AbortController();
+  $("aiThinkingClose").onclick = () => { _batchAbortCtrl.abort(); };
+  setThinkingStatus("正在连接…", "running");
   try {
-    await saveAIConfig();
-    const res = await aiAPI("predict_all", "POST");
-    if (res.total === 0) { toast("没有未标记的样本", "ok"); return; }
-    toast("开始批量预测 " + res.total + " 条…", "ok");
-    pollAIPredictStatus();
-  } catch (e) { toast("启动预测失败: " + e.message, "err"); }
+    const resp = await fetch(API + "/api/ai/predict_batch_stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: count }),
+      signal: _batchAbortCtrl.signal,
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "HTTP " + resp.status);
+      throw new Error(txt);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let curTotal = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sepIdx;
+      while ((sepIdx = buffer.indexOf("\n\n")) >= 0) {
+        const eventBlock = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+        let eventType = "message";
+        let dataStr = "";
+        for (const line of eventBlock.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataStr += line.slice(6);
+        }
+        if (!dataStr) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch (e) { continue; }
+
+        if (eventType === "item_start") {
+          curTotal = data.total;
+          // 每条开始：清空上一条的内容，显示进度
+          $("aiThinkingContent").textContent = "";
+          $("aiAnswerContent").textContent = "";
+          $("aiThinkingSection").style.display = "none";
+          _hasThinkingHistory = true;
+          setThinkingStatus("预测中… 第 " + (data.done + 1) + "/" + data.total + " 条 (index=" + data.index + ")", "running");
+          // 更新进度条
+          const pct = data.total > 0 ? (data.done / data.total) * 100 : 0;
+          $("aiProgress").classList.add("running");
+          $("aiProgress").innerHTML = data.done + "/" + data.total +
+            '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:' + pct + '%"></div></div>';
+        } else if (eventType === "thinking") {
+          appendThinkingText(data.text);
+        } else if (eventType === "content") {
+          appendAnswerText(data.text);
+        } else if (eventType === "item_done") {
+          // 某条成功：立即刷新统计 + 当前样本
+          const st = await getStatus();
+          updateStats(st);
+          if (data.index === currentIndex) {
+            const sample = await getSample(currentIndex);
+            renderSample(sample);
+          }
+          // 更新进度条
+          const pct = data.total > 0 ? (data.done / data.total) * 100 : 0;
+          $("aiProgress").classList.add("running");
+          $("aiProgress").innerHTML = data.done + "/" + data.total +
+            '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:' + pct + '%"></div></div>';
+        } else if (eventType === "item_error") {
+          // 某条失败：不中断，刷新统计
+          const st = await getStatus();
+          updateStats(st);
+          const pct = data.total > 0 ? (data.done / data.total) * 100 : 0;
+          $("aiProgress").classList.add("running");
+          $("aiProgress").innerHTML = data.done + "/" + data.total +
+            '<div class="ai-progress-bar"><div class="ai-progress-fill" style="width:' + pct + '%"></div></div>';
+        } else if (eventType === "done") {
+          // 全部完成
+          const st = await getStatus();
+          updateStats(st);
+          const sample = await getSample(currentIndex);
+          renderSample(sample);
+          if (data.total === 0) {
+            setThinkingStatus("没有未标记的样本", "done");
+            toast("没有未标记的样本", "ok");
+          } else {
+            setThinkingStatus(
+              (data.cancelled ? "已取消 · " : "完成 ✓ ") + "共 " + data.total +
+              " 条 (采纳 " + data.auto_accepted + ", 失败 " + data.errors + ")",
+              "done"
+            );
+            toast("AI 批量预测完成", "ok");
+          }
+          $("aiProgress").classList.remove("running");
+          $("aiProgress").innerHTML = "";
+          $("aiThinkingClose").onclick = closeThinkingPanel;
+          // 5 秒后自动关闭面板
+          setTimeout(() => {
+            if ($("aiThinkingStatus").classList.contains("done")) closeThinkingPanel();
+          }, 5000);
+        } else if (eventType === "error") {
+          setThinkingStatus("错误: " + (data.reason || "").slice(0, 60), "err");
+          toast("批量预测失败: " + (data.reason || "未知错误"), "err");
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      // 用户取消：通知后端
+      try { await aiAPI("cancel", "POST"); } catch (_) {}
+      toast("已取消预测", "ok");
+      setThinkingStatus("已取消", "err");
+      setTimeout(closeThinkingPanel, 2000);
+    } else {
+      setThinkingStatus("错误", "err");
+      toast("批量预测失败: " + e.message, "err");
+      setTimeout(closeThinkingPanel, 3000);
+    }
+  } finally {
+    _batchAbortCtrl = null;
+    $("aiThinkingClose").onclick = closeThinkingPanel;
+    $("aiPredictBtn").classList.remove("ui-disabled");
+    $("aiPredictCount").classList.remove("ui-disabled");
+    $("aiPredictBtn").parentNode.classList.remove("ui-disabled");
+    $("aiCancelBtn").style.display = "none";
+  }
 }
 
 // 取消预测
 async function cancelPredict() {
+  if (_batchAbortCtrl) { _batchAbortCtrl.abort(); return; }
   try {
     await aiAPI("cancel", "POST");
     toast("已请求取消", "ok");
@@ -1894,8 +2091,8 @@ async function testConnection() {
 
 // AI 面板事件绑定
 $("aiTestBtn").onclick = testConnection;
-$("aiPredictOneBtn").onclick = predictOne;
-$("aiPredictAllBtn").onclick = predictAll;
+$("aiPredictBtn").onclick = predictN;
+$("aiPredictCount").onchange = updatePredictButtonText;
 $("aiCancelBtn").onclick = cancelPredict;
 $("aiAcceptAllBtn").onclick = acceptAll;
 $("aiPromoteBtn").onclick = promoteAll;
@@ -1910,6 +2107,18 @@ $("aiThreshold").onchange = saveAIConfig;
 $("aiVision").onchange = saveAIConfig;
 $("aiModel").onchange = saveAIConfig;
 $("aiApiBase").onchange = saveAIConfig;
+$("aiApiKey").onchange = saveAIConfig;
+// API Key 显示/隐藏切换
+$("aiApiKeyToggle").onclick = () => {
+  const inp = $("aiApiKey");
+  if (inp.type === "password") {
+    inp.type = "text";
+    $("aiApiKeyToggle").textContent = "🙈";
+  } else {
+    inp.type = "password";
+    $("aiApiKeyToggle").textContent = "👁";
+  }
+};
 
 // AI 建议按钮（事件委托，处理动态渲染）
 $("aiSuggestion").addEventListener("click", (e) => {
@@ -1952,7 +2161,7 @@ document.addEventListener("keydown", (e) => {
       if (acceptBtn) acceptSuggestion(acceptBtn.getAttribute("data-label"));
     }
   }
-  else if (key === "p" || key === "P") { e.preventDefault(); predictOne(); }
+  else if (key === "p" || key === "P") { e.preventDefault(); predictN(); }
   else if (key === "m" || key === "M") { e.preventDefault(); promoteAll(); }
   else if (key === "ArrowLeft") { e.preventDefault(); if (filterActive) { filterPrev(); } else { goTo(currentIndex - 1); } }
   else if (key === "ArrowRight") { e.preventDefault(); skipNext(); }

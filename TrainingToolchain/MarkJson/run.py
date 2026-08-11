@@ -92,7 +92,13 @@ def main() -> None:
     print(f"  存盘策略: 每 {SAVE_INTERVAL_SECONDS}s 定时 / 每 {SAVE_EVERY_N_MARKS} 条定量 / 关闭时\n")
 
     try:
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            timeout_graceful_shutdown=5,
+        )
     except KeyboardInterrupt:
         print("\n[已停止]")
 

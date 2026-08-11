@@ -31,7 +31,7 @@ KEY_BINDINGS = {
 }
 
 # ---- AI 预测配置 ----
-# 后端类型：lmstudio / codebuddy / openai（均走 OpenAI 兼容 /v1/chat/completions）
+# 后端类型：lmstudio / openai（均走 OpenAI 兼容 /v1/chat/completions）
 AI_BACKEND: str = os.environ.get("AI_BACKEND", "lmstudio")
 AI_API_BASE: str = os.environ.get("AI_API_BASE", "http://localhost:1234/v1")
 AI_API_KEY: str = os.environ.get("AI_API_KEY", "lm-studio")  # LM Studio 随便填

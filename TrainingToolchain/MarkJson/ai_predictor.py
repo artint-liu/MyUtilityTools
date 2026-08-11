@@ -4,7 +4,7 @@
 1. collect_examples 从已人工标注的样本中均衡采样 few-shot 示例
 2. build_messages 构造 system + few-shot + 待预测样本的 prompt
 3. predict_one 调用 LLM，解析返回 {label, confidence, reason}
-4. predict_batch 批量预测（并发受 AI_CONCURRENCY 控制）
+4. predict_batch 批量预测（顺序排队执行，适合本地 LLM）
 
 样本格式不固定（问答/对话/纯文本/含图片），精简时：
 - 文本字段截断到 AI_SAMPLE_TEXT_MAX_CHARS
@@ -666,31 +666,25 @@ class AIPredictor:
         on_progress=None,
         cancel_event: asyncio.Event | None = None,
     ) -> dict[int, dict]:
-        """批量预测，返回 {index: {label, confidence, reason}}。
+        """顺序批量预测（排队执行，适合本地 LLM），返回 {index: {label, confidence, reason}}。
 
-        并发受 AI_CONCURRENCY 控制。单条失败不中断整体。
+        每条预测完成后立即通过 on_progress 回调通知（传入 result），便于调用方
+        即时写 marks，让前端轮询能实时看到标注结果。单条失败不中断整体。
         """
-        sem = asyncio.Semaphore(max(1, config.AI_CONCURRENCY))
         results: dict[int, dict] = {}
-
-        async def _predict_one(idx: int) -> None:
+        for idx in indices:
             if cancel_event and cancel_event.is_set():
-                return
+                break
             try:
                 data = reader.read(idx)
             except Exception as exc:  # noqa: BLE001
                 results[idx] = {"error": True, "reason": f"读取失败: {exc}"}
                 if on_progress:
-                    on_progress(idx, False)
-                return
-            async with sem:
-                result = await self.predict_one(data)
+                    on_progress(idx, results[idx], False)
+                continue
+            result = await self.predict_one(data)
             results[idx] = result
             if on_progress:
-                # error 结果不算自动采纳
                 auto = not result.get("error") and result.get("confidence", 0.0) >= config.AI_CONFIDENCE_THRESHOLD
-                on_progress(idx, auto)
-
-        tasks = [asyncio.create_task(_predict_one(i)) for i in indices]
-        await asyncio.gather(*tasks, return_exceptions=True)
+                on_progress(idx, result, auto)
         return results
