@@ -185,6 +185,26 @@ body {
   color: var(--reject); padding: 14px; border: 1px dashed var(--reject);
   border-radius: 8px; background: rgba(244,67,54,0.08); line-height: 1.7;
 }
+/* ===== 图片 / 二进制展示 ===== */
+.img-wrap { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.sample-img {
+  max-width: 100%; max-height: 460px; border-radius: 8px;
+  border: 1px solid var(--border); display: block; cursor: zoom-in;
+  background: #000; transition: transform .2s ease;
+}
+.sample-img:hover { transform: scale(1.02); }
+.img-meta { font-size: 11px; color: var(--text-dim); }
+.img-meta-only { color: var(--text-dim); font-size: 13px; font-style: italic; }
+.bytes-info { color: var(--text-dim); font-size: 13px; word-break: break-all; }
+.bytes-info code { color: var(--num); font-family: inherit; }
+/* 图片点击放大遮罩 */
+.img-lightbox {
+  position: fixed; inset: 0; z-index: 500; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.88); cursor: zoom-out;
+}
+.img-lightbox.show { display: flex; }
+.img-lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 6px; }
 
 /* ===== 底部操作栏 ===== */
 .actionbar {
@@ -416,7 +436,8 @@ body {
       <div>空格分词 = 与查找，仅匹配值不匹配键</div>
       <div>过滤后 <kbd>←</kbd>/<kbd>→</kbd> 在匹配项间跳转</div>
       <div>勾选「快速查找」：仅找下一条，不扫描全文件</div>
-      <div style="margin-top:6px;color:var(--text-dim)">可将 .json/.jsonl 文件拖入窗口打开</div>
+      <div style="margin-top:6px;color:var(--text-dim)">可将 .json/.jsonl/.parquet 文件拖入窗口打开</div>
+      <div style="margin-top:4px;color:var(--text-dim)">parquet 中的图片字节（JPEG/PNG/GIF/WebP/BMP）或 base64 图片会自动预览，点击可放大</div>
     </div>
     <button class="btn btn-nav" id="prevBtn">← 上一条</button>
     <button class="btn btn-pass" id="passBtn">✓ 通过 <span class="keyhint">空格</span></button>
@@ -427,7 +448,7 @@ body {
   <div class="toast-stack" id="toastStack"></div>
 
   <div class="drop-overlay" id="dropOverlay">
-    <div class="drop-inner">释放以打开 JSON / JSONL 文件<small>支持 .json 与 .jsonl 格式</small></div>
+    <div class="drop-inner">释放以打开数据文件<small>支持 .json / .jsonl / .parquet 格式（parquet 内图片可自动预览）</small></div>
   </div>
 
   <div class="overlay" id="overlay">
@@ -441,7 +462,7 @@ body {
   </div>
 
   <!-- 隐藏的文件选择器 -->
-  <input type="file" id="fileInput" accept=".json,.jsonl" style="display:none" />
+  <input type="file" id="fileInput" accept=".json,.jsonl,.parquet" style="display:none" />
 
   <!-- 模态确认对话框（搜索无匹配等需用户明确确认的提示） -->
   <div class="modal-overlay" id="modalOverlay">
@@ -452,6 +473,9 @@ body {
       <button class="modal-btn" id="modalOkBtn">确定</button>
     </div>
   </div>
+
+  <!-- 图片放大遮罩 -->
+  <div class="img-lightbox" id="imgLightbox"><img id="imgLightboxImg" alt="image" /></div>
 
 <script>
 "use strict";
@@ -560,6 +584,11 @@ function isNumericArray(arr) {
 // 渲染单个值，返回 HTML 字符串
 function renderValue(val) {
   if (val === null) return '<span class="field-val null">null</span>';
+  // 后端标记的图片/二进制对象（process_media_in_value 生成）
+  if (val && typeof val === "object" && !Array.isArray(val)) {
+    if (val.__image__) return renderImage(val);
+    if (val.__bytes__) return renderBytes(val);
+  }
   const t = typeof val;
   if (t === "string") {
     // 多行文本保留换行；过滤激活时对值做关键字高亮
@@ -591,6 +620,31 @@ function renderValue(val) {
     return renderFields(val, true);
   }
   return '<span class="field-val">' + escapeHtmlHighlight(String(val)) + "</span>";
+}
+
+// 格式化字节数
+function formatBytes(n) {
+  if (n === null || n === undefined || isNaN(n)) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+
+// 渲染图片标记对象
+function renderImage(val) {
+  const meta = (val.mime || "image") + " · " + formatBytes(val.bytes) + (val.encoded_length ? " · b64:" + formatBytes(val.encoded_length) : "");
+  if (val.src) {
+    return '<div class="field-val img-wrap"><img class="sample-img" src="' + val.src + '" alt="image" loading="lazy" />' +
+           '<div class="img-meta">' + escapeHtml(meta) + "</div></div>";
+  }
+  return '<div class="field-val img-meta-only">[图片过大未预览] ' + escapeHtml(meta) + "</div>";
+}
+
+// 渲染二进制标记对象
+function renderBytes(val) {
+  return '<div class="field-val bytes-info">[二进制] ' + formatBytes(val.size) +
+         ' · <code>hex: ' + escapeHtml(val.hex || "") + "…</code></div>";
 }
 
 // 渲染字段集合（键值卡片列表）
@@ -710,6 +764,21 @@ async function refreshFileHistory() {
 async function loadInitial() {
   try {
     const st = await getStatus();
+    // 加载失败（如缺少 pyarrow 等依赖）：显示具体错误而非静默空闲
+    if (st.load_error) {
+      const ov = $("overlay");
+      ov.classList.remove("hidden");
+      ov.classList.add("idle");
+      $("overlayMsg").textContent = "数据文件加载失败：\n\n" + st.load_error +
+        "\n\n请根据提示修复后，将文件拖入窗口或点击下方按钮重新打开。";
+      $("overlayOpenBtn").style.display = "";
+      renderHistoryPanel();
+      return;
+    }
+    // total=0 且无 data_file：尚未加载任何文件，显示空闲界面
+    if (!st.data_file || st.total === 0) {
+      throw new Error("no data");
+    }
     window.__dataFile = st.data_file;
     updateStats(st);
     const idx = st.current_index || 0;
@@ -721,7 +790,7 @@ async function loadInitial() {
     const ov = $("overlay");
     ov.classList.remove("hidden");
     ov.classList.add("idle");
-    $("overlayMsg").textContent = "尚未加载数据：将 .json/.jsonl 文件拖入窗口，或点击下方「📂 打开文件」按钮。";
+    $("overlayMsg").textContent = "尚未加载数据：将 .json/.jsonl/.parquet 文件拖入窗口，或点击下方「📂 打开文件」按钮。";
     $("overlayOpenBtn").style.display = "";
     renderHistoryPanel();
   }
@@ -1163,6 +1232,20 @@ $("quickFindChk").onchange = () => { if (filterActive) clearFilter(true); };
 $("helpBtn").onclick = (e) => { e.stopPropagation(); $("helpPop").classList.toggle("show"); };
 document.addEventListener("click", () => $("helpPop").classList.remove("show"));
 
+// 图片点击放大（事件委托，处理动态渲染的图片）
+$("fields").addEventListener("click", (e) => {
+  const img = e.target.closest("img.sample-img");
+  if (!img) return;
+  $("imgLightboxImg").src = img.src;
+  $("imgLightbox").classList.add("show");
+});
+$("imgLightbox").onclick = () => $("imgLightbox").classList.remove("show");
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("imgLightbox").classList.contains("show")) {
+    $("imgLightbox").classList.remove("show");
+  }
+});
+
 // 历史文件下拉
 $("fileSelect").onchange = (e) => {
   const v = e.target.value;
@@ -1198,10 +1281,10 @@ window.addEventListener("drop", (e) => {
   if (files && files.length) {
     const f = files[0];
     const name = f.name.toLowerCase();
-    if (name.endsWith(".json") || name.endsWith(".jsonl")) {
+    if (name.endsWith(".json") || name.endsWith(".jsonl") || name.endsWith(".parquet")) {
       uploadAndLoad(f);
     } else {
-      toast("仅支持 .json / .jsonl 文件", "err");
+      toast("仅支持 .json / .jsonl / .parquet 文件", "err");
     }
   }
 });

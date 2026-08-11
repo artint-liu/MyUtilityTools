@@ -18,7 +18,7 @@ HOST: str = "127.0.0.1"
 PORT: int = 8765
 
 # 文件格式
-SUPPORTED_EXTENSIONS = (".json", ".jsonl")
+SUPPORTED_EXTENSIONS = (".json", ".jsonl", ".parquet")
 
 # 快捷键定义（用于前端展示与后端校验）
 KEY_BINDINGS = {

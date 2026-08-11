@@ -20,8 +20,8 @@ from config import (
 )
 from file_indexer import FileIndexer
 from progress_manager import ProgressManager
-from sample_reader import SampleReader
-from utils import LOGGER
+from sample_reader import ParquetSampleReader, SampleReader
+from utils import LOGGER, process_media_in_value
 
 
 # ---- 全局状态 ----
@@ -29,11 +29,14 @@ class AppState:
     def __init__(self):
         self.data_path: Optional[Path] = None
         self.indexer: Optional[FileIndexer] = None
-        self.reader: Optional[SampleReader] = None
+        # 读取器可能是 JSON/JSONL 索引读取器或 Parquet 行组读取器，二者接口一致
+        self.reader: Optional[SampleReader | ParquetSampleReader] = None
         self.progress: Optional[ProgressManager] = None
         self.last_heartbeat: float = 0.0
         self._shutdown = False
         self.file_history: list[str] = []
+        # 加载失败时的错误信息（供前端展示具体原因，而非静默回退到空闲界面）
+        self.load_error: Optional[str] = None
 
 
 state = AppState()
@@ -111,17 +114,30 @@ class ExportRequest(BaseModel):
 
 
 # ---- 初始化数据 ----
+def _make_reader(file_path: str | Path) -> "SampleReader | ParquetSampleReader":
+    """根据文件扩展名构造对应的读取器：.parquet 用 ParquetSampleReader，其余用 JSON/JSONL 索引读取器。"""
+    p = Path(file_path)
+    if p.suffix.lower() == ".parquet":
+        return ParquetSampleReader(p)
+    indexer = FileIndexer(p)
+    offsets = indexer.build()
+    return SampleReader(p, offsets)
+
+
 def load_data_file(file_path: str | Path) -> None:
-    """加载数据文件，构建索引并初始化进度管理。"""
+    """加载数据文件，构建索引/读取器并初始化进度管理。
+
+    注意：此函数含同步阻塞操作（文件扫描、pyarrow import 等），在 async 路由中
+    调用时必须通过 run_in_threadpool 在后台线程执行，避免阻塞事件循环。
+    """
     global state
     p = Path(file_path)
     if not p.exists():
         raise FileNotFoundError(f"数据文件不存在: {p}")
     state.data_path = p
-    state.indexer = FileIndexer(p)
-    offsets = state.indexer.build()
-    state.reader = SampleReader(p, offsets)
+    state.reader = _make_reader(p)
     state.progress = ProgressManager(p, state.reader.total)
+    state.load_error = None
     LOGGER.info("数据文件已加载: %s, 共 %d 条样本", p, state.reader.total)
 
 
@@ -154,10 +170,11 @@ async def lifespan(app: FastAPI):
     # 启动时若有默认文件则加载
     if config.DEFAULT_DATA_FILE:
         try:
-            load_data_file(config.DEFAULT_DATA_FILE)
+            await run_in_threadpool(load_data_file, config.DEFAULT_DATA_FILE)
             record_file(config.DEFAULT_DATA_FILE)
         except Exception as exc:  # noqa: BLE001
             LOGGER.error("默认数据文件加载失败: %s", exc)
+            state.load_error = str(exc)
     saver = asyncio.create_task(background_saver())
     yield
     state._shutdown = True
@@ -184,6 +201,8 @@ def _sample_payload(index: int) -> dict:
         data = st.reader.read(index)
     except IndexError:
         raise HTTPException(status_code=404, detail="样本索引越界")
+    # 把图片字节/base64 图片转成可前端渲染的标记对象（原数据不变，仅展示层处理）
+    data = process_media_in_value(data)
     status = st.progress.status_of(index)
     return {
         "index": index,
@@ -201,6 +220,9 @@ def _extract_value_strings(obj, out: list) -> None:
         out.append("true" if obj else "false")
     elif isinstance(obj, (int, float)):
         out.append(str(obj))
+    elif isinstance(obj, bytes):
+        # 二进制（含图片字节）不参与文本搜索
+        return
     elif isinstance(obj, str):
         out.append(obj)
     elif isinstance(obj, list):
@@ -219,12 +241,25 @@ async def index():
 
 @app.get("/api/status")
 async def api_status():
-    st = _require_data()
+    # 未加载数据时不抛异常，而是返回空状态 + load_error，让前端能展示具体失败原因
+    if state.reader is None or state.progress is None:
+        return {
+            "data_file": str(state.data_path) if state.data_path else None,
+            "total": 0,
+            "current_index": 0,
+            "load_error": state.load_error,
+            "total_samples": 0,
+            "pass_count": 0,
+            "reject_count": 0,
+            "skip_count": 0,
+            "marked_count": 0,
+        }
     return {
-        "data_file": str(st.data_path),
-        "total": st.reader.total,
-        "current_index": st.progress.current_index,
-        **st.progress.to_dict(),
+        "data_file": str(state.data_path),
+        "total": state.reader.total,
+        "current_index": state.progress.current_index,
+        "load_error": state.load_error,
+        **state.progress.to_dict(),
     }
 
 
@@ -335,7 +370,7 @@ async def api_heartbeat(request: Request):
 async def api_open(req: OpenRequest):
     async with _open_lock:
         try:
-            load_data_file(req.file_path)
+            await run_in_threadpool(load_data_file, req.file_path)
             record_file(req.file_path)
             import time
             state.last_heartbeat = time.time()
@@ -368,17 +403,21 @@ async def api_upload(file: UploadFile = File(...)):
         if not file.filename or not (
             file.filename.lower().endswith(".json")
             or file.filename.lower().endswith(".jsonl")
+            or file.filename.lower().endswith(".parquet")
         ):
-            raise HTTPException(status_code=400, detail="仅支持 .json / .jsonl 文件")
+            raise HTTPException(status_code=400, detail="仅支持 .json / .jsonl / .parquet 文件")
         # 避免文件名冲突：保留原名（同目录内覆盖）
         dest = _UPLOAD_DIR / file.filename
         try:
-            with dest.open("wb") as out:
-                shutil.copyfileobj(file.file, out)
+            out_fh = dest.open("wb")
+            try:
+                await run_in_threadpool(shutil.copyfileobj, file.file, out_fh)
+            finally:
+                out_fh.close()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"保存失败: {exc}")
         try:
-            load_data_file(dest)
+            await run_in_threadpool(load_data_file, dest)
             record_file(str(dest))
             import time
             state.last_heartbeat = time.time()
@@ -429,16 +468,14 @@ async def api_export(req: ExportRequest):
         progress = state.progress
         reader = state.reader
     else:
-        indexer = FileIndexer(file_path)
-        offsets = indexer.build()
-        reader = SampleReader(file_path, offsets)
+        reader = _make_reader(file_path)
         progress = ProgressManager(file_path, reader.total)
         progress.load()
 
     if reader is None or progress is None:
         raise HTTPException(status_code=400, detail="无法读取文件数据")
 
-    # 收集需要导出的条目（保持原顺序）
+    # 收集需要导出的条目（保持原顺序，保留原始数据用于回写）
     total = reader.total
     selected = []
     for i in range(total):
@@ -451,7 +488,14 @@ async def api_export(req: ExportRequest):
 
     out_path = _build_export_path(file_path, statuses)
     try:
-        if file_path.lower().endswith(".jsonl"):
+        lower = file_path.lower()
+        if lower.endswith(".parquet"):
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = pa.Table.from_pylist(selected)
+            pq.write_table(table, out_path)
+        elif lower.endswith(".jsonl"):
             with open(out_path, "w", encoding="utf-8") as f:
                 for entry in selected:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
