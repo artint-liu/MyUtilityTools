@@ -1412,6 +1412,9 @@ async function openAndLoad(path) {
     const target = res.current_index || 0;
     const sample = await getSample(target);
     renderSample(sample);
+    // 刷新统计信息（从进度文件加载的已有标记数）
+    const st = await getStatus();
+    updateStats(st);
     $("overlay").classList.add("hidden");
     toast("已打开: " + path.split(/[\\/]/).pop(), "ok");
   } catch (e) {
@@ -1437,6 +1440,9 @@ async function uploadAndLoad(file) {
     const target = res.current_index || 0;
     const sample = await getSample(target);
     renderSample(sample);
+    // 刷新统计信息（从进度文件加载的已有标记数）
+    const st = await getStatus();
+    updateStats(st);
     $("overlay").classList.add("hidden");
     toast("已打开: " + file.name, "ok");
   } catch (e) {
