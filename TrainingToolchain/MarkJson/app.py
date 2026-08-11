@@ -442,6 +442,21 @@ def _extract_value_strings(obj, out: list) -> None:
 
 
 # ---- 路由 ----
+def _collect_unmarked_from_current(progress: ProgressManager, total: int, count: int | None) -> list[int]:
+    """从当前索引开始向后（到末尾后从头继续）收集未标记索引。
+
+    确保「预测多条」与「预测1条」行为一致：都从当前位置开始。
+    count=None 表示全部，否则取前 N 条。
+    """
+    cur = progress.current_index
+    if total <= 0:
+        return []
+    # 构造从当前索引开始的顺序序列：cur, cur+1, ..., total-1, 0, 1, ..., cur-1
+    ordered = [(i + cur) % total for i in range(total)]
+    unmarked = [i for i in ordered if progress.status_of(i) == "unmarked"]
+    return unmarked if count is None else unmarked[:count]
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return HTMLResponse(FRONTEND_HTML)
@@ -477,6 +492,12 @@ async def api_status():
 
 @app.get("/api/sample/{index}")
 async def api_sample(index: int):
+    # 同步后端当前位置：前端浏览/跳转都走此端点，确保 current_index 与
+    # 前端显示一致（批量预测依赖 current_index 作为起始位置）
+    st = _require_data()
+    if index < 0 or index >= st.reader.total:
+        raise HTTPException(status_code=404, detail="样本索引越界")
+    st.progress.set_current(index)
     return _sample_payload(index)
 
 
@@ -742,6 +763,10 @@ class AIAcceptAllRequest(BaseModel):
     threshold: Optional[float] = None  # 默认用配置阈值
 
 
+class AIPromoteRequest(BaseModel):
+    index: int  # 仅提升指定条为人工标记
+
+
 class AIConfigRequest(BaseModel):
     api_base: Optional[str] = None
     api_key: Optional[str] = None
@@ -961,14 +986,15 @@ async def ai_predict_stream(req: AIPredictRequest):
 
 
 class AIPredictAllRequest(BaseModel):
-    count: Optional[int] = None  # None = 全部未标记，数字 = 前 N 条未标记
+    count: Optional[int] = None  # None = 全部未标记，数字 = 从当前索引起的 N 条未标记
 
 
 @app.post("/api/ai/predict_all")
 async def ai_predict_all(req: Optional[AIPredictAllRequest] = None):
     """批量预测未标记样本（后台任务）。
 
-    count: None → 全部未标记；数字 → 前 N 条未标记样本。
+    count: None → 从当前索引起全部未标记；数字 → 从当前索引起的 N 条未标记样本。
+    与「预测1条」逻辑一致：都从当前位置开始，逐条排队执行。
     """
     if req is None:
         req = AIPredictAllRequest()
@@ -986,12 +1012,8 @@ async def ai_predict_all(req: Optional[AIPredictAllRequest] = None):
             detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
         )
     predictor.set_examples(examples)
-    # 收集所有未标记索引
-    all_unmarked = [
-        i for i in range(st.reader.total) if st.progress.status_of(i) == "unmarked"
-    ]
-    # count=None 表示全部，否则取前 N 条
-    indices = all_unmarked if req.count is None else all_unmarked[: req.count]
+    # 从当前索引开始收集未标记索引（向后到末尾后从头继续）
+    indices = _collect_unmarked_from_current(st.progress, st.reader.total, req.count)
     if not indices:
         return {"success": True, "message": "没有未标记的样本", "total": 0}
 
@@ -1018,12 +1040,16 @@ async def ai_predict_all(req: Optional[AIPredictAllRequest] = None):
                 if result.get("error"):
                     errors += 1
                     _log_ai_failure(idx, result.get("reason", ""), result.get("raw", ""))
-                elif auto:
-                    ai_status = f"{result['label']}_ai"
-                    st.progress.mark(idx, ai_status, confidence=result["confidence"])
-                    auto_accepted += 1
                 else:
-                    state.ai_predictions[idx] = result
+                    # 与「预测1条」完全一致：高置信度且非人工标记 → 自动采纳；
+                    # 否则存为低置信度建议（不覆盖 pass/reject/skip）
+                    current_status = st.progress.status_of(idx)
+                    if auto and current_status not in ("pass", "reject", "skip"):
+                        ai_status = f"{result['label']}_ai"
+                        st.progress.mark(idx, ai_status, confidence=result["confidence"])
+                        auto_accepted += 1
+                    else:
+                        state.ai_predictions[idx] = result
                 state.ai_task_progress["done"] = done
                 state.ai_task_progress["auto_accepted"] = auto_accepted
                 state.ai_task_progress["errors"] = errors
@@ -1047,7 +1073,8 @@ async def ai_predict_all(req: Optional[AIPredictAllRequest] = None):
 async def ai_predict_batch_stream(req: Optional[AIPredictAllRequest] = None):
     """流式批量预测，以 SSE 推送每条样本的推理过程给前端实时显示。
 
-    顺序执行（排队），适合本地 LLM。事件流：
+    从当前索引开始，逐条排队执行（与「预测1条」逻辑一致，仅是多条队列）。
+    顺序执行，适合本地 LLM。事件流：
     - event: item_start  data: {index, done, total}        开始预测某条
     - event: thinking     data: {text}                      思维链片段
     - event: content      data: {text}                      回答内容片段
@@ -1070,10 +1097,8 @@ async def ai_predict_batch_stream(req: Optional[AIPredictAllRequest] = None):
             detail="人工标注样本不足，需要至少 1 条 pass 和 1 条 reject 示例",
         )
     predictor.set_examples(examples)
-    all_unmarked = [
-        i for i in range(st.reader.total) if st.progress.status_of(i) == "unmarked"
-    ]
-    indices = all_unmarked if req.count is None else all_unmarked[: req.count]
+    # 从当前索引开始收集未标记索引（向后到末尾后从头继续）
+    indices = _collect_unmarked_from_current(st.progress, st.reader.total, req.count)
     total = len(indices)
 
     cancel_event = asyncio.Event()
@@ -1259,20 +1284,20 @@ async def ai_cancel():
 
 
 @app.post("/api/ai/promote")
-async def ai_promote():
-    """将所有 AI 标记提升为人工标记：pass_ai → pass, reject_ai → reject。"""
+async def ai_promote(req: AIPromoteRequest):
+    """将指定条 AI 标记提升为人工标记：pass_ai → pass, reject_ai → reject。"""
     st = _require_data()
-    promoted = 0
-    for idx in list(st.progress.marks.keys()):
-        status = st.progress.status_of(idx)
-        if status == "pass_ai":
-            st.progress.mark(idx, "pass")
-            promoted += 1
-        elif status == "reject_ai":
-            st.progress.mark(idx, "reject")
-            promoted += 1
+    status = st.progress.status_of(req.index)
+    if status == "pass_ai":
+        st.progress.mark(req.index, "pass")
+        promoted = 1
+    elif status == "reject_ai":
+        st.progress.mark(req.index, "reject")
+        promoted = 1
+    else:
+        promoted = 0
     await st.progress.save()
-    return {"success": True, "promoted_count": promoted}
+    return {"success": True, "promoted_count": promoted, "index": req.index}
 
 
 # ---- 前端 HTML（从文件读取，保持开发可维护性） ----

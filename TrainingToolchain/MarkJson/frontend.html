@@ -2052,8 +2052,12 @@ async function acceptAll() {
 // 提升为人工
 async function promoteAll() {
   try {
-    const res = await aiAPI("promote", "POST");
-    toast("已提升 " + res.promoted_count + " 条为人工标记", "ok");
+    const res = await aiAPI("promote", "POST", { index: currentIndex });
+    if (res.promoted_count > 0) {
+      toast("已提升当前条为人工标记", "ok");
+    } else {
+      toast("当前条非 AI 标记，无需提升", "err");
+    }
     const st = await getStatus();
     updateStats(st);
     const sample = await getSample(currentIndex);
