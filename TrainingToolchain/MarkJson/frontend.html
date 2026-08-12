@@ -728,9 +728,13 @@ function toast(msg, type) {
 
 // ---------- 模态确认对话框 ----------
 // 显示模态提示，需用户点击「确定」关闭。返回 Promise（确定后 resolve）
-function showModal(title, msg, icon) {
+function showModal(title, msg, icon, isHTML) {
   $("modalTitle").textContent = title || "提示";
-  $("modalMsg").textContent = msg || "";
+  if (isHTML) {
+    $("modalMsg").innerHTML = msg || "";
+  } else {
+    $("modalMsg").textContent = msg || "";
+  }
   $("modalIcon").textContent = icon || "🔍";
   const ov = $("modalOverlay");
   ov.classList.add("show");
@@ -1728,6 +1732,21 @@ function reopenThinkingPanel() {
   $("aiShowThinkingBtn").style.display = "none";
 }
 
+// 打开 AI 失败日志文件（调用后端用系统默认应用打开）
+async function openAiLogFile() {
+  try {
+    const resp = await fetch(API + "/api/ai/open_log", { method: "POST" });
+    if (resp.ok) {
+      toast("已打开日志文件", "ok");
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      toast("打开失败: " + (data.detail || "未知错误"), "err");
+    }
+  } catch (e) {
+    toast("打开失败: " + e.message, "err");
+  }
+}
+
 // 预测单条（流式：实时显示 AI 推理过程）
 async function predictOne() {
   if (isAnimating || isBusy) return;
@@ -1804,13 +1823,18 @@ async function predictOne() {
           if (hasThinking || hasAnswer) _hasThinkingHistory = true;
           if (data.error) {
             setThinkingStatus("预测失败", "err");
-            // 用模态框显示完整错误详情
-            let detail = "原因：" + (data.reason || "未知错误");
-            if (data.log_file) detail += "\n\n失败详情已写入日志文件：\n" + data.log_file;
-            if (data.raw) detail += "\n\n━━ LLM 原始返回（可选中复制） ━━\n" + data.raw;
+            // 用模态框显示完整错误详情（HTML 模式，支持超链接）
+            let detail = "原因：" + escapeHtml(data.reason || "未知错误");
+            if (data.log_file) {
+              detail += "\n\n失败详情已写入日志文件（点击打开）：\n";
+              detail += '<a href="#" onclick="openAiLogFile();return false" '
+                + 'style="color:var(--primary-3);text-decoration:underline;cursor:pointer;word-break:break-all;">'
+                + escapeHtml(data.log_file) + '</a>';
+            }
+            if (data.raw) detail += "\n\n━━ LLM 原始返回（可选中复制） ━━\n" + escapeHtml(data.raw);
             else detail += "\n\n（LLM 未返回任何内容）";
             toast("AI 预测失败", "err");
-            showModal("AI 预测失败", detail, "⚠️");
+            showModal("AI 预测失败", detail, "⚠️", true);
             console.log("[AI预测失败] reason:", data.reason, "| raw:", data.raw, "| log:", data.log_file);
             // 不自动关闭，让用户查看推理内容；恢复关闭按钮默认行为
             $("aiThinkingClose").onclick = closeThinkingPanel;

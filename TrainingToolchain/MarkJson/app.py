@@ -971,7 +971,7 @@ async def ai_predict_stream(req: AIPredictRequest):
                 yield _sse("done", {
                     "error": True,
                     "reason": reason,
-                    "raw": full_raw,
+                    "raw": full_raw or full_reasoning,
                     "log_file": log_file,
                 })
         except Exception as exc:  # noqa: BLE001
@@ -1281,6 +1281,32 @@ async def ai_cancel():
         state.ai_cancel.set()
         return {"success": True, "message": "已请求取消"}
     return {"success": False, "message": "没有进行中的任务"}
+
+
+@app.post("/api/ai/open_log")
+async def ai_open_log():
+    """用系统默认应用打开 AI 失败日志文件。"""
+    import os
+    import subprocess
+    import sys
+
+    if state.data_path is None:
+        raise HTTPException(status_code=400, detail="尚未加载数据文件")
+    log_path = state.data_path.with_suffix(
+        state.data_path.suffix + ".ai_failures.log"
+    )
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="日志文件不存在（尚未产生失败记录）")
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(log_path))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(log_path)])
+        else:
+            subprocess.Popen(["xdg-open", str(log_path)])
+        return {"success": True}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"打开失败: {exc}")
 
 
 @app.post("/api/ai/promote")

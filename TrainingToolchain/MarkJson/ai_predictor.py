@@ -267,10 +267,11 @@ class AIPredictor:
 
     # ---- 调用 LLM ----
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        # API Key 为空时不发送 Authorization 头（LM Studio 等未设置 Key 的服务可正常请求）
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def _call_llm(self, messages: list[dict]) -> str:
         payload = {
@@ -321,7 +322,12 @@ class AIPredictor:
 
     @staticmethod
     def _extract_content(data: dict, payload: dict) -> str:
-        """从 OpenAI 兼容响应中提取文本内容，处理 reasoning 模型和 length 截断。"""
+        """从 OpenAI 兼容响应中提取文本内容，处理 reasoning 模型和 length 截断。
+
+        reasoning 模型（如 deepseek-r1）：
+        - reasoning_content 是思维链（thinking），content 是最终回答
+        - 若 finish_reason=length 且 content 为空，说明推理耗尽 token 未生成回答
+        """
         try:
             choice = data["choices"][0]
         except (KeyError, IndexError) as exc:
@@ -329,16 +335,25 @@ class AIPredictor:
 
         message = choice.get("message", {})
         content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason", "")
 
-        # reasoning 模型（如 deepseek-r1）：内容可能在 reasoning_content 字段
+        # content 为空时尝试 reasoning_content（部分模型把答案放在该字段）
         if not content:
             reasoning = message.get("reasoning_content") or ""
             if reasoning:
+                if finish_reason == "length":
+                    # 推理模型 token 耗尽：reasoning 有内容但未生成最终回答
+                    raise RuntimeError(
+                        f"LLM 仅有推理过程未输出最终回答"
+                        f"（finish_reason=length，reasoning_content 有 {len(reasoning)} 字符），"
+                        f"max_tokens={payload.get('max_tokens')} 不足，"
+                        f"请在 config.py 增大 AI_MAX_TOKENS"
+                    )
+                # finish_reason 不是 length：可能是模型把答案放在 reasoning_content 中
                 LOGGER.info("content 为空，使用 reasoning_content（%d字符）", len(reasoning))
                 content = reasoning
 
-        finish_reason = choice.get("finish_reason", "")
-        # content 仍为空：检查是否被 reasoning 耗尽 token（finish_reason=length）
+        # content 仍为空（reasoning 也空）
         if not content:
             if finish_reason == "length":
                 raise RuntimeError(
@@ -348,7 +363,7 @@ class AIPredictor:
                 )
             raise RuntimeError(
                 f"LLM 返回空内容（finish_reason={finish_reason}），"
-                f"message 字段: {json.dumps(message, ensure_ascii=False)[:300]}"
+                f"可能是临时错误，请重试"
             )
 
         # 有内容但被截断：记录警告（不报错，尽力解析已有内容）
@@ -372,6 +387,7 @@ class AIPredictor:
         """流式调用 LLM，yield (type, text) 元组。
 
         type: 'thinking' (reasoning_content 思维链) | 'content' (最终回答)
+              | 'finish' (结束，text 为 finish_reason)
         流式 read timeout 设为 None，避免推理慢被中断（靠 [DONE] 或连接关闭结束）。
         """
         payload = {
@@ -421,6 +437,10 @@ class AIPredictor:
                     content = delta.get("content") or ""
                     if content:
                         yield ("content", content)
+                    # 捕获 finish_reason（最后一块才有，中间块为 null）
+                    finish_reason = choices[0].get("finish_reason")
+                    if finish_reason:
+                        yield ("finish", finish_reason)
 
     @staticmethod
     def _find_json_objects(text: str) -> list[str]:
@@ -610,6 +630,7 @@ class AIPredictor:
 
         full_content = ""
         full_reasoning = ""
+        finish_reason = ""
         try:
             async for evt_type, text in self._call_llm_stream(messages):
                 if evt_type == "thinking":
@@ -618,6 +639,8 @@ class AIPredictor:
                 elif evt_type == "content":
                     full_content += text
                     yield {"type": "content", "text": text}
+                elif evt_type == "finish":
+                    finish_reason = text
         except httpx.ReadTimeout:
             yield {
                 "type": "error",
@@ -637,8 +660,62 @@ class AIPredictor:
             yield {"type": "error", "reason": f"调用失败: {exc}"}
             return
 
-        # 解析最终结果（优先用 content，为空则用 reasoning）
-        raw_to_parse = full_content or full_reasoning
+        # 解析最终结果
+        # 优先用 content（最终回答）；content 为空时区分两种情况：
+        # 1. reasoning 有内容 → 推理模型 token 耗尽，未生成最终回答
+        # 2. 两者都空 → LLM 返回空响应（可能是临时错误）
+        raw_to_parse = full_content
+        if not raw_to_parse and full_reasoning:
+            # 推理模型只输出了思维链，没有最终回答
+            # 尝试从 reasoning 中提取 JSON（某些模型把答案放在推理末尾）
+            result = self.parse_response(full_reasoning)
+            if result.get("error"):
+                # reasoning 中无有效 JSON → 确认是 token 耗尽
+                LOGGER.warning(
+                    "content 为空，reasoning_content 有 %d 字符但无有效 JSON，"
+                    "finish_reason=%s（推理未完成，max_tokens=%d 不足）",
+                    len(full_reasoning), finish_reason or "unknown",
+                    config.AI_MAX_TOKENS,
+                )
+                result = {
+                    "error": True,
+                    "reason": (
+                        f"LLM 仅有推理过程未输出最终回答"
+                        f"（finish_reason={finish_reason or 'unknown'}），"
+                        f"可能 max_tokens={config.AI_MAX_TOKENS} 不足导致推理耗尽 token，"
+                        f"请增大 AI_MAX_TOKENS 后重试"
+                    ),
+                    "raw": full_reasoning[:500],
+                }
+                yield {
+                    "type": "result",
+                    "result": result,
+                    "raw": full_reasoning,
+                    "reasoning": full_reasoning,
+                }
+                return
+        elif not raw_to_parse and not full_reasoning:
+            # 完全空响应
+            LOGGER.warning(
+                "LLM 返回空内容（content 和 reasoning 均为空），finish_reason=%s",
+                finish_reason or "unknown",
+            )
+            result = {
+                "error": True,
+                "reason": (
+                    f"LLM 未返回任何内容（finish_reason={finish_reason or 'unknown'}），"
+                    f"可能是临时错误，请重试"
+                ),
+                "raw": "",
+            }
+            yield {
+                "type": "result",
+                "result": result,
+                "raw": "",
+                "reasoning": "",
+            }
+            return
+
         result = self.parse_response(raw_to_parse)
         if result.get("error"):
             result["raw"] = raw_to_parse[:500]
