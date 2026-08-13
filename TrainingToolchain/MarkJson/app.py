@@ -216,6 +216,16 @@ class ExportRequest(BaseModel):
     statuses: list[str] = ["pass"]   # 导出哪些状态的条目，默认 pass
 
 
+class FilterRequest(BaseModel):
+    # 按标记状态筛选：pass / reject / skip / pass_ai / reject_ai / unmarked
+    # 可多选，空列表表示「全部」。仅基于内存 marks 遍历，不读取文件内容。
+    statuses: list[str] = ["pass"]
+    # 可选关键字：在状态筛选结果内再做「值内容」AND 匹配（仅读取命中集内的样本内容）
+    query: str = ""
+    # 排序：original=按文件原始顺序，index 升序
+    order: str = "original"
+
+
 # ---- 初始化数据 ----
 def _make_reader(file_path: str | Path) -> "SampleReader | ParquetSampleReader":
     """根据文件扩展名构造对应的读取器：.parquet 用 ParquetSampleReader，其余用 JSON/JSONL 索引读取器。"""
@@ -552,6 +562,67 @@ async def api_search(req: SearchRequest):
 
     matches = await run_in_threadpool(_do_search)
     return {"indices": matches, "total": len(matches), "query": req.query}
+
+
+@app.post("/api/filter")
+async def api_filter(req: FilterRequest):
+    """按标记状态筛选样本（快速浏览）。
+
+    仅基于内存 progress.marks 遍历，不读取任何样本文件内容，因此
+    即使样本量达千万级别，筛选本身也只需毫秒级。
+
+    - statuses 为空表示「全部已标记」；传入具体状态则只返回对应条目。
+      unmarked 表示「尚未标记」的条目。
+    - query 为空时只返回索引列表（indices）；
+      仅当传入 query 时，才在筛选集内读取样本内容做值内容 AND 匹配
+      （此时读取量=筛选集大小，而非全量，避免海量数据卡死）。
+    """
+    st = _require_data()
+    pm = st.progress
+    total = st.reader.total
+
+    # 1) 基于内存 marks 计算筛选集（不读文件）
+    selected: list[int] = []
+    want_unmarked = "unmarked" in req.statuses and not req.statuses
+    status_set = set(req.statuses)
+
+    def _match_status(idx: int) -> bool:
+        if not req.statuses:
+            # 空列表 = 全部已标记条目
+            return idx in pm.marks
+        return pm.marks.get(idx) in status_set
+
+    # 原始顺序遍历（order 目前仅支持 original）
+    for i in range(total):
+        m = pm.marks.get(i)
+        if not req.statuses:
+            if m is not None:
+                selected.append(i)
+        elif m in status_set:
+            selected.append(i)
+
+    # 2) 可选的二次关键字过滤（仅读取筛选集内容）
+    if req.query.strip():
+        keywords = req.query.split()
+        kws_lower = [k.lower() for k in keywords]
+
+        def _do_filter() -> list[int]:
+            out: list[int] = []
+            for i in selected:
+                data = st.reader.read(i)
+                if isinstance(data, dict) and data.get("__parse_error__"):
+                    continue
+                values: list[str] = []
+                _extract_value_strings(data, values)
+                blob = "\n".join(values).lower()
+                if all(kw in blob for kw in kws_lower):
+                    out.append(i)
+            return out
+
+        selected = await run_in_threadpool(_do_filter)
+
+    return {"indices": selected, "total": len(selected),
+            "statuses": req.statuses, "query": req.query}
 
 
 @app.post("/api/search_next")

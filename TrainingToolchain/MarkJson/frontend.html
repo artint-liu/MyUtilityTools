@@ -124,6 +124,22 @@ body {
 .filter-status { font-size: 12px; color: var(--text-dim); }
 .filter-status.active { color: var(--primary-3); font-weight: 600; }
 
+/* 关键字过滤与快速浏览之间的分隔 */
+.filter-divider { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
+
+/* ===== 状态快速浏览筛选按钮（与关键字过滤同一行） ===== */
+.status-filter-label { font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.status-filter-btn {
+  background: var(--bg-3); color: var(--text-1); padding: 5px 12px; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 16px; cursor: pointer; white-space: nowrap;
+  transition: all .15s; font-family: inherit;
+}
+.status-filter-btn:hover { border-color: var(--primary-3); color: var(--primary-3); }
+.status-filter-btn.active {
+  background: linear-gradient(135deg, #1f6feb, var(--primary-3)); color: #fff;
+  border-color: transparent; box-shadow: 0 0 10px rgba(79,195,247,0.35);
+}
+
 /* ===== 主内容区 ===== */
 .main { flex: 1; overflow-y: auto; padding: 22px; display: flex; justify-content: center; }
 .sample-card {
@@ -552,6 +568,15 @@ body {
     <label class="quick-find-label" title="勾选后仅从当前位置查找下一个匹配，不扫描全文件"><input type="checkbox" id="quickFindChk" /> 快速查找</label>
     <button class="btn-filter" id="filterBtn" title="点击过滤或跳转到下一条匹配">🔍 过滤</button>
     <button class="btn-clear-filter" id="clearFilterBtn" style="display:none" title="清除过滤">✕ 清除</button>
+    <span class="filter-divider"></span>
+    <span class="status-filter-label">快速浏览：</span>
+    <button class="status-filter-btn" data-status="pass" title="仅看人工标记通过的项目">✅ 人工通过</button>
+    <button class="status-filter-btn" data-status="reject" title="仅看人工标记拒绝的项目">🚫 人工拒绝</button>
+    <button class="status-filter-btn" data-status="skip" title="仅看人工标记跳过的项目">⏭ 人工跳过</button>
+    <button class="status-filter-btn" data-status="pass_ai" title="仅看 AI 标记通过的项目">🤖 AI 通过</button>
+    <button class="status-filter-btn" data-status="reject_ai" title="仅看 AI 标记拒绝的项目">🤖 AI 拒绝</button>
+    <button class="status-filter-btn" data-status="unmarked" title="仅看尚未标记的项目">⬜ 未标记</button>
+    <button class="status-filter-btn" data-status="__all__" title="所有已标记的项目（不区分状态）">📋 全部已标记</button>
     <span class="filter-status" id="filterStatus"></span>
   </div>
 
@@ -692,6 +717,8 @@ let filterMatches = [];     // 匹配样本的索引列表（快速查找模式�
 let lastFilterQuery = "";   // 上次搜索的关键字（用于判断是否需要重新搜索 + 高亮）
 let isSearching = false;    // 搜索进行中标志，防止重复请求
 let quickFindMode = false;  // 快速查找模式：不统计全部匹配，仅逐条查找
+let filterKind = "";        // "" | "keyword" | "status"：当前过滤来源（用于 UI 文案）
+let filterStatuses = [];    // 状态过滤选中的标记状态列表
 
 const $ = (id) => document.getElementById(id);
 
@@ -1173,6 +1200,13 @@ function updateFilterUI() {
     clearBtn.style.display = "";
     status.textContent = "快速查找：「" + lastFilterQuery + "」";
     status.classList.add("active");
+  } else if (filterActive && filterKind === "status") {
+    clearBtn.style.display = "";
+    const pos = filterMatches.indexOf(currentIndex);
+    const displayPos = pos >= 0 ? pos + 1 : "—";
+    const labels = filterStatuses.map(statusLabel).join("/") || "已标记";
+    status.textContent = "筛选 " + labels + "：" + filterMatches.length + " 条 · 当前第 " + displayPos + " 条";
+    status.classList.add("active");
   } else if (filterActive && filterMatches.length > 0) {
     clearBtn.style.display = "";
     // 计算当前位置在匹配列表中的序号
@@ -1312,9 +1346,15 @@ async function applyQuickFind(query, forward) {
 function clearFilter(silent) {
   filterActive = false;
   quickFindMode = false;
+  filterKind = "";
+  filterStatuses = [];
   filterMatches = [];
   lastFilterQuery = "";
   $("filterInput").value = "";
+  // 同步取消状态筛选栏的高亮
+  document.querySelectorAll(".status-filter-btn.active").forEach((b) =>
+    b.classList.remove("active")
+  );
   updateFilterUI();
   // 清除高亮：重新渲染当前样本（无数据时 total=0 跳过）
   if (total > 0) {
@@ -1323,6 +1363,68 @@ function clearFilter(silent) {
   if (!silent) toast("已清除过滤", "ok");
 }
 function clearFilterSilent() { clearFilter(true); }
+
+// 标记状态 -> 中文标签（用于筛选栏与 UI 文案）
+function statusLabel(s) {
+  const map = {
+    pass: "人工通过", reject: "人工拒绝", skip: "人工跳过",
+    pass_ai: "AI 通过", reject_ai: "AI 拒绝", pass_promoted: "已提升",
+    unmarked: "未标记",
+  };
+  return map[s] || s || "已标记";
+}
+
+// 按标记状态筛选（快速浏览）。仅基于内存 marks，O(样本数) 但不读文件，
+// 千万级数据也只需毫秒；仅当选中状态后追加关键字时才读取筛选集内容。
+async function applyStatusFilter(statuses) {
+  if (isBusy) return;
+  filterStatuses = statuses.slice();
+  const query = $("filterInput").value.trim();
+  isSearching = true;
+  setSearchingUI(true);
+  _searchAbort = new AbortController();
+  quickFindMode = false;
+  filterKind = "status";
+  try {
+    const r = await fetch(API + "/api/filter", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statuses: filterStatuses, query: query }),
+      signal: _searchAbort.signal,
+    });
+    if (!r.ok) throw new Error("filter " + r.status);
+    const data = await r.json();
+    filterMatches = data.indices || [];
+    lastFilterQuery = query;
+    filterActive = true;
+
+    // 跳转到第一条匹配（若有），否则保留当前位置并提示
+    if (filterMatches.length > 0) {
+      const nextPos = filterMatches.findIndex((idx) => idx >= currentIndex);
+      await _loadSampleAt(filterMatches[nextPos === -1 ? 0 : nextPos]);
+    } else {
+      updateFilterUI();
+      await showModal(
+        "筛选结果为空",
+        "当前「" + filterStatuses.map(statusLabel).join("/") + "」的标记数量为 0。" +
+          (query ? "（已应用关键字「" + query + "」）" : ""),
+        "🔍"
+      );
+      return;
+    }
+    updateFilterUI();
+  } catch (e) {
+    if (e.name === "AbortError") {
+      toast("已取消筛选", "ok");
+    } else {
+      toast("筛选失败: " + e.message, "err");
+    }
+  } finally {
+    isSearching = false;
+    _searchAbort = null;
+    setSearchingUI(false);
+  }
+}
 
 // 过滤模式：跳转到下一条匹配（相对于当前位置）
 async function filterNext() {
@@ -1473,6 +1575,28 @@ $("filterInput").addEventListener("keydown", (e) => {
 });
 // 快速查找复选框：切换时清除当前过滤，避免模式混杂
 $("quickFindChk").onchange = () => { if (filterActive) clearFilter(true); };
+
+// 状态筛选按钮：单选切换。再次点击同一按钮 = 取消筛选。
+// 「全部已标记」对应空 statuses 列表（后端语义：所有已标记条目）。
+document.querySelectorAll(".status-filter-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (isSearching) return;
+    const st = btn.getAttribute("data-status");
+    const isAll = st === "__all__";
+    const alreadyActive = btn.classList.contains("active");
+    // 清除其它按钮高亮
+    document.querySelectorAll(".status-filter-btn.active").forEach((b) =>
+      b.classList.remove("active")
+    );
+    if (alreadyActive) {
+      // 再次点击 = 取消筛选
+      clearFilter();
+      return;
+    }
+    btn.classList.add("active");
+    applyStatusFilter(isAll ? [] : [st]);
+  });
+});
 
 $("helpBtn").onclick = (e) => { e.stopPropagation(); $("helpPop").classList.toggle("show"); };
 document.addEventListener("click", () => $("helpPop").classList.remove("show"));
