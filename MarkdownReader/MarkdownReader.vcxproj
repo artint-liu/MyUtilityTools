@@ -92,6 +92,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="Common.h" />
+    <ClInclude Include="ClipboardExporter.h" />
     <ClInclude Include="FontManager.h" />
     <ClInclude Include="HtmlExporter.h" />
     <ClInclude Include="MarkdownParser.h" />
@@ -103,6 +104,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ClipboardExporter.cpp" />
     <ClCompile Include="FontManager.cpp" />
     <ClCompile Include="HtmlExporter.cpp" />
     <ClCompile Include="MarkdownParser.cpp" />

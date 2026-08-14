@@ -9,6 +9,7 @@
 #include "MarkdownParser.h"
 #include "SyntaxHighlighter.h"
 #include "TextRenderer.h"
+#include "ClipboardExporter.h"
 
 class MarkdownRenderer {
 public:
@@ -38,6 +39,8 @@ public:
     void OnLButtonUp(int xPx, int yPx);
     void OnLButtonDblClk(int xPx, int yPx); // 双击：全词选择
     void CopySelection();
+    void SetCopyFormat(CopyFormat fmt) { m_copyFormat = fmt; }
+    CopyFormat GetCopyFormat() const { return m_copyFormat; }
     void ClearSelection();
     void ClearHover();
     bool HasSelection() const;
@@ -215,6 +218,7 @@ private:
     int m_pressingCopy = -1;
     int m_copiedBlockIndex = -1;
     DWORD m_copiedTick = 0;
+    CopyFormat m_copyFormat = CopyFormat::PlainText;
 
     // ---- 搜索 ----
     struct SearchMatch { int blockIndex = 0; UINT32 textPos = 0; UINT32 length = 0; };
@@ -305,4 +309,8 @@ private:
     void DrawCopyButton(const LayoutBlock& lb, float top);
     void GetNormalizedSelection(int* startBlk, int* endBlk, UINT32* startPos, UINT32* endPos) const;
     void CopyToClipboard(const std::wstring& text);
+    // 收集当前选区涉及的所有块及其 fullText 范围
+    void CollectSelectionBlocks(std::vector<BlockSelection>& sels) const;
+    // 按当前格式复制选区
+    void CopySelectionByFormat(CopyFormat fmt);
 };

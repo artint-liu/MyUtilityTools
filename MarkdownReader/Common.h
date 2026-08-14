@@ -41,4 +41,7 @@ void RegClearRecentFiles();
 bool RegLoadEscExit();
 void RegSaveEscExit(bool enable);
 
+// 读取/写入复制格式选项（0=纯文本 1=Markdown 2=HTML 3=RTF，默认 0）
+int  RegLoadCopyFormat();
+void RegSaveCopyFormat(int format);
 

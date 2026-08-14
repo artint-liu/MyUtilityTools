@@ -1,4 +1,5 @@
 #define MDR_PROFILE_LAYOUT 1
+#define _CRT_SECURE_NO_WARNINGS
 #include "MarkdownRenderer.h"
 #include "Common.h"
 #include "FontManager.h"
@@ -1852,23 +1853,144 @@ void MarkdownRenderer::CopyToClipboard(const std::wstring& text) {
     }
 }
 
-void MarkdownRenderer::CopySelection() {
+// 向剪贴板写入多格式数据：CF_UNICODETEXT + 可选的 HTML/RTF
+static void CopyToClipboardMulti(const std::wstring& wideText,
+                                 const std::string* htmlData,
+                                 const std::string* rtfData,
+                                 HWND hwnd) {
+    if (!OpenClipboard(hwnd)) return;
+    EmptyClipboard();
+
+    // CF_UNICODETEXT（始终提供）
+    {
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, (wideText.size() + 1) * sizeof(wchar_t));
+        if (hMem) {
+            wchar_t* p = (wchar_t*)GlobalLock(hMem);
+            if (p) {
+                memcpy(p, wideText.c_str(), wideText.size() * sizeof(wchar_t));
+                p[wideText.size()] = 0;
+                GlobalUnlock(hMem);
+                SetClipboardData(CF_UNICODETEXT, hMem);
+            } else {
+                GlobalFree(hMem);
+            }
+        }
+    }
+
+    // HTML Format（CF_HTML）
+    if (htmlData) {
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, htmlData->size() + 1);
+        if (hMem) {
+            char* p = (char*)GlobalLock(hMem);
+            if (p) {
+                memcpy(p, htmlData->data(), htmlData->size());
+                p[htmlData->size()] = 0;
+                GlobalUnlock(hMem);
+                UINT fmt = RegisterClipboardFormatW(L"HTML Format");
+                if (fmt) {
+                    if (!SetClipboardData(fmt, hMem)) GlobalFree(hMem);
+                } else {
+                    GlobalFree(hMem);
+                }
+            } else {
+                GlobalFree(hMem);
+            }
+        }
+    }
+
+    // Rich Text Format（CF_RTF）
+    if (rtfData) {
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, rtfData->size() + 1);
+        if (hMem) {
+            char* p = (char*)GlobalLock(hMem);
+            if (p) {
+                memcpy(p, rtfData->data(), rtfData->size());
+                p[rtfData->size()] = 0;
+                GlobalUnlock(hMem);
+                UINT fmt = RegisterClipboardFormatW(L"Rich Text Format");
+                if (fmt) {
+                    if (!SetClipboardData(fmt, hMem)) GlobalFree(hMem);
+                } else {
+                    GlobalFree(hMem);
+                }
+            } else {
+                GlobalFree(hMem);
+            }
+        }
+    }
+
+    CloseClipboard();
+}
+
+// 收集当前选区涉及的所有块及其 fullText 范围
+void MarkdownRenderer::CollectSelectionBlocks(std::vector<BlockSelection>& sels) const {
+    sels.clear();
     if (!HasSelection()) return;
     int sBlk, eBlk;
     UINT32 sPos, ePos;
     GetNormalizedSelection(&sBlk, &eBlk, &sPos, &ePos);
-    std::wstring result;
     for (const auto& lb : m_layout) {
         if (lb.blockIndex < sBlk || lb.blockIndex > eBlk) continue;
         if (lb.fullText.empty()) continue;
-        UINT32 s = (lb.blockIndex == sBlk) ? sPos : 0;
-        UINT32 e = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
-        if (s < e) {
-            if (!result.empty()) result += L"\n";
-            result += lb.fullText.substr(s, e - s);
-        }
+        BlockSelection sel;
+        sel.blockIndex = lb.blockIndex;
+        sel.start = (lb.blockIndex == sBlk) ? sPos : 0;
+        sel.end = (lb.blockIndex == eBlk) ? ePos : (UINT32)lb.fullText.size();
+        if (sel.start < sel.end) sels.push_back(sel);
     }
-    if (!result.empty()) CopyToClipboard(result);
+}
+
+void MarkdownRenderer::CopySelectionByFormat(CopyFormat fmt) {
+    if (!HasSelection()) return;
+    std::vector<BlockSelection> sels;
+    CollectSelectionBlocks(sels);
+    if (sels.empty()) return;
+
+    // UTF-8 std::string -> std::wstring（用于将 HTML/RTF 源码写入 CF_UNICODETEXT，
+    // 使粘贴到纯文本编辑器也能看到格式标签）
+    auto utf8ToWide = [](const std::string& s) -> std::wstring {
+        if (s.empty()) return std::wstring();
+        int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+        std::wstring w(n, 0);
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], n);
+        return w;
+    };
+
+    switch (fmt) {
+    case CopyFormat::PlainText: {
+        std::wstring text = ExportSelectionToPlainText(m_doc, sels);
+        if (!text.empty()) CopyToClipboard(text);
+        break;
+    }
+    case CopyFormat::Markdown: {
+        // Markdown 本身就是纯文本，写入 CF_UNICODETEXT
+        std::wstring md = ExportSelectionToMarkdown(m_doc, sels);
+        if (!md.empty()) CopyToClipboardMulti(md, nullptr, nullptr, m_hwnd);
+        break;
+    }
+    case CopyFormat::HTML: {
+        // HTML 格式：CF_UNICODETEXT 存 HTML fragment 源码（带标签），
+        // HTML Format 存完整 CF_HTML 数据。这样粘贴到记事本能看到标签，
+        // 粘贴到 Word 等富文本编辑器则渲染为格式化内容。
+        std::string fragment = ExportSelectionToHtmlFragment(m_doc, sels);
+        std::string htmlData = BuildHtmlClipboardData(fragment);
+        std::wstring wideFragment = utf8ToWide(fragment);
+        CopyToClipboardMulti(wideFragment, &htmlData, nullptr, m_hwnd);
+        break;
+    }
+    case CopyFormat::RTF: {
+        // RTF 格式：CF_UNICODETEXT 存 RTF 源码（带控制码），
+        // Rich Text Format 存同样的 RTF 数据。
+        std::string rtf = ExportSelectionToRtf(m_doc, sels);
+        std::wstring wideRtf = utf8ToWide(rtf);
+        CopyToClipboardMulti(wideRtf, nullptr, &rtf, m_hwnd);
+        break;
+    }
+    }
+}
+
+void MarkdownRenderer::CopySelection() {
+    CopySelectionByFormat(m_copyFormat);
 }
 
 // "已复制" 反馈定时器回调

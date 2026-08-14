@@ -52,6 +52,9 @@ struct FrameState {
     // ESC 退出选项（持久化到注册表）
     bool escExit = false;
 
+    // 复制格式（持久化到注册表，0=纯文本 1=Markdown 2=HTML 3=RTF）
+    int copyFormat = 0;
+
     // 文件外部修改检测：记录加载时的最后写入时间，窗口重新激活时比较
     FILETIME lastWriteTime = {};
     bool hasFileTime = false;
@@ -147,6 +150,28 @@ void RegSaveEscExit(bool enable) {
         return;
     DWORD val = enable ? 1 : 0;
     RegSetValueExW(hKey, L"EscExit", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+    RegCloseKey(hKey);
+}
+
+int RegLoadCopyFormat() {
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegOptKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return 0;  // 默认纯文本
+    DWORD val = 0, sz = sizeof(val);
+    LONG r = RegQueryValueExW(hKey, L"CopyFormat", nullptr, nullptr, (LPBYTE)&val, &sz);
+    RegCloseKey(hKey);
+    if (r != ERROR_SUCCESS) return 0;
+    if (val < 0 || val > 3) return 0;
+    return (int)val;
+}
+
+void RegSaveCopyFormat(int format) {
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegOptKey, 0, nullptr,
+                        REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &hKey, nullptr) != ERROR_SUCCESS)
+        return;
+    DWORD val = (DWORD)format;
+    RegSetValueExW(hKey, L"CopyFormat", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
     RegCloseKey(hKey);
 }
 
@@ -553,17 +578,57 @@ static LRESULT CALLBACK ContentWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
         if (r) r->OnLButtonDblClk(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
     case WM_RBUTTONUP: {
-        // 右键菜单：提供复制选取文本的入口（不依赖键盘焦点）
+        // 右键菜单：提供复制选取文本的入口 + 复制格式选择
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         ClientToScreen(hwnd, &pt);
-        HMENU hMenu = CreatePopupMenu();
         bool hasSel = r && r->HasSelection();
+        // 从父窗口取 FrameState 以读写复制格式
+        HWND frame = GetParent(hwnd);
+        FrameState* ffs = frame ? (FrameState*)GetWindowLongPtrW(frame, GWLP_USERDATA) : nullptr;
+        int curFmt = ffs ? ffs->copyFormat : 0;
+
+        HMENU hMenu = CreatePopupMenu();
+        // 复制选中文本（使用当前格式）
         AppendMenuW(hMenu, hasSel ? MF_STRING : (MF_STRING | MF_GRAYED),
             1, L"复制选中文本\tCtrl+C");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        // 复制格式子菜单（单选）
+        HMENU hFmt = CreatePopupMenu();
+        AppendMenuW(hFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_PLAIN, L"纯文本");
+        AppendMenuW(hFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_MD,    L"Markdown 格式");
+        AppendMenuW(hFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_HTML,  L"HTML 格式");
+        AppendMenuW(hFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_RTF,   L"Rich (RTF) 格式");
+        // 设置单选状态
+        static const int fmtIds[] = { IDM_EDIT_COPY_PLAIN, IDM_EDIT_COPY_MD,
+                                      IDM_EDIT_COPY_HTML,  IDM_EDIT_COPY_RTF };
+        CheckMenuRadioItem(hFmt, fmtIds[0], fmtIds[3], fmtIds[curFmt], MF_BYCOMMAND);
+        AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hFmt, L"复制格式");
+
         int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
             pt.x, pt.y, 0, hwnd, nullptr);
         DestroyMenu(hMenu);
-        if (cmd == 1 && r) r->CopySelection();
+
+        if (cmd == 1) {
+            if (r) r->CopySelection();
+        } else if (cmd >= IDM_EDIT_COPY_PLAIN && cmd <= IDM_EDIT_COPY_RTF) {
+            // 切换格式并持久化
+            int newFmt = 0;
+            switch (cmd) {
+            case IDM_EDIT_COPY_PLAIN: newFmt = 0; break;
+            case IDM_EDIT_COPY_MD:    newFmt = 1; break;
+            case IDM_EDIT_COPY_HTML:  newFmt = 2; break;
+            case IDM_EDIT_COPY_RTF:   newFmt = 3; break;
+            }
+            if (ffs) {
+                ffs->copyFormat = newFmt;
+                RegSaveCopyFormat(newFmt);
+            }
+            if (r) {
+                r->SetCopyFormat((CopyFormat)newFmt);
+                // 选中有文本时立即复制
+                if (hasSel) r->CopySelection();
+            }
+        }
         return 0;
     }
     case WM_SETCURSOR:
@@ -699,6 +764,14 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND, L"查找...\tCtrl+F");
         AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_NEXT, L"查找下一个\tF3");
         AppendMenuW(hEdit, MF_STRING, IDM_EDIT_FIND_PREV, L"查找上一个\tShift+F3");
+        AppendMenuW(hEdit, MF_SEPARATOR, 0, nullptr);
+        // 复制格式子菜单（单选）
+        HMENU hCopyFmt = CreatePopupMenu();
+        AppendMenuW(hCopyFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_PLAIN, L"纯文本");
+        AppendMenuW(hCopyFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_MD,    L"Markdown 格式");
+        AppendMenuW(hCopyFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_HTML,  L"HTML 格式");
+        AppendMenuW(hCopyFmt, MF_STRING | MFT_RADIOCHECK, IDM_EDIT_COPY_RTF,   L"Rich (RTF) 格式");
+        AppendMenuW(hEdit, MF_POPUP, (UINT_PTR)hCopyFmt, L"复制格式");
         AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hEdit, L"编辑(&E)");
         HMENU hView = CreatePopupMenu();
         AppendMenuW(hView, MF_STRING, IDM_VIEW_TOC, L"显示/隐藏目录\tF9");
@@ -707,6 +780,8 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
         // 加载持久化选项 & 最近文件
         fs->escExit = RegLoadEscExit();
+        fs->copyFormat = RegLoadCopyFormat();
+        if (fs->renderer) fs->renderer->SetCopyFormat((CopyFormat)fs->copyFormat);
         RefreshRecentMenu(fs);
 
         // 搜索栏控件
@@ -763,7 +838,7 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         break;
     }
     case WM_INITMENUPOPUP: {
-        // 任意菜单弹出时：刷新最近文件列表 & ESC 退出勾选状态
+        // 任意菜单弹出时：刷新最近文件列表 & ESC 退出勾选状态 & 复制格式单选
         if (fs) {
             if (fs->hRecentMenu) RefreshRecentMenu(fs);
             HMENU hFileMenu = GetSubMenu(GetMenu(hwnd), 0);
@@ -774,6 +849,25 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                         CheckMenuItem(hFileMenu, i,
                             fs->escExit ? MF_BYPOSITION | MF_CHECKED
                                         : MF_BYPOSITION | MF_UNCHECKED);
+                        break;
+                    }
+                }
+            }
+            // 复制格式单选状态
+            HMENU hEditMenu = GetSubMenu(GetMenu(hwnd), 1);
+            if (hEditMenu) {
+                int editCnt = GetMenuItemCount(hEditMenu);
+                for (int i = 0; i < editCnt; ++i) {
+                    HMENU sub = GetSubMenu(hEditMenu, i);
+                    if (!sub) continue;
+                    // 找到"复制格式"子菜单（包含 IDM_EDIT_COPY_PLAIN）
+                    if (GetMenuState(sub, IDM_EDIT_COPY_PLAIN, MF_BYCOMMAND) != (UINT)-1) {
+                        static const int fmtIds[] = {
+                            IDM_EDIT_COPY_PLAIN, IDM_EDIT_COPY_MD,
+                            IDM_EDIT_COPY_HTML,  IDM_EDIT_COPY_RTF
+                        };
+                        CheckMenuRadioItem(sub, fmtIds[0], fmtIds[3],
+                            fmtIds[fs->copyFormat], MF_BYCOMMAND);
                         break;
                     }
                 }
@@ -835,6 +929,26 @@ static LRESULT CALLBACK FrameWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         case IDM_FILE_ESC_EXIT: {
             fs->escExit = !fs->escExit;
             RegSaveEscExit(fs->escExit);
+            return 0;
+        }
+        case IDM_EDIT_COPY_PLAIN:
+        case IDM_EDIT_COPY_MD:
+        case IDM_EDIT_COPY_HTML:
+        case IDM_EDIT_COPY_RTF: {
+            int fmt = 0;
+            switch (LOWORD(wParam)) {
+            case IDM_EDIT_COPY_PLAIN: fmt = 0; break;
+            case IDM_EDIT_COPY_MD:    fmt = 1; break;
+            case IDM_EDIT_COPY_HTML:  fmt = 2; break;
+            case IDM_EDIT_COPY_RTF:   fmt = 3; break;
+            }
+            fs->copyFormat = fmt;
+            RegSaveCopyFormat(fmt);
+            if (fs->renderer) fs->renderer->SetCopyFormat((CopyFormat)fmt);
+            // 菜单关闭后焦点可能留在 frame 窗口，导致后续 Ctrl+C
+            // 发不到 content 窗口（CopySelection 不触发，剪贴板仍为旧内容）。
+            // 显式将焦点设回 content 窗口，确保 Ctrl+C 能正常工作。
+            if (fs->hContent) SetFocus(fs->hContent);
             return 0;
         }
         default: {

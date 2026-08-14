@@ -16,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Common.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="ClipboardExporter.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="FontManager.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="HtmlExporter.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MarkdownParser.h"><Filter>Header Files</Filter></ClInclude>
@@ -26,6 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="ClipboardExporter.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="FontManager.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="HtmlExporter.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MarkdownParser.cpp"><Filter>Source Files</Filter></ClCompile>

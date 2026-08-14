@@ -18,6 +18,12 @@
 #define IDM_FILE_CLEAR_RECENT 1200
 #define IDM_FILE_ESC_EXIT   1201   // ESC 退出选项（勾选框）
 
+// 复制格式选项（单选）
+#define IDM_EDIT_COPY_PLAIN  1202
+#define IDM_EDIT_COPY_MD     1203
+#define IDM_EDIT_COPY_HTML   1204
+#define IDM_EDIT_COPY_RTF    1205
+
 // 搜索栏控件 id
 #define IDC_SEARCH_EDIT     2001
 #define IDC_SEARCH_CASE     2002

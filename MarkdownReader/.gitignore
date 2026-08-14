@@ -1,0 +1,38 @@
+# ===== Visual Studio / MSBuild 编译产物 =====
+# 中间目录（.obj/.tlog/.log/.res/.recipe 等）
+MarkdownReader/
+x64/
+Debug/
+Release/
+*.user
+*.suo
+
+# ===== VS IDE 临时文件 =====
+.vs/
+
+# ===== 编译器产生的散落 obj（误放在根目录时） =====
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+
+# ===== 运行时 / 诊断日志 =====
+*.log
+_perf.log
+clipboard_debug*.log
+clipboard_*_debug.txt
+
+# ===== AI 生成的图片（与源码无关） =====
+generated-images/
+
+# ===== 临时测试文件 =====
+test_*.cpp
+test_*.exe
+test_*.obj
+_test_*.bat
+_test_*.log
+_test_*.txt
+_build.bat
+_build.log
