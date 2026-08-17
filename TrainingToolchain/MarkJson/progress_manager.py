@@ -25,6 +25,8 @@ class ProgressManager:
         self.marks: dict[int, str] = {}
         # ai_confidence: { index: float } —— 仅 pass_ai/reject_ai 有置信度
         self.ai_confidence: dict[int, float] = {}
+        # reviews: { index: str } —— 人工审核评语（与标记独立存储）
+        self.reviews: dict[int, str] = {}
         self.dirty: bool = False
         self._unsaved_marks: int = 0
         self._lock = threading.Lock()
@@ -106,6 +108,19 @@ class ProgressManager:
         with self._lock:
             self.current_index = index
 
+    def review_of(self, index: int) -> str:
+        """返回指定索引的审核评语（无则返回空串）。"""
+        return self.reviews.get(index, "")
+
+    def set_review(self, index: int, text: str) -> None:
+        """设置/清除一条样本的审核评语。空串表示清除。"""
+        with self._lock:
+            if text and text.strip():
+                self.reviews[index] = text
+            else:
+                self.reviews.pop(index, None)
+            self.dirty = True
+
     def load(self) -> None:
         """加载已有进度文件（若存在且样本数匹配）。"""
         if not self.progress_path.exists():
@@ -126,6 +141,7 @@ class ProgressManager:
             self.ai_confidence = {
                 int(k): float(v) for k, v in data.get("ai_confidence", {}).items()
             }
+            self.reviews = {int(k): v for k, v in data.get("reviews", {}).items()}
             self.current_index = data.get("current_index", 0)
             self.dirty = False
             LOGGER.info(
@@ -153,6 +169,7 @@ class ProgressManager:
                 "current_index": self.current_index,
                 "marks": {str(k): v for k, v in self.marks.items()},
                 "ai_confidence": {str(k): v for k, v in self.ai_confidence.items()},
+                "reviews": {str(k): v for k, v in self.reviews.items()},
             }
             self.dirty = False
         atomic_write_json(self.progress_path, payload)

@@ -189,6 +189,11 @@ class MarkRequest(BaseModel):
     status: str  # pass | reject | skip | unmarked
 
 
+class ReviewRequest(BaseModel):
+    index: int
+    review: str = ""
+
+
 class NavigateRequest(BaseModel):
     index: int
 
@@ -420,6 +425,7 @@ def _sample_payload(index: int) -> dict:
         "total": st.reader.total,
         "data": data,
         "status": status,
+        "review": st.progress.review_of(index),
     }
     # AI 标记附带置信度
     if status in ("pass_ai", "reject_ai"):
@@ -523,6 +529,17 @@ async def api_mark(req: MarkRequest):
         _save_ai_predictions()
     # 返回下一条（跳过已标记的，定位到下一个未标记项，便于连续标注）
     return {"success": True, "index": req.index, "status": req.status}
+
+
+@app.post("/api/review")
+async def api_review(req: ReviewRequest):
+    """保存当前样本的审核评语（与标记独立存储）。"""
+    st = _require_data()
+    if req.index < 0 or req.index >= st.reader.total:
+        raise HTTPException(status_code=404, detail="样本索引越界")
+    st.progress.set_review(req.index, req.review)
+    await st.progress.save()
+    return {"success": True, "index": req.index, "review": req.review}
 
 
 @app.post("/api/navigate")
