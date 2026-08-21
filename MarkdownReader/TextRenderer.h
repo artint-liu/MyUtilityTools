@@ -75,6 +75,7 @@ private:
     HRESULT DrawColorLayers(ID2D1DeviceContext* dc, IDWriteColorGlyphRunEnumerator* en, ID2D1SolidColorBrush* fgBrush, DWRITE_MEASURING_MODE measuringMode);
 
     ULONG m_ref = 1;
+    Microsoft::WRL::ComPtr<IDWriteFactory> m_factory;   // 原始工厂（DrawInlineObject 透传用）
     Microsoft::WRL::ComPtr<IDWriteFactory4> m_dwrite4; // Win10 1709+，支持 COLR/SVG/位图
     Microsoft::WRL::ComPtr<IDWriteFactory2> m_dwrite2; // Win8.1+，仅 COLR，作为回退
 };

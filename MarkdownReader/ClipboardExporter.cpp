@@ -45,6 +45,8 @@ std::vector<InlineRun> ExtractSelectedRuns(const std::vector<InlineRun>& runs,
         uint32_t e = (std::min)(runEnd, selEnd);
         InlineRun trimmed = r;
         trimmed.text = r.text.substr(s - runStart, e - s);
+        // 行内公式被部分选中：mathSrc 与截断后的 text 不再对应，清空以便回退
+        if (trimmed.math && trimmed.text.size() != r.text.size()) trimmed.mathSrc.clear();
         result.push_back(std::move(trimmed));
     }
     return result;
@@ -113,6 +115,13 @@ namespace {
 void RunsToMarkdown(const std::vector<InlineRun>& runs, std::wstring& out) {
     for (const auto& r : runs) {
         if (r.text.empty()) continue;
+        if (r.math) {
+            // 行内公式：优先还原原始 LaTeX 源（部分选中时回退近似文本）
+            out += L"$";
+            out += r.mathSrc.empty() ? r.text : r.mathSrc;
+            out += L"$";
+            continue;
+        }
         if (r.code) {
             out += L"`";
             out += r.text;
@@ -218,6 +227,20 @@ std::wstring ExportSelectionToMarkdown(const Document& doc,
                 RunsToMarkdown(trimmed, result);
             }
             result += L"\n";
+            break;
+        }
+        case BlockType::MathBlock: {
+            if (fully) {
+                std::wstring src = b.rawText;   // 原始 LaTeX 源
+                if (!src.empty() && src.back() != L'\n') src += L'\n';
+                result += L"$$\n";
+                result += src;
+                result += L"$$\n";
+            } else {
+                auto trimmed = ExtractSelectedRuns(b.runs, sel.start, sel.end);
+                RunsToMarkdown(trimmed, result);
+                result += L"\n";
+            }
             break;
         }
         case BlockType::ListItem: {
@@ -349,6 +372,13 @@ void RunsToHtml(const std::vector<InlineRun>& runs, std::string& out) {
             out += "</code>";
             continue;
         }
+        // 行内公式：斜体 + 数学字体
+        if (r.math) {
+            out += "<em style=\"font-family:'Cambria Math','Segoe UI Symbol',serif;\">";
+            out += text;
+            out += "</em>";
+            continue;
+        }
         bool inLink = !r.linkUrl.empty();
         if (inLink) {
             out += "<a href=\"";
@@ -411,6 +441,13 @@ std::string ExportSelectionToHtmlFragment(const Document& doc,
             if (fully) RunsToHtml(b.runs, html);
             else { auto tr = ExtractSelectedRuns(b.runs, sel.start, sel.end); RunsToHtml(tr, html); }
             html += "</p></blockquote>\n";
+            break;
+        }
+        case BlockType::MathBlock: {
+            html += "<p style=\"text-align:center;font-family:'Cambria Math','Segoe UI Symbol',serif;font-style:italic;font-size:16pt;\">";
+            if (fully) RunsToHtml(b.runs, html);
+            else { auto tr = ExtractSelectedRuns(b.runs, sel.start, sel.end); RunsToHtml(tr, html); }
+            html += "</p>\n";
             break;
         }
         case BlockType::ListItem: {
@@ -611,6 +648,13 @@ void RunsToRtf(const std::vector<InlineRun>& runs, std::string& out) {
             out += "}";
             continue;
         }
+        if (r.math) {
+            // 行内公式：斜体
+            out += "{\\i ";
+            out += text;
+            out += "}";
+            continue;
+        }
         std::string prefix, suffix;
         if (inLink)        { prefix += "{\\cf2 "; }
         if (r.bold)        { prefix += "\\b ";    suffix = "\\b0"    + suffix; }
@@ -683,6 +727,14 @@ std::string ExportSelectionToRtf(const Document& doc,
             if (fully) RunsToRtf(b.runs, rtf);
             else { auto tr = ExtractSelectedRuns(b.runs, sel.start, sel.end); RunsToRtf(tr, rtf); }
             rtf += "}";
+            rtf += "}\\par\r\n";
+            break;
+        }
+        case BlockType::MathBlock: {
+            // 块级公式：居中 + 斜体 + 稍大字号
+            rtf += "{\\qc\\i\\fs32 ";
+            if (fully) RunsToRtf(b.runs, rtf);
+            else { auto tr = ExtractSelectedRuns(b.runs, sel.start, sel.end); RunsToRtf(tr, rtf); }
             rtf += "}\\par\r\n";
             break;
         }

@@ -11,6 +11,7 @@
 5. 命令行参数启动打开文件
 6. 左侧目录定位到文本行
 7. 图片嵌入：独立成行的 `![alt](src "title")` 会以原始尺寸（等比缩放至内容宽度/最大高度）渲染，**点击图片可用系统默认程序打开原图**，加载失败则显示 alt 占位文本
+8. 数学公式：`$...$` 行内公式与 `$$...$$` 块级公式（LaTeX 语法），以 Unicode 数学符号 + 自绘二维结构近似渲染——分式为上下结构（分子/横线/分母），大运算符（`∫` `∑` `∏` 等）放大占 2~3 行高度并按 display 风格把上下标排在符号右上/右下；行内斜体嵌入，块级居中显示，块级公式右上角「复制」按钮可复制原始 LaTeX 源码
 
 ### 行内格式
 
@@ -156,6 +157,129 @@ msg:
     db      "Hello, Assembly!", 0x0A
 len equ $ - msg
 ```
+
+## 数学公式（LaTeX）
+
+支持 `$...$` 行内公式与 `$$...$$` 块级公式的 LaTeX 语法。渲染方式：普通符号转换为 Unicode 数学符号；分式（`\frac`）与根式等以**二维自绘结构**呈现——分式为上下结构（分子、横线、分母），大运算符（`∫` `∑` `∏` `∮` 等）放大占 2~3 行高度，上下标按 display 风格排在符号右上/右下。行内公式以斜体嵌入正文，块级公式居中显示。块级公式右上角有「复制」按钮，点击可复制原始 LaTeX 源码。
+
+### 行内公式
+
+质能方程 $E = mc^2$ 与勾股定理 $a^2 + b^2 = c^2$ 都可以直接写在句子中，欧拉公式 $e^{i\pi} + 1 = 0$ 则被誉为最美的数学公式。
+
+上下标：$x^2$、$x^{10}$、$a_i$、$x_{ij}$、$x_i^2$、$2^{n+1}$、$H_2O$、$a_{n+1}$、导数记号 $f'(x)$。
+
+### 块级公式
+
+单行形式：
+
+$$ \int_0^1 x^2 \, dx = \frac{1}{3} $$
+
+多行形式（高斯积分）：
+
+$$
+\int_{-\infty}^{+\infty} e^{-x^2} \, dx = \sqrt{\pi}
+$$
+
+`aligned` 对齐环境（多行对齐公式）：
+
+$$
+\begin{aligned}
+\nabla \cdot \mathbf{E} &= \frac{\rho}{\varepsilon_0} \\
+\nabla \cdot \mathbf{B} &= 0
+\end{aligned}
+$$
+
+### 希腊字母
+
+小写：$\alpha$、$\beta$、$\gamma$、$\delta$、$\epsilon$、$\zeta$、$\eta$、$\theta$、$\iota$、$\kappa$、$\lambda$、$\mu$、$\nu$、$\xi$、$\pi$、$\rho$、$\sigma$、$\tau$、$\upsilon$、$\phi$、$\chi$、$\psi$、$\omega$
+
+大写：$\Gamma$、$\Delta$、$\Theta$、$\Lambda$、$\Xi$、$\Pi$、$\Sigma$、$\Upsilon$、$\Phi$、$\Psi$、$\Omega$
+
+变体：$\varepsilon$、$\vartheta$、$\varphi$、$\varsigma$
+
+### 分式与根式
+
+分式以**上下结构**渲染（分子在上、横线居中、分母在下；嵌套分式的内层线性化）：
+
+- 分式：$\frac{1}{2}$、$\frac{x^2}{2m}$、$\frac{a+b}{c+d}$、$\dfrac{3}{4}$、$\frac{\rho}{\varepsilon_0}$
+- 根式：$\sqrt{2}$、$\sqrt{x^2 + y^2}$、$\sqrt[3]{8}$、$\sqrt[n]{x}$、嵌套根式 $\sqrt{1 + \sqrt{2}}$
+- 分式与根式组合：$\frac{1}{\sqrt{2}}$、$\sqrt{\frac{a}{b}}$（根号内的分式线性化）
+
+### 大运算符
+
+大运算符（`∑` `∏` `∫` `∮` 等）放大渲染并占据 2~3 行高度，上下标排在符号右上/右下（display 风格）：
+
+- 求和：$\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$
+- 乘积：$\prod_{i=1}^{n} i = n!$
+- 积分：$\int_0^{2\pi} \sin x \, dx = 0$、定积分 $\int_0^1 x^2 \, dx = \frac{1}{3}$、二重积分 $\iint_D f \, dx \, dy$、环路积分 $\oint_C \mathbf{F} \cdot d\mathbf{r}$
+- 极限：$\lim_{x \to \infty} \left(1 + \frac{1}{x}\right)^x = e$
+
+### 运算符与符号
+
+关系运算：$\leq$ $\geq$ $\neq$ $\approx$ $\equiv$ $\pm$ $\mp$ $\times$ $\div$ $\cdot$
+
+集合运算：$\in$ $\notin$ $\subset$ $\subseteq$ $\supset$ $\cup$ $\cap$ $\emptyset$ $\forall$ $\exists$
+
+箭头：$\to$ $\rightarrow$ $\leftarrow$ $\Rightarrow$ $\leftrightarrow$ $\Leftrightarrow$ $\mapsto$ $\uparrow$ $\downarrow$
+
+其他符号：$\infty$ $\partial$ $\nabla$ $\hbar$ $\ell$ $\Re$ $\Im$ $\aleph$ $\angle$ $\top$ $\bot$ $\cdots$ $\ldots$
+
+### 字体与文字命令
+
+- 文字模式：$x \text{ and } y$、$\text{若 } x > 0$、$\mathrm{d}x$
+- 双线字母：$\mathbb{R}$、$\mathbb{C}$、$\mathbb{N}$、$\mathbb{Z}$、$\mathbb{Q}$
+- 其他字体命令：$\mathbf{F}$、$\mathit{d}$（按普通斜体近似渲染）
+
+### 矩阵与分段函数
+
+矩阵环境（pmatrix / bmatrix / vmatrix 线性化为多行文本）：
+
+$$
+A = \begin{pmatrix} a & b \\ c & d \end{pmatrix}, \quad
+I = \begin{bmatrix} 1 & 0 \\ 0 & 1 \end{bmatrix}
+$$
+
+分段函数（cases 环境）：
+
+$$
+f(x) = \begin{cases} x^2 & x \geq 0 \\ -x & x < 0 \end{cases}
+$$
+
+### 重音符号
+
+$\hat{x}$、$\bar{x}$、$\vec{v}$、$\dot{x}$、$\ddot{x}$、$\tilde{x}$、$\widehat{A}$
+
+### 函数名
+
+$\sin^2 x + \cos^2 x = 1$、$\ln x$、$\log_{10} x$、$\arctan$、$\max(a, b)$、$\arg \max_{\theta}$
+
+### 与其他语法混排
+
+- **加粗**、$x + y$、`行内代码` 与 [链接](https://github.com) 混排
+- 有序列表中的公式：泰勒展开 $e^x = 1 + x + \frac{x^2}{2!} + \cdots$
+- 表格中的公式：
+
+| 公式 | 名称 |
+| ---- | ---- |
+| $e^{i\pi} + 1 = 0$ | 欧拉公式 |
+| $\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$ | 等差数列求和 |
+| $|\psi\rangle = \alpha|0\rangle + \beta|1\rangle$ | 量子态叠加 |
+
+> 引用块中的行内公式：$f(x) = ax^2 + bx + c$，判别式 $\Delta = b^2 - 4ac$。
+
+### 边界与容错
+
+- 货币场景（闭合 `$` 前是空格时不识别为公式）：这本书 $5，那本书 $10。
+- 未闭合的 `$` 保持原样：随机出现一个 $ 符号不当作公式。
+- 反斜杠转义：价格是 \$100（显示为字面 $100，不触发公式解析）。
+- 行内代码中的 `$x^2$` 不会被解析为公式。
+- 围栏代码块中的 `$$` 同样原样显示：
+
+```text
+$$ \frac{a}{b} $$   <- 代码块内不解析
+```
+
+- 未识别的命令按命令名显示：$\foobar$。
 
 ## 引用块
 

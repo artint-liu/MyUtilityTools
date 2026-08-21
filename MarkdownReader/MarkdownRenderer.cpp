@@ -3,6 +3,7 @@
 #include "MarkdownRenderer.h"
 #include "Common.h"
 #include "FontManager.h"
+#include "MathInlineObject.h"
 #include <algorithm>
 #include <shellapi.h>
 #include <shlwapi.h>
@@ -69,7 +70,8 @@ bool MarkdownRenderer::FindTableCellRange(const LayoutBlock& lb, size_t row, siz
 void MarkdownRenderer::ApplyInlineStyles(IDWriteTextLayout* layout,
                                          const std::vector<InlineRun*>& runs,
                                          const std::vector<UINT32>& runStarts,
-                                         std::vector<LayoutBlock::LinkRange>& outLinks) {
+                                         std::vector<LayoutBlock::LinkRange>& outLinks,
+                                         IDWriteTextFormat* fmt) {
     if (!layout) return;
     for (size_t i = 0; i < runs.size(); ++i) {
         const InlineRun* run = runs[i];
@@ -81,6 +83,27 @@ void MarkdownRenderer::ApplyInlineStyles(IDWriteTextLayout* layout,
         if (run->bold)          layout->SetFontWeight(DWRITE_FONT_WEIGHT_BOLD, r);
         if (run->italic)        layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
         if (run->strikethrough) layout->SetStrikethrough(TRUE, r);
+        if (run->math) {
+            // 行内公式：斜体；系统字体集时换用 Cambria Math（数学符号字形完整）
+            layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
+            if (!FontManager::Instance().HasCustomFonts()) {
+                layout->SetFontFamilyName(L"Cambria Math", r);
+            }
+            // 二维结构（分式/大运算符）替换为内联图形：
+            // 分式渲染为上下结构，大运算符放大并上下标排右上/右下
+            if (fmt && !run->mathDecos.empty()) {
+                for (const auto& d : run->mathDecos) {
+                    if (d.start >= run->text.size()) continue;
+                    const UINT32 dl = (std::min)(d.len, (UINT32)run->text.size() - d.start);
+                    ComPtr<IDWriteInlineObject> obj =
+                        MathInlineObject::Create(d, m_dwrite.Get(), fmt, true);
+                    if (obj) {
+                        layout->SetInlineObject(obj.Get(),
+                            DWRITE_TEXT_RANGE{ start + d.start, dl });
+                    }
+                }
+            }
+        }
         if (run->code) {
             layout->SetFontFamilyName(FontManager::Instance().GetCodeFamily().c_str(), r);
             layout->SetDrawingEffect(m_effCode.Get(), r);
@@ -221,6 +244,11 @@ void MarkdownRenderer::CreateDeviceResources() {
         }
         MakeFormat(m_dwrite.Get(), m_fmtCode.GetAddressOf(), fm.GetCodeFamily().c_str(),
             13.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
+        // 数学公式：斜体。系统字体集时用 Cambria Math（数学符号覆盖完整）；
+        // 自定义字体集不含 Cambria Math，回退正文字体（常用符号大多有覆盖）
+        MakeFormat(m_dwrite.Get(), m_fmtMath.GetAddressOf(),
+            fm.HasCustomFonts() ? fm.GetBodyFamily().c_str() : L"Cambria Math",
+            17.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_ITALIC, coll);
         MakeFormat(m_dwrite.Get(), m_fmtBtn.GetAddressOf(), fm.GetBodyFamily().c_str(),
             12.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, coll);
     }
@@ -584,7 +612,7 @@ void MarkdownRenderer::BuildLayout() {
                         if (row.isHeader) lay->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
                             DWRITE_TEXT_RANGE{ 0, (UINT32)text.size() });
                         std::vector<LayoutBlock::LinkRange> discard;
-                        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard);
+                        ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard, m_fmtBody.Get());
                     }
                     DWRITE_TEXT_METRICS m = {};
                     if (lay) lay->GetMetrics(&m);
@@ -633,6 +661,10 @@ void MarkdownRenderer::BuildLayout() {
                 lb.headingRuleGap = 5.0f;   // 文本与横线间距
                 marginBottom += 7.0f;       // 为横线预留额外底部间距
             }
+        } else if (b.type == BlockType::MathBlock) {
+            // 块级公式：稍大字号、独立成块、居中对齐（对齐方式在 Materialize 时设置）
+            fmt = m_fmtMath.Get();
+            marginTop = 14.0f; marginBottom = 14.0f;
         } else if (b.type == BlockType::BlockQuote) {
             indent = 18.0f;
             maxW = m_contentWidth - indent;
@@ -687,9 +719,10 @@ void MarkdownRenderer::BuildLayout() {
             m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(), fmt, maxW, 1e6f, lay.GetAddressOf());
             // 粗体/斜体/行内代码会改变字形宽度进而影响换行，必须参与测高；
             // 链接范围属于绘制信息，留到 Materialize 时再收集。
+            // 数学二维结构（分式/大运算符）也在此挂上——其高度影响行高与块高。
             {
                 std::vector<LayoutBlock::LinkRange> discard;
-                ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard);
+                ApplyInlineStyles(lay.Get(), runPtrs, runStarts, discard, fmt);
             }
             if (lay) {
                 lay->GetMetrics(&m);
@@ -730,6 +763,14 @@ void MarkdownRenderer::BuildLayout() {
         if (b.type == BlockType::BlockQuote) {
             lb.barRect = D2D1::RectF(kPadding + 6, marginTop - 2,
                 kPadding + 6 + 3, marginTop + m.height + 2);
+            lb.hasCopyBtn = true;
+            lb.copyBtnRect = D2D1::RectF(
+                kPadding + m_contentWidth - 64.0f, marginTop,
+                kPadding + m_contentWidth, marginTop + 22.0f);
+            lb.copyBtnLayout = CreateCopyButtonLayout(L"复制", 2);
+        }
+        if (b.type == BlockType::MathBlock) {
+            // 复制按钮：点击复制原始 LaTeX 源码
             lb.hasCopyBtn = true;
             lb.copyBtnRect = D2D1::RectF(
                 kPadding + m_contentWidth - 64.0f, marginTop,
@@ -821,7 +862,7 @@ void MarkdownRenderer::EnsureBlockMaterialized(LayoutBlock& lb) {
                     if (row.isHeader) lay->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
                         DWRITE_TEXT_RANGE{ 0, (UINT32)text.size() });
                     cell.linkRanges.clear();
-                    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, cell.linkRanges);
+                    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, cell.linkRanges, m_fmtBody.Get());
                 }
                 cell.layout = lay;
             }
@@ -897,8 +938,13 @@ void MarkdownRenderer::EnsureBlockMaterialized(LayoutBlock& lb) {
     ComPtr<IDWriteTextLayout> lay;
     m_dwrite->CreateTextLayout(text.c_str(), (UINT32)text.size(),
         lb.measFmt ? lb.measFmt : m_fmtBody.Get(), lb.measMaxW, 1e6f, lay.GetAddressOf());
+    if (lay && b.type == BlockType::MathBlock) {
+        // 块级公式居中显示
+        lay->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    }
     lb.linkRanges.clear();
-    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, lb.linkRanges);
+    ApplyInlineStyles(lay.Get(), runPtrs, runStarts, lb.linkRanges,
+                      lb.measFmt ? lb.measFmt : m_fmtBody.Get());
     lb.layout = lay;
 }
 
@@ -2002,8 +2048,14 @@ static VOID CALLBACK CopyRevertTimerProc(HWND hwnd, UINT, UINT_PTR id, DWORD) {
 void MarkdownRenderer::CopyBlockText(int blockIdx) {
     for (const auto& lb : m_layout) {
         if (lb.blockIndex == blockIdx) {
-            if (!lb.fullText.empty()) {
-                CopyToClipboard(lb.fullText);
+            // 块级公式：复制原始 LaTeX 源码（比 Unicode 近似文本更有用）
+            std::wstring text = lb.fullText;
+            if (lb.type == BlockType::MathBlock &&
+                blockIdx >= 0 && blockIdx < (int)m_doc.blocks.size()) {
+                text = m_doc.blocks[blockIdx].rawText;
+            }
+            if (!text.empty()) {
+                CopyToClipboard(text);
                 m_copiedBlockIndex = blockIdx;
                 m_copiedTick = GetTickCount();
                 InvalidateRect(m_hwnd, nullptr, FALSE);

@@ -1,4 +1,5 @@
 #include "MarkdownParser.h"
+#include "MathText.h"
 #include <cwctype>
 #include <algorithm>
 
@@ -135,6 +136,64 @@ void ParseInline(const std::wstring& s, const InlineState& base, std::vector<Inl
     while (i < n) {
         wchar_t c = s[i];
         if (!st.code) {
+            // 反斜杠转义：\$ \* \_ \~ \[ \] \( \) \# \+ \- \! \\ 等输出字面字符
+            // （\a 之类非 Markdown 特殊字符的序列保持原样，LaTeX 命令仅在 $..$ 内有效）
+            if (c == L'\\' && i + 1 < n && wcschr(L"$*_~[]()#!+-.\\>|", s[i + 1])) {
+                buf += s[i + 1];
+                i += 2;
+                continue;
+            }
+            // 行内公式 $$...$$（非行首出现时按行内处理）
+            if (c == L'$' && i + 1 < n && s[i + 1] == L'$') {
+                size_t close = s.find(L"$$", i + 2);
+                if (close != std::wstring::npos) {
+                    flush();
+                    InlineRun r;
+                    r.math = true;
+                    r.mathSrc = s.substr(i + 2, close - (i + 2));
+                    MathTextResult mt = LatexToMathText(r.mathSrc);
+                    r.text = mt.text;
+                    r.mathDecos = std::move(mt.decos);
+                    r.bold = st.bold;
+                    r.italic = st.italic;
+                    r.strikethrough = st.strike;
+                    r.linkUrl = st.linkUrl;
+                    if (!r.text.empty()) out.push_back(r);
+                    i = close + 2;
+                    continue;
+                }
+                buf += c; i++; continue;  // 未闭合：字面 $
+            }
+            // 行内公式 $...$
+            // 规则（参考 KaTeX）：开启 $ 后不能紧跟空白/换行；
+            // 闭合 $ 前不能是空白、后不能紧跟数字（避免 "$5 与 $10" 货币误判）；不跨行。
+            if (c == L'$' && i + 1 < n && !iswspace(s[i + 1])) {
+                size_t close = std::wstring::npos;
+                for (size_t j = i + 1; j < n; ++j) {
+                    wchar_t d = s[j];
+                    if (d == L'\n') break;                    // 不跨行
+                    if (d == L'$' && !iswspace(s[j - 1])) {
+                        if (j + 1 >= n || !iswdigit(s[j + 1])) { close = j; break; }
+                    }
+                }
+                if (close != std::wstring::npos && close > i + 1) {
+                    flush();
+                    InlineRun r;
+                    r.math = true;
+                    r.mathSrc = s.substr(i + 1, close - (i + 1));
+                    MathTextResult mt = LatexToMathText(r.mathSrc);
+                    r.text = mt.text;
+                    r.mathDecos = std::move(mt.decos);
+                    r.bold = st.bold;
+                    r.italic = st.italic;
+                    r.strikethrough = st.strike;
+                    r.linkUrl = st.linkUrl;
+                    if (!r.text.empty()) out.push_back(r);
+                    i = close + 1;
+                    continue;
+                }
+                buf += c; i++; continue;  // 未闭合：字面 $
+            }
             // 加粗 ** 或 __
             if ((c == L'*' && i + 1 < n && s[i + 1] == L'*') ||
                 (c == L'_' && i + 1 < n && s[i + 1] == L'_')) {
@@ -240,9 +299,58 @@ static bool ParseImageLine(const std::wstring& line, ImageData& out) {
     return true;
 }
 
-// ---- 表格解析（GFM）----
+// 解析块级数学公式：lines[i]（trim 后）以 $$ 开头。
+// 支持两种形式：
+//  1. 单行：$$ ... $$（首尾定界符同行）
+//  2. 多行：$$ 开启行（可带内容）... 后续行 ... $$ 结束行（$$ 前可带内容）
+// 成功时消耗对应行并输出 LaTeX 源到 out；未闭合（到文件尾都找不到 $$）返回
+// false 且不消耗行（回退为普通段落处理）。
+bool ParseDisplayMath(const std::vector<std::wstring>& lines, size_t& i, size_t N,
+                      std::wstring& out) {
+    const std::wstring t = Trim(lines[i]);
+    if (t.size() < 2 || t[0] != L'$' || t[1] != L'$') return false;
 
-// 按列拆分表格行，处理 \| 转义，自动去除首尾管道符产生的空单元格
+    // 单行形式：$$ ... $$
+    {
+        const std::wstring rest = t.substr(2);
+        const size_t close = rest.find(L"$$");
+        if (close != std::wstring::npos) {
+            out = Trim(rest.substr(0, close));
+            i++;
+            return true;
+        }
+    }
+
+    // 多行形式：收集直到含 $$ 的行
+    const size_t saved = i;
+    std::wstring body = Trim(t.substr(2));
+    i++;
+    bool closed = false;
+    while (i < N) {
+        const std::wstring lt = Trim(lines[i]);
+        const size_t p = lt.find(L"$$");
+        if (p != std::wstring::npos) {
+            if (p > 0) {
+                if (!body.empty()) body += L'\n';
+                body += Trim(lt.substr(0, p));
+            }
+            i++;
+            closed = true;
+            break;
+        }
+        if (!body.empty()) body += L'\n';
+        body += lt;
+        i++;
+    }
+    if (!closed) {
+        i = saved;   // 未闭合：恢复，交回普通段落
+        return false;
+    }
+    out = Trim(body);
+    return true;
+}
+
+// ---- 表格解析（GFM）----// 按列拆分表格行，处理 \| 转义，自动去除首尾管道符产生的空单元格
 std::vector<std::wstring> SplitTableRow(const std::wstring& line) {
     const std::wstring s = Trim(line);
     std::vector<std::wstring> cells;
@@ -353,6 +461,26 @@ Document ParseMarkdown(const std::wstring& content) {
             Block b; b.type = BlockType::CodeBlock; b.codeLang = lang; b.rawText = raw;
             doc.blocks.push_back(std::move(b));
             continue;
+        }
+
+        // 块级数学公式 $$...$$
+        {
+            std::wstring mathSrc;
+            if (ParseDisplayMath(lines, i, N, mathSrc)) {
+                Block b;
+                b.type = BlockType::MathBlock;
+                b.rawText = mathSrc;
+                InlineRun r;
+                r.math = true;
+                r.mathSrc = mathSrc;
+                MathTextResult mt = LatexToMathText(mathSrc);
+                r.text = mt.text;
+                r.mathDecos = std::move(mt.decos);
+                if (r.text.empty()) r.text = mathSrc;   // 全空内容回退源码
+                b.runs.push_back(std::move(r));
+                doc.blocks.push_back(std::move(b));
+                continue;
+            }
         }
 
         // ATX 标题
@@ -492,6 +620,8 @@ Document ParseMarkdown(const std::wstring& content) {
                 if (nt.empty()) break;
                 wchar_t fc2 = 0; int fl2 = 0;
                 if (IsFence(nl, fc2, fl2)) break;
+                // 块级公式开始行：结束段落
+                if (nt.size() >= 2 && nt[0] == L'$' && nt[1] == L'$') break;
                 int hl = 0; std::wstring ht;
                 if (IsHeadingHash(nl, hl, ht)) break;
                 if (IsHrLine(nl)) break;

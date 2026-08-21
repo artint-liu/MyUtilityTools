@@ -97,6 +97,8 @@
     <ClInclude Include="HtmlExporter.h" />
     <ClInclude Include="MarkdownParser.h" />
     <ClInclude Include="MarkdownRenderer.h" />
+    <ClInclude Include="MathText.h" />
+    <ClInclude Include="MathInlineObject.h" />
     <ClInclude Include="SyntaxHighlighter.h" />
     <ClInclude Include="TextRenderer.h" />
     <ClInclude Include="TocPanel.h" />
@@ -109,6 +111,8 @@
     <ClCompile Include="HtmlExporter.cpp" />
     <ClCompile Include="MarkdownParser.cpp" />
     <ClCompile Include="MarkdownRenderer.cpp" />
+    <ClCompile Include="MathText.cpp" />
+    <ClCompile Include="MathInlineObject.cpp" />
     <ClCompile Include="SyntaxHighlighter.cpp" />
     <ClCompile Include="TextRenderer.cpp" />
     <ClCompile Include="TocPanel.cpp" />

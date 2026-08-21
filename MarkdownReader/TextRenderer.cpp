@@ -4,6 +4,7 @@ using Microsoft::WRL::ComPtr;
 
 CustomTextRenderer::CustomTextRenderer(IDWriteFactory* factory) {
     if (factory) {
+        m_factory = factory;
         factory->QueryInterface(IID_PPV_ARGS(&m_dwrite4));
         factory->QueryInterface(IID_PPV_ARGS(&m_dwrite2));
     }
@@ -179,9 +180,16 @@ HRESULT STDMETHODCALLTYPE CustomTextRenderer::DrawStrikethrough(
 }
 
 HRESULT STDMETHODCALLTYPE CustomTextRenderer::DrawInlineObject(
-    void*, FLOAT, FLOAT, IDWriteInlineObject*, BOOL, BOOL, IUnknown*)
+    void* clientDrawingContext, FLOAT originX, FLOAT originY,
+    IDWriteInlineObject* inlineObject, BOOL isSideways, BOOL isRightToLeft,
+    IUnknown* clientDrawingEffect)
 {
-    return S_OK;
+    // 透传给内联对象自绘（数学公式的分式/大运算符等二维结构）。
+    // clientDrawingContext 为 RenderContext*，由内联对象取渲染目标与画笔。
+    if (!inlineObject) return S_OK;
+    return inlineObject->Draw(clientDrawingContext, this,
+                              originX, originY, isSideways, isRightToLeft,
+                              clientDrawingEffect);
 }
 
 HRESULT STDMETHODCALLTYPE CustomTextRenderer::IsPixelSnappingDisabled(void*, BOOL* isDisabled) {

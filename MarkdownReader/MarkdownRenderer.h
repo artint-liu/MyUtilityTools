@@ -138,6 +138,7 @@ private:
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtBody;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtHeading[6];
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtCode;
+    Microsoft::WRL::ComPtr<IDWriteTextFormat> m_fmtMath;   // 数学公式（斜体；无自定义字体时用 Cambria Math）
 
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brText;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_brLink;
@@ -260,12 +261,14 @@ private:
     static bool FindTableCellRange(const LayoutBlock& lb, size_t row, size_t col,
                                    UINT32* start, UINT32* end);
 
-    // 对文本布局套用行内样式（粗体/斜体/删除线/行内代码/链接）。
+    // 对文本布局套用行内样式（粗体/斜体/删除线/行内代码/链接/数学公式）。
+    // fmt 为该块的文本格式（提供字号/字体族，供数学二维结构创建内联对象）；
     // 命中的链接会追加到 outLinks。
     void ApplyInlineStyles(IDWriteTextLayout* layout,
                            const std::vector<InlineRun*>& runs,
                            const std::vector<UINT32>& runStarts,
-                           std::vector<LayoutBlock::LinkRange>& outLinks);
+                           std::vector<LayoutBlock::LinkRange>& outLinks,
+                           IDWriteTextFormat* fmt = nullptr);
     // 创建"复制"按钮的文字布局（居中对齐）。
     Microsoft::WRL::ComPtr<IDWriteTextLayout> CreateCopyButtonLayout(const wchar_t* text, UINT32 len) const;
     // 收集 [pos,pos+len) 文本范围在屏幕上占据的矩形（自动处理表格分单元格的情况）。

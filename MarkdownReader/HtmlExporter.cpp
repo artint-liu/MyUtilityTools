@@ -87,6 +87,13 @@ void EmitRuns(const std::vector<InlineRun>& runs, std::string& out) {
             out += "</code>";
             continue;
         }
+        // 行内公式：斜体 + 数学字体（Unicode 近似文本）
+        if (r.math) {
+            out += "<em class=\"m\">";
+            out += text;
+            out += "</em>";
+            continue;
+        }
         // 链接：外层 a
         bool inLink = !r.linkUrl.empty();
         if (inLink) {
@@ -149,6 +156,9 @@ th{font-weight:600;background:#F6F8FA;}
 table tr{background:#FFFFFF;border-top:1px solid #D0D7DE;}
 table tr:nth-child(2n){background:#F6F8FA;}
 img{max-width:100%;}
+.math-block{text-align:center;font-family:"Cambria Math","Segoe UI Symbol",serif;
+  font-style:italic;font-size:1.05em;margin:16px 0;white-space:pre-line;}
+.m{font-family:"Cambria Math","Segoe UI Symbol",serif;}
 )CSS";
 
     std::string html;
@@ -236,6 +246,13 @@ img{max-width:100%;}
             EmitRuns(b.runs, html);
             html += "</p>\n";
             html += "</blockquote>\n";
+            break;
+        }
+        case BlockType::MathBlock: {
+            closeAllLists();
+            html += "<p class=\"math-block\">";
+            EmitRuns(b.runs, html);
+            html += "</p>\n";
             break;
         }
         case BlockType::ListItem: {

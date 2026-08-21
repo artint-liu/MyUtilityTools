@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include "MathText.h"
 
 // 块类型
 enum class BlockType {
@@ -13,6 +14,7 @@ enum class BlockType {
     HorizontalRule,
     Table,
     Image,   // 独立成行的图片 ![alt](src "title")
+    MathBlock,  // $$...$$ 块级数学公式（rawText 为 LaTeX 源，runs 为 Unicode 近似文本）
 };
 
 // 行内格式片段
@@ -22,6 +24,9 @@ struct InlineRun {
     bool italic = false;
     bool code = false;
     bool strikethrough = false;
+    bool math = false;              // 行内公式 $...$（text 为 LaTeX->Unicode 近似文本）
+    std::wstring mathSrc;           // 行内公式的原始 LaTeX 源（复制为 Markdown 时还原）
+    std::vector<MathDeco> mathDecos;// 行内公式中的二维结构（分式/大运算符），渲染时替换为内联图形
     std::wstring linkUrl;   // 非空表示是链接
 };
 

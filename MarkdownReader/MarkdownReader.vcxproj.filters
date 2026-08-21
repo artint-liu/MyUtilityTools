@@ -21,6 +21,8 @@
     <ClInclude Include="HtmlExporter.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MarkdownParser.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="MarkdownRenderer.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MathText.h"><Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="MathInlineObject.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="TextRenderer.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="TocPanel.h"><Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="resource.h"><Filter>Header Files</Filter></ClInclude>
@@ -32,6 +34,8 @@
     <ClCompile Include="HtmlExporter.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MarkdownParser.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="MarkdownRenderer.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MathText.cpp"><Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="MathInlineObject.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="TextRenderer.cpp"><Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="TocPanel.cpp"><Filter>Source Files</Filter></ClCompile>
   </ItemGroup>
