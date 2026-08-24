@@ -162,12 +162,12 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         return true;
     }
 
-    // ---- 根号：原字号渲染 √，宽度压缩使被开方数与根号重叠 ----
+    // ---- 根式：根号 + 被开方数重叠排版，顶横线覆盖整个被开方数 ----
     if (deco.kind == MathDeco::Kind::Sqrt) {
         m_isFrac = false;
         m_isScript = false;
         m_isSqrt = true;
-        // 系统字体集时与 math run 一致用 Cambria Math（√ 字形标准、基线匹配）
+        // 被开方数与周围文本同字号；系统字体集时与 math run 一致用 Cambria Math
         ComPtr<IDWriteTextFormat> f;
         if (!FontManager::Instance().HasCustomFonts()) {
             IDWriteFontCollection* coll = nullptr;
@@ -175,25 +175,48 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
             dwrite->CreateTextFormat(L"Cambria Math", coll, DWRITE_FONT_WEIGHT_NORMAL,
                 DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STRETCH_NORMAL, fontSize,
                 L"en-us", f.GetAddressOf());
+            if (f) f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
         if (!f) f = MakeScriptFormat(dwrite, fmt, fontSize, italic);
         if (!f) return false;
-        if (f) f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         m_sym = MakeText(dwrite, f.Get(), std::wstring(1, L'√'));
         if (!m_sym) return false;
+        if (!deco.top.empty()) m_body = MakeText(dwrite, f.Get(), deco.top);
 
-        DWRITE_TEXT_METRICS sm = {};
+        DWRITE_TEXT_METRICS sm = {}, bm = {};
         m_sym->GetMetrics(&sm);
+        float symBase = sm.height * 0.8f, bodyBase = 0, bodyH = 0, bodyW = 0;
         DWRITE_LINE_METRICS lm = {};
         UINT32 cnt = 0;
-        if (SUCCEEDED(m_sym->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0) {
-            m_baseline = lm.baseline;   // √ 行的真实 ascent，与周围文本基线对齐
-        } else {
-            m_baseline = sm.height * 0.8f;
+        if (SUCCEEDED(m_sym->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0)
+            symBase = lm.baseline;               // 根号行真实基线
+        if (m_body) {
+            m_body->GetMetrics(&bm);
+            bodyW = bm.width;
+            bodyH = bm.height;
+            if (SUCCEEDED(m_body->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0)
+                bodyBase = lm.baseline;
+            else
+                bodyBase = bm.height * 0.8f;
         }
+        // 对象基线取根号行基线，被开方数按基线与根号对齐
+        m_baseline = symBase;
         m_symTop = 0;
-        m_height = sm.height;
-        m_width = sm.width * kSqrtWidthRatio;   // 只占一半，字形右半溢出与内容重叠
+        m_bodyTop = m_baseline - bodyBase;
+        m_bodyX = sm.width * kSqrtWidthRatio;    // 被开方数从根号一半位置起排
+        m_height = (std::max)(sm.height, m_bodyTop + bodyH);
+        m_width = m_bodyX + bodyW;
+
+        // 顶横线：与根号字形 ink 顶部同高（overhang.top 为负 = ink 距 layout
+        // 顶的空白），从被开方数第一个符号（m_bodyX）起笔，延伸覆盖整个
+        // 被开方数；与根号自带的短横线衔接（重叠段不可见）
+        m_sqrtLineW = (std::max)(1.0f, fontSize * 0.045f);
+        DWRITE_OVERHANG_METRICS om = {};
+        float inkTop = sm.height * 0.05f;        // 回退估计
+        if (SUCCEEDED(m_sym->GetOverhangMetrics(&om)) && om.top < 0)
+            inkTop = -om.top;
+        m_sqrtLineY = inkTop + m_sqrtLineW * 0.5f;
+        m_sqrtLineX = m_bodyX + (sm.width * (1 - kSqrtWidthRatio)); // 公式首字符横线缩进一点
         return true;
     }
 
@@ -282,8 +305,8 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::GetBreakConditions(
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDWriteTextRenderer*,
-    FLOAT originX, FLOAT originY, BOOL, BOOL, IUnknown*) {
+HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDWriteTextRenderer*, FLOAT originX, FLOAT originY, BOOL, BOOL, IUnknown*)
+{
     auto* ctx = static_cast<RenderContext*>(clientDrawingContext);
     if (!ctx || !ctx->rt || !ctx->defaultBrush) return S_OK;
     ID2D1RenderTarget* rt = ctx->rt;
@@ -319,11 +342,22 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDW
     }
 
     if (m_isSqrt) {
-        // 根号：完整字形绘制于对象原点，宽度溢出对象右边界，与被开方数重叠
+        // 根号：完整字形绘制于对象原点（右半溢出，与被开方数重叠）
         if (m_sym) {
             rt->DrawTextLayout(D2D1::Point2F(originX, top + m_symTop), m_sym.Get(),
                                brush, kOpts);
         }
+        // 被开方数：从根号一半位置起排
+        if (m_body) {
+            rt->DrawTextLayout(D2D1::Point2F(originX + m_bodyX, top + m_bodyTop),
+                               m_body.Get(), brush, kOpts);
+        }
+        // 顶横线：从被开方数第一个符号起笔，延伸覆盖整个被开方数
+        const float x1 = originX + m_sqrtLineX;
+        const float x2 = (std::max)(originX + m_width - 1.0f, x1 + 1.0f);
+        rt->DrawLine(D2D1::Point2F(x1, top + m_sqrtLineY),
+                     D2D1::Point2F(x2, top + m_sqrtLineY),
+                     brush, m_sqrtLineW);
         return S_OK;
     }
 

@@ -24,9 +24,9 @@ struct MathDeco {
         BigOp,   // 大运算符：symbol 放大（占 2~3 行高），top=上标 bottom=下标（右上/右下）
         Script,  // 真上标/下标：上下标内容无法完全映射为 Unicode 上下标字符时使用，
                  // top=上标文本 bottom=下标文本（小字号抬高/降低排版），symbol 为 '^' 或 '_'
-        Sqrt,    // 根号：len 覆盖占位字符 '√'。对象以原字号绘制完整根号字形，
-                 // 但只声明根号 advance 的一半宽度（字形右半溢出绘制），
-                 // 其后文本（被开方数）自然从根号一半位置开始，与根号重叠排版
+        Sqrt,    // 根式：top=被开方数，len 覆盖占位文本 "√"+被开方数。对象绘制
+                 // 根号与被开方数（内容从根号一半位置起排，与根号重叠），
+                 // 并画顶横线覆盖整个被开方数
     };
     Kind kind = Kind::Frac;
     uint32_t start = 0;         // 在 MathTextResult.text 中的起始位置（UTF-16 code unit）

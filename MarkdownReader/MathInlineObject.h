@@ -55,6 +55,13 @@ private:
     float m_lineY = 0;                 // 分数线相对对象顶的 y
     float m_botTop = 0;                // 分母顶部相对对象顶的 y
 
+    // 根式布局
+    Microsoft::WRL::ComPtr<IDWriteTextLayout> m_body;  // 被开方数（m_sym 为根号）
+    float m_bodyX = 0, m_bodyTop = 0;  // 被开方数相对对象左上的位置
+    float m_sqrtLineX = 0;             // 顶横线起点 x（相对对象左）
+    float m_sqrtLineY = 0;             // 顶横线 y（相对对象顶，根号 ink 顶部）
+    float m_sqrtLineW = 1.0f;          // 顶横线粗细
+
     // 大运算符 / 真上下标布局
     Microsoft::WRL::ComPtr<IDWriteTextLayout> m_sym, m_sup, m_sub;  // 符号/上标/下标
     float m_symTop = 0;                // 符号顶部相对对象顶的 y

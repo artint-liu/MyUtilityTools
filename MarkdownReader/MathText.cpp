@@ -27,7 +27,8 @@ constexpr wchar_t kSentScript  = 0xE008;
 constexpr wchar_t kSentScrMid  = 0xE009;
 constexpr wchar_t kSentScrEnd  = 0xE00A;
 constexpr wchar_t kSentScrSep  = 0xE00B;
-constexpr wchar_t kSentSqrt    = 0xE00C;  // 根式：E00C 紧跟占位字符 '√'
+constexpr wchar_t kSentSqrt    = 0xE00C;  // 根式：E00C <被开方数> E00D
+constexpr wchar_t kSentSqrtEnd = 0xE00D;
 
 // 文本是否含结构哨兵（快速判断，避免无关路径的扫描开销）
 inline bool HasSentinels(const std::wstring& s) {
@@ -35,7 +36,7 @@ inline bool HasSentinels(const std::wstring& s) {
         { kSentBig, kSentBigSub, kSentBigSup, kSentBigEnd,
           kSentFrac, kSentFracMid, kSentFracEnd,
           kSentScript, kSentScrMid, kSentScrEnd, kSentScrSep,
-          kSentSqrt })) != std::wstring::npos;
+          kSentSqrt, kSentSqrtEnd })) != std::wstring::npos;
 }
 
 
@@ -614,10 +615,9 @@ struct Converter {
                 }
             }
             std::wstring a = Arg();
-            std::wstring inner = (a.size() <= 1) ? a : (L"(" + a + L")");
-            // 根号输出结构哨兵：ExtractDecos 生成 Sqrt deco（内联对象只占根号
-            // 一半宽度，被开方数随文本流从根号一半位置开始，重叠排版）
-            return idx + std::wstring(1, kSentSqrt) + L"√" + inner;
+            // 根式输出结构哨兵：ExtractDecos 生成 Sqrt deco（内联对象绘制
+            // 根号 + 被开方数，顶横线覆盖整个被开方数，内容与根号重叠排版）
+            return idx + std::wstring(1, kSentSqrt) + a + std::wstring(1, kSentSqrtEnd);
         }
 
         // ---- 文本类：内容原样保留（不转换 LaTeX 命令，保留空格） ----
@@ -866,21 +866,26 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
             i = pEnd;
             continue;
         }
-        // 根式： E00C 紧跟占位字符 '√'（被开方数留在文本流中）
+        // 根式： E00C <被开方数> E00D（占位文本为 "√"+被开方数）
         if (c == kSentSqrt) {
-            if (i + 1 < n && src[i + 1] == L'√') {
-                if (decos) {
-                    MathDeco d;
-                    d.kind = MathDeco::Kind::Sqrt;
-                    d.start = (uint32_t)out.size();
-                    d.len = 1;
-                    decos->push_back(d);
-                }
-                out += L'√';
-                ++i;   // 连同占位 '√' 一起消费
+            size_t pEnd = src.find(kSentSqrtEnd, i + 1);
+            if (pEnd == std::wstring::npos) {
+                out += c;   // 防御：残缺哨兵按普通字符
                 continue;
             }
-            out += c;   // 防御：残缺哨兵按普通字符
+            std::wstring inner = src.substr(i + 1, pEnd - i - 1);
+            const uint32_t start = (uint32_t)out.size();
+            out += L'√';
+            out += inner;
+            if (decos) {
+                MathDeco d;
+                d.kind = MathDeco::Kind::Sqrt;
+                d.start = start;
+                d.len = (uint32_t)(inner.size() + 1);
+                d.top = inner;
+                decos->push_back(d);
+            }
+            i = pEnd;
             continue;
         }
         // 真上下标： E008 <sup> E00B <sub> E009 <占位文本> E00A
