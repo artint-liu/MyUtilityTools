@@ -36,6 +36,9 @@
     <ClInclude Include="IUnityGraphics.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="MyD3D11Buffer.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -51,6 +54,9 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="redirection.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="MyD3D11Buffer.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

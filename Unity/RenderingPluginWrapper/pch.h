@@ -10,6 +10,7 @@
 // 添加要在此处预编译的标头
 #include "framework.h"
 #include <cstdint>
+#include <assert.h>
 
 #ifdef DLL_EXPORTS
 #  define DLL_API __declspec(dllexport)
@@ -17,7 +18,7 @@
 #  define DLL_API __declspec(dllimport)
 #endif
 
-#define NOT_IMPLEMENT
+#define NOT_IMPLEMENT assert(0)
 
 #define SAFE_RELEASE(p) if(p) { (p)->Release(); p = nullptr; }
 

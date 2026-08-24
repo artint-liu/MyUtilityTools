@@ -86,7 +86,7 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)..\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
+      <Command>copy $(TargetPath) D:\MyCodes\D3D12Wrapper\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -106,7 +106,7 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)..\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
+      <Command>copy $(TargetPath) D:\MyCodes\D3D12Wrapper\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -124,7 +124,7 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)..\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
+      <Command>copy $(TargetPath) D:\MyCodes\D3D12Wrapper\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -144,13 +144,14 @@
       <EnableUAC>false</EnableUAC>
     </Link>
     <PostBuildEvent>
-      <Command>copy $(TargetPath) $(SolutionDir)..\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
+      <Command>copy $(TargetPath) D:\MyCodes\D3D12Wrapper\NativeRenderingPlugin\UnityProject\Assets\Plugins\x86_64</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="framework.h" />
     <ClInclude Include="IUnityGraphics.h" />
     <ClInclude Include="IUnityInterface.h" />
+    <ClInclude Include="MyD3D11Buffer.h" />
     <ClInclude Include="MyD3D11Device.h" />
     <ClInclude Include="MyD3D11DeviceContext.h" />
     <ClInclude Include="pch.h" />
@@ -158,6 +159,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="MyD3D11Buffer.cpp" />
     <ClCompile Include="MyD3D11Device.cpp" />
     <ClCompile Include="MyD3D11DeviceContext.cpp" />
     <ClCompile Include="pch.cpp">
