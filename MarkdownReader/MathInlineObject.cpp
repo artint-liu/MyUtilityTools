@@ -37,6 +37,28 @@ ComPtr<IDWriteTextLayout> MakeText(IDWriteFactory* dwrite, IDWriteTextFormat* fm
     return lay;
 }
 
+// 取文本布局的宽度与真实基线（ascent = 顶到基线，descent = 基线到底）
+struct ScriptTextInfo {
+    float width = 0, ascent = 0, descent = 0;
+};
+ScriptTextInfo GetTextInfo(IDWriteTextLayout* lay) {
+    ScriptTextInfo info;
+    if (!lay) return info;
+    DWRITE_TEXT_METRICS tm = {};
+    lay->GetMetrics(&tm);
+    info.width = tm.width;
+    DWRITE_LINE_METRICS lm = {};
+    UINT32 cnt = 0;
+    if (SUCCEEDED(lay->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0) {
+        info.ascent = lm.baseline;
+        info.descent = lm.height - lm.baseline;
+    } else {
+        info.ascent = tm.height * 0.8f;
+        info.descent = tm.height * 0.2f;
+    }
+    return info;
+}
+
 } // namespace
 
 ComPtr<IDWriteInlineObject> MathInlineObject::Create(
@@ -60,6 +82,7 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
 
     if (deco.kind == MathDeco::Kind::Frac) {
         m_isFrac = true;
+        m_isScript = false;
         ComPtr<IDWriteTextFormat> f = MakeScriptFormat(dwrite, fmt, fontSize * 0.85f, italic);
         if (!f) return false;
         m_top = MakeText(dwrite, f.Get(), deco.top);
@@ -86,8 +109,56 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         return true;
     }
 
+    if (deco.kind == MathDeco::Kind::Script) {
+        // 真上标/下标：小字号文字抬高/降低排版（上下标内容无法映射为 Unicode 时）
+        m_isFrac = false;
+        m_isScript = true;
+        ComPtr<IDWriteTextFormat> f = MakeScriptFormat(dwrite, fmt, fontSize * 0.72f, italic);
+        if (!f) return false;
+        m_sup = MakeText(dwrite, f.Get(), deco.top);
+        m_sub = MakeText(dwrite, f.Get(), deco.bottom);
+        if (!m_sup && !m_sub) return false;
+
+        // LaTeX 惯例：上标基线在主基线上方约 0.42em，下标基线在下方约 0.18em
+        const float kSupLift = fontSize * 0.42f;
+        const float kSubDrop = fontSize * 0.18f;
+        // 左侧留白：前面的字符常为斜体变量（数学斜体字形右侧凸出超出 advance
+        // width），不留白会与角标视觉重叠
+        const float kScrPadX = 2.0f;
+        const ScriptTextInfo sup = GetTextInfo(m_sup.Get());
+        const ScriptTextInfo sub = GetTextInfo(m_sub.Get());
+
+        m_scriptX = kScrPadX;
+        if (m_sup) {
+            // 上标：顶部贴对象顶，基线 = 抬高量 + 上标 ascent
+            m_supTop = 0;
+            m_baseline = kSupLift + sup.ascent;
+            m_height = sup.ascent + sup.descent;
+        } else {
+            // 只有下标：下标文字的 x-height 部分伸到主基线上方
+            // （下标基线在主基线下 0.18em，小写字母 ascent 约 0.6em，顶部高于主基线），
+            // 对象必须包含这部分，否则绘制溢出到前字符区域且行高计算不足
+            const float subAscAboveBase = sub.ascent - kSubDrop;
+            m_baseline = (subAscAboveBase > 1.0f) ? subAscAboveBase : 1.0f;
+            m_height = m_baseline + kSubDrop + sub.descent;
+        }
+        if (m_sub) {
+            // 下标基线统一在主基线下 0.18em（与"只有下标"的对象位置一致，
+            // 保证 x_i^2 的 i 与 x_{ij} 的 ij 处于同一高度）。
+            // 上标 descent 区与下标 ascent 区的交叠是空白区，紧贴堆叠即可（LaTeX 同此）。
+            m_subTop = m_baseline + kSubDrop - sub.ascent;
+            const float subBottom = m_baseline + kSubDrop + sub.descent;
+            if (subBottom > m_height) m_height = subBottom;
+        }
+        if (m_baseline > m_height) m_height = m_baseline + 1.0f;
+        m_width = kScrPadX + (std::max)(sup.width, sub.width);
+        if (m_width <= kScrPadX) m_width = kScrPadX + 1.0f;
+        return true;
+    }
+
     // ---- 大运算符：符号放大，上下标排右上/右下 ----
     m_isFrac = false;
+    m_isScript = false;
     const float scale = IsNarrowOp(deco.symbol) ? 2.4f : 1.9f;
     ComPtr<IDWriteTextFormat> symFmt = MakeScriptFormat(dwrite, fmt, fontSize * scale, italic);
     ComPtr<IDWriteTextFormat> scrFmt = MakeScriptFormat(dwrite, fmt, fontSize * 0.72f, italic);
@@ -190,6 +261,19 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDW
         // 分母（分数线下方，居中）
         rt->DrawTextLayout(D2D1::Point2F(originX + (m_width - m_botW) * 0.5f, top + m_botTop),
                            m_bottom.Get(), brush, kOpts);
+        return S_OK;
+    }
+
+    if (m_isScript) {
+        // 真上标/下标：小字号文字（上标抬高、下标降低），m_scriptX 为左侧留白
+        if (m_sup) {
+            rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_supTop),
+                               m_sup.Get(), brush, kOpts);
+        }
+        if (m_sub) {
+            rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_subTop),
+                               m_sub.Get(), brush, kOpts);
+        }
         return S_OK;
     }
 

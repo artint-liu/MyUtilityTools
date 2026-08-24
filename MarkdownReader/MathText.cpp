@@ -8,12 +8,14 @@ namespace {
 
 // ==================== 结构哨兵 ====================
 //
-// 转换过程中用私用区字符临时标记二维结构（分式/大运算符），转换完成后
+// 转换过程中用私用区字符临时标记二维结构（分式/大运算符/真上下标），转换完成后
 // 由顶层 ExtractDecos 统一扫描：移除哨兵、生成 MathDeco（位置基于扫描输出）。
 // 参数提取（Arg）路径调用 LinearizeText 把哨兵收敛为线性文本（嵌套线性化）。
 //
 //   大运算符： E001 <占位文本(符号+Unicode上下标)> E002 <下标> E003 <上标> E004
 //   分式：     E005 <分子> E006 <分母> E007
+//   真上下标： E008 <上标文本> E00B <下标文本> E009 <占位文本(^(..)形式)> E00A
+//             （单角标时另一槽为空；双角标 x_i^2 合并为一个结构，上下标垂直对齐）
 constexpr wchar_t kSentBig     = 0xE001;
 constexpr wchar_t kSentBigSub  = 0xE002;
 constexpr wchar_t kSentBigSup  = 0xE003;
@@ -21,12 +23,17 @@ constexpr wchar_t kSentBigEnd  = 0xE004;
 constexpr wchar_t kSentFrac    = 0xE005;
 constexpr wchar_t kSentFracMid = 0xE006;
 constexpr wchar_t kSentFracEnd = 0xE007;
+constexpr wchar_t kSentScript  = 0xE008;
+constexpr wchar_t kSentScrMid  = 0xE009;
+constexpr wchar_t kSentScrEnd  = 0xE00A;
+constexpr wchar_t kSentScrSep  = 0xE00B;
 
 // 文本是否含结构哨兵（快速判断，避免无关路径的扫描开销）
 inline bool HasSentinels(const std::wstring& s) {
     return s.find_first_of(std::wstring(
         { kSentBig, kSentBigSub, kSentBigSup, kSentBigEnd,
-          kSentFrac, kSentFracMid, kSentFracEnd })) != std::wstring::npos;
+          kSentFrac, kSentFracMid, kSentFracEnd,
+          kSentScript, kSentScrMid, kSentScrEnd, kSentScrSep })) != std::wstring::npos;
 }
 
 
@@ -328,19 +335,90 @@ struct Converter {
         return HasSentinels(r) ? LinearizeText(r) : r;
     }
 
-    // 处理 ^ / _ 上下标（pos 已越过 ^ 或 _）
-    std::wstring Script(wchar_t kind) {
-        // 特例：^\circ（度数符号）
-        if (kind == L'^' && Peek() == L'\\') {
+    // 处理一组上下标（pos 已越过第一个 ^ 或 _）。
+    // 连续的 ^.. 与 _..（任意顺序，如 x_i^2 / x^2_i）合并为一个真排版结构，
+    // 上下标从同一水平位置垂直堆叠（LaTeX 惯例，更美观）。
+    std::wstring ScriptGroup(wchar_t kind1) {
+        // 读取第一个角标参数（^ 后可直接跟命令，如 ^\circ）
+        bool circ1 = false;
+        std::wstring arg1;
+        if (kind1 == L'^' && Peek() == L'\\') {
             pos++;
-            std::wstring c = Cmd();
-            if (HasSentinels(c)) c = LinearizeText(c);   // 命令含二维结构（病态输入）：线性化
-            if (c == L"∘") return L"°";
-            return MakeScript(kind, c);
+            arg1 = Cmd();
+            if (HasSentinels(arg1)) arg1 = LinearizeText(arg1);   // 病态嵌套：线性化
+            circ1 = (arg1 == L"∘");
+        } else {
+            arg1 = Arg();
         }
-        // 特例：_{\circ} 罕见，走通用路径
-        std::wstring arg = Arg();
-        return MakeScript(kind, arg);
+
+        // 前瞻第二种角标（^ 后跟 _ 或 _ 后跟 ^，中间可有空白）
+        wchar_t kind2 = 0;
+        std::wstring arg2;
+        {
+            size_t save = pos;
+            SkipSpaces();
+            wchar_t k = Peek();
+            if ((k == L'^' || k == L'_') && k != kind1) {
+                pos++;
+                arg2 = Arg();
+                kind2 = k;
+            } else {
+                pos = save;
+            }
+        }
+
+        // ^\circ 特例（度数符号）：直接输出 °，不参与上标
+        if (circ1) {
+            if (!kind2) return L"°";
+            return L"°" + EmitScript(kind2, arg2);   // 病态组合（90^\circ_x）
+        }
+        if (!kind2) return EmitScript(kind1, arg1);
+
+        // 双角标：合并为一个结构（sup/sub 垂直对齐）
+        const std::wstring sup = (kind1 == L'^') ? arg1 : arg2;
+        const std::wstring sub = (kind1 == L'_') ? arg1 : arg2;
+        return EmitScriptPair(sup, sub, ScriptPh(kind1, arg1) + ScriptPh(kind2, arg2));
+    }
+
+    // 角标占位文本（复制/搜索用）：单字符 "_i"、多字符 "_(n+1)"
+    static std::wstring ScriptPh(wchar_t kind, const std::wstring& arg) {
+        std::wstring ph;
+        ph += kind;
+        if (arg.size() == 1) ph += arg;
+        else ph += L"(" + arg + L")";
+        return ph;
+    }
+
+    // 生成上下标文本：一律真上下标结构哨兵（小字号抬高/降低排版）。
+    // 不再使用 Unicode 上下标字符：U+2070/2080 区字符（ⁿ ᵢ ⁴ ₊ 等）左部留白
+    // 偏小且与前字符无 kerning、多字符 advance 偏宽排列松散；Latin-1 的 ¹²³
+    // 虽间距正常但字形（约 0.55em）小于真排版小字（0.72 倍字号），混用导致
+    // x^2 与 x^{10} 的字号不一致。统一真排版保证所有上下标字号与位置一致
+    static std::wstring EmitScript(wchar_t kind, const std::wstring& arg) {
+        if (arg.empty()) return std::wstring(1, kind);   // 空参数：保留 ^ / _ 字面
+        // 结构哨兵：E008 <sup> E00B <sub> E009 <ph> E00A（单角标另一槽为空）
+        if (kind == L'^') return BuildScriptSentinel(arg, L"", ScriptPh(kind, arg));
+        return BuildScriptSentinel(L"", arg, ScriptPh(kind, arg));
+    }
+
+    // 构建真上下标结构哨兵（E008 <sup> E00B <sub> E009 <ph> E00A）
+    static std::wstring BuildScriptSentinel(const std::wstring& sup, const std::wstring& sub,
+                                            const std::wstring& ph) {
+        std::wstring r;
+        r += kSentScript;
+        r += sup;
+        r += kSentScrSep;
+        r += sub;
+        r += kSentScrMid;
+        r += ph;
+        r += kSentScrEnd;
+        return r;
+    }
+
+    // 双角标合并结构（x_i^2 → 上下标同一位置垂直堆叠）
+    static std::wstring EmitScriptPair(const std::wstring& sup, const std::wstring& sub,
+                                       const std::wstring& ph) {
+        return BuildScriptSentinel(sup, sub, ph);
     }
 
     // 读取 \begin{env} 的环境名（pos 已越过 \begin，指向 '{' 或空格）
@@ -689,7 +767,7 @@ struct Converter {
                 continue;
             }
             if (ch == L'\\') { pos++; out += Cmd(); continue; }
-            if (ch == L'^' || ch == L'_') { pos++; out += Script(ch); continue; }
+            if (ch == L'^' || ch == L'_') { pos++; out += ScriptGroup(ch); continue; }
             if (ch == L'~') { pos++; out += (wchar_t)0x00A0; continue; }  // 不断行空格
             if (ch == L'&') { pos++; out += L"\u2002\u2002"; continue; }  // 对齐符 -> 宽空隙
             if (ch == L'$') { pos++; continue; }                          // 残留定界符
@@ -780,6 +858,38 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
                 d.bottom = sub;
                 d.symbol = ph[0];
                 decos->push_back(d);
+            }
+            i = pEnd;
+            continue;
+        }
+        // 真上下标： E008 <sup> E00B <sub> E009 <占位文本> E00A
+        if (c == kSentScript) {
+            size_t pMid = src.find(kSentScrMid, i + 1);
+            size_t pEnd = (pMid == std::wstring::npos) ? std::wstring::npos
+                                                       : src.find(kSentScrEnd, pMid + 1);
+            if (pMid == std::wstring::npos || pEnd == std::wstring::npos) {
+                out += c;
+                continue;
+            }
+            const std::wstring content = src.substr(i + 1, pMid - i - 1);  // sup SEP sub
+            const std::wstring ph = src.substr(pMid + 1, pEnd - pMid - 1); // 占位文本
+            const uint32_t start = (uint32_t)out.size();
+            out += ph;
+            if (decos) {
+                MathDeco d;
+                d.kind = MathDeco::Kind::Script;
+                d.start = start;
+                d.len = (uint32_t)ph.size();
+                const size_t sep = content.find(kSentScrSep);
+                if (sep != std::wstring::npos) {
+                    d.top = content.substr(0, sep);
+                    d.bottom = content.substr(sep + 1);
+                } else {
+                    d.top = content;   // 防御：无分隔符时全作上标
+                }
+                if (!d.top.empty() || !d.bottom.empty()) {
+                    decos->push_back(d);
+                }
             }
             i = pEnd;
             continue;

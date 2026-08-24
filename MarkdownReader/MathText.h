@@ -20,15 +20,17 @@
 // 单个二维装饰：覆盖转换后文本的 [start, start+len) 范围
 struct MathDeco {
     enum class Kind {
-        Frac,   // 分式：top=分子 bottom=分母（上下结构绘制）
-        BigOp,  // 大运算符：symbol 放大（占 2~3 行高），top=上标 bottom=下标（右上/右下）
+        Frac,    // 分式：top=分子 bottom=分母（上下结构绘制）
+        BigOp,   // 大运算符：symbol 放大（占 2~3 行高），top=上标 bottom=下标（右上/右下）
+        Script,  // 真上标/下标：上下标内容无法完全映射为 Unicode 上下标字符时使用，
+                 // top=上标文本 bottom=下标文本（小字号抬高/降低排版），symbol 为 '^' 或 '_'
     };
     Kind kind = Kind::Frac;
     uint32_t start = 0;         // 在 MathTextResult.text 中的起始位置（UTF-16 code unit）
     uint32_t len = 1;           // 覆盖的字符数
-    std::wstring top;           // Frac: 分子；BigOp: 上标（普通文本，非 Unicode 上下标）
-    std::wstring bottom;        // Frac: 分母；BigOp: 下标
-    wchar_t symbol = 0;         // BigOp: 运算符字符（∫ ∑ ∏ ...）
+    std::wstring top;           // Frac: 分子；BigOp: 上标；Script: 上标（普通大小文本）
+    std::wstring bottom;        // Frac: 分母；BigOp: 下标；Script: 下标
+    wchar_t symbol = 0;         // BigOp: 运算符字符（∫ ∑ ∏ ...）；Script: '^' 或 '_'
 };
 
 struct MathTextResult {

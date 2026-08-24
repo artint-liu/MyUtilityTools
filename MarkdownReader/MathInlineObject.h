@@ -45,6 +45,7 @@ private:
 
     ULONG m_ref = 1;
     bool m_isFrac = true;
+    bool m_isScript = false;           // 真上标/下标（上下标无法映射为 Unicode 时）
     float m_width = 0, m_height = 0, m_baseline = 0;   // metrics（DIP）
 
     // 分式布局
@@ -53,9 +54,9 @@ private:
     float m_lineY = 0;                 // 分数线相对对象顶的 y
     float m_botTop = 0;                // 分母顶部相对对象顶的 y
 
-    // 大运算符布局
+    // 大运算符 / 真上下标布局
     Microsoft::WRL::ComPtr<IDWriteTextLayout> m_sym, m_sup, m_sub;  // 符号/上标/下标
     float m_symTop = 0;                // 符号顶部相对对象顶的 y
-    float m_scriptX = 0;               // 上下标 x（符号右侧）
+    float m_scriptX = 0;               // 上下标 x（符号右侧；Script 类型为 0）
     float m_supTop = 0, m_subTop = 0;  // 上下标顶部相对对象顶的 y
 };
