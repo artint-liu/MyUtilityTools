@@ -1,9 +1,15 @@
 #include "MathInlineObject.h"
+#include "FontManager.h"
 #include <algorithm>
 
 using Microsoft::WRL::ComPtr;
 
 namespace {
+
+// 根号内联对象声明的宽度占根号字形 advance 的比例（默认一半）：
+// 字形整体照常绘制（右半溢出对象边界），其后文本从该比例处起排，
+// 根号与被开方数重叠。调小重叠更多，调大更松散。
+constexpr float kSqrtWidthRatio = 0.5f;
 
 // 细高符号（∫ 类）放大倍数比宽符号（∑ 类）更大
 bool IsNarrowOp(wchar_t sym) {
@@ -156,6 +162,41 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         return true;
     }
 
+    // ---- 根号：原字号渲染 √，宽度压缩使被开方数与根号重叠 ----
+    if (deco.kind == MathDeco::Kind::Sqrt) {
+        m_isFrac = false;
+        m_isScript = false;
+        m_isSqrt = true;
+        // 系统字体集时与 math run 一致用 Cambria Math（√ 字形标准、基线匹配）
+        ComPtr<IDWriteTextFormat> f;
+        if (!FontManager::Instance().HasCustomFonts()) {
+            IDWriteFontCollection* coll = nullptr;
+            fmt->GetFontCollection(&coll);
+            dwrite->CreateTextFormat(L"Cambria Math", coll, DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STRETCH_NORMAL, fontSize,
+                L"en-us", f.GetAddressOf());
+        }
+        if (!f) f = MakeScriptFormat(dwrite, fmt, fontSize, italic);
+        if (!f) return false;
+        if (f) f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        m_sym = MakeText(dwrite, f.Get(), std::wstring(1, L'√'));
+        if (!m_sym) return false;
+
+        DWRITE_TEXT_METRICS sm = {};
+        m_sym->GetMetrics(&sm);
+        DWRITE_LINE_METRICS lm = {};
+        UINT32 cnt = 0;
+        if (SUCCEEDED(m_sym->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0) {
+            m_baseline = lm.baseline;   // √ 行的真实 ascent，与周围文本基线对齐
+        } else {
+            m_baseline = sm.height * 0.8f;
+        }
+        m_symTop = 0;
+        m_height = sm.height;
+        m_width = sm.width * kSqrtWidthRatio;   // 只占一半，字形右半溢出与内容重叠
+        return true;
+    }
+
     // ---- 大运算符：符号放大，上下标排右上/右下 ----
     m_isFrac = false;
     m_isScript = false;
@@ -273,6 +314,15 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDW
         if (m_sub) {
             rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_subTop),
                                m_sub.Get(), brush, kOpts);
+        }
+        return S_OK;
+    }
+
+    if (m_isSqrt) {
+        // 根号：完整字形绘制于对象原点，宽度溢出对象右边界，与被开方数重叠
+        if (m_sym) {
+            rt->DrawTextLayout(D2D1::Point2F(originX, top + m_symTop), m_sym.Get(),
+                               brush, kOpts);
         }
         return S_OK;
     }

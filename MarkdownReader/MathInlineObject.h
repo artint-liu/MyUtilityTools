@@ -46,6 +46,7 @@ private:
     ULONG m_ref = 1;
     bool m_isFrac = true;
     bool m_isScript = false;           // 真上标/下标（上下标无法映射为 Unicode 时）
+    bool m_isSqrt = false;             // 根号（宽度压缩，与被开方数重叠排版）
     float m_width = 0, m_height = 0, m_baseline = 0;   // metrics（DIP）
 
     // 分式布局
