@@ -84,8 +84,12 @@ void MarkdownRenderer::ApplyInlineStyles(IDWriteTextLayout* layout,
         if (run->italic)        layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
         if (run->strikethrough) layout->SetStrikethrough(TRUE, r);
         if (run->math) {
-            // 行内公式：斜体；系统字体集时换用 Cambria Math（数学符号字形完整）
-            layout->SetFontStyle(DWRITE_FONT_STYLE_ITALIC, r);
+            // 行内公式：不做 DWrite 合成倾斜——变量字母已在转换端映射为
+            // Unicode 数学斜体区（U+1D44E 等）的专用字形，Cambria Math 提供
+            // 设计好的数学斜体；数字/运算符/函数名保持正体（ISO 80000-2）。
+            // 系统字体集时换用 Cambria Math（数学符号与数学字母区字形完整）；
+            // 自定义字体不含该区时由 DWrite 字体回退自动挑选数学字体。
+            layout->SetFontStyle(DWRITE_FONT_STYLE_NORMAL, r);
             if (!FontManager::Instance().HasCustomFonts()) {
                 layout->SetFontFamilyName(L"Cambria Math", r);
             }
@@ -96,7 +100,7 @@ void MarkdownRenderer::ApplyInlineStyles(IDWriteTextLayout* layout,
                     if (d.start >= run->text.size()) continue;
                     const UINT32 dl = (std::min)(d.len, (UINT32)run->text.size() - d.start);
                     ComPtr<IDWriteInlineObject> obj =
-                        MathInlineObject::Create(d, m_dwrite.Get(), fmt, true);
+                        MathInlineObject::Create(d, m_dwrite.Get(), fmt, false);
                     if (obj) {
                         layout->SetInlineObject(obj.Get(),
                             DWRITE_TEXT_RANGE{ start + d.start, dl });

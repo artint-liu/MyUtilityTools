@@ -205,14 +205,64 @@ bool IsFunctionName(const std::wstring& name) {
 // 前置声明：哨兵结构 -> 线性文本（丢弃二维信息），定义见文件尾部
 std::wstring LinearizeText(const std::wstring& s);
 
+// ---- 数学斜体映射（专用字形，方案 A） ----
+// 变量字母映射为 Unicode 数学字母区的专用斜体字形：大写 U+1D434 起、
+// 小写 U+1D44E 起（小写 h 无独立码位，U+1D455 保留空位，用同形的普朗克
+// 常数 ℎ U+210E）。配合 Cambria Math 等数学字体渲染出设计好的数学斜体
+// （LaTeX 教科书风），取代 DWrite 对正体字形的合成倾斜。数字、运算符、
+// 函数名（sin/cos 等）不映射保持正体，自动符合数学排版规范（ISO 80000-2）。
+// 注意：数学字母区在 BMP 之外（> 0xFFFF），单个 wchar_t 装不下——直接
+// 截断会落进韩文音节区（U+AC00..U+D7A3），必须按 UTF-16 代理对编码输出。
+std::wstring MathItalicStr(wchar_t c) {
+    uint32_t cp = c;
+    if (c >= L'a' && c <= L'z')
+        cp = (c == L'h') ? 0x210Eu : 0x1D44Eu + (uint32_t)(c - L'a');
+    else if (c >= L'A' && c <= L'Z')
+        cp = 0x1D434u + (uint32_t)(c - L'A');
+    else
+        return std::wstring(1, c);
+    std::wstring r;
+    if (cp <= 0xFFFF) {
+        r += (wchar_t)cp;
+    } else {
+        cp -= 0x10000;
+        r += (wchar_t)(0xD800 + (cp >> 10));    // 高代理
+        r += (wchar_t)(0xDC00 + (cp & 0x3FF));  // 低代理
+    }
+    return r;
+}
+
+// 码点逆映射：数学斜体码点 -> ASCII 字母；非该区返回 0。
+// （文本中数学斜体字符是代理对，调用方需先解码出码点再查询）
+wchar_t AsciiFromMathCp(uint32_t cp) {
+    if (cp == 0x210E) return L'h';
+    if (cp >= 0x1D44E && cp <= 0x1D467 && cp != 0x1D455)
+        return L'a' + (wchar_t)(cp - 0x1D44E);
+    if (cp >= 0x1D434 && cp <= 0x1D44D)
+        return L'A' + (wchar_t)(cp - 0x1D434);
+    return 0;
+}
+
 // 把字符串整体转为上标/下标形式；无法完全映射时返回 false。
+// 数学斜体字符（UTF-16 代理对）先解码码点、逆映射回 ASCII 再查表
+// （如 ∑^n 的 n 已是 𝑛，仍能映射为 ⁿ）。
 bool MapScript(const std::wstring& s, bool sup, std::wstring& out) {
     if (s.empty()) return false;
     const auto& tab = sup ? SuperscriptMap() : SubscriptMap();
     std::wstring r;
-    r.reserve(s.size());
-    for (wchar_t c : s) {
-        auto it = tab.find(c);
+    for (size_t i = 0; i < s.size(); ++i) {
+        wchar_t c = s[i];
+        wchar_t key = 0;
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.size() &&
+            s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) {
+            // 代理对：解码码点后尝试数学斜体逆映射
+            const uint32_t cp = 0x10000 +
+                (((uint32_t)c - 0xD800) << 10) + (uint32_t)(s[i + 1] - 0xDC00);
+            key = AsciiFromMathCp(cp);
+            if (key) i++;   // 命中才消费低代理
+        }
+        if (!key) key = c;
+        auto it = tab.find(key);
         if (it == tab.end()) return false;
         r += it->second;
     }
@@ -275,7 +325,8 @@ struct Converter {
     }
 
     // 解析一个参数：{..} 组、\命令 或 单字符；返回转换后的文本。
-    // 嵌套的分式/大运算符在此线性化（哨兵收敛为普通文本）。
+    // 参数中的二维结构哨兵原样保留（结构化递归：外层结构只定位自身元素，
+    // 子结构由 ExtractDecos 递归提取、渲染端逐层嵌套绘制，不再线性化）。
     std::wstring Arg() {
         SkipSpaces();
         if (AtEnd()) return L"";
@@ -285,21 +336,26 @@ struct Converter {
             if (close >= s.size()) {  // 未闭合：取到结尾
                 std::wstring body = s.substr(pos + 1);
                 pos = s.size();
-                std::wstring r = Converter(body).Run();
-                return HasSentinels(r) ? LinearizeText(r) : r;
+                return Converter(body).Run();
             }
             pos++;                       // 跳过 '{'
             std::wstring r = Run(close); // 转换组内容
             pos = close + 1;             // 跳过 '}'
-            return HasSentinels(r) ? LinearizeText(r) : r;
+            return r;
         }
         if (ch == L'\\') {
             pos++;
-            std::wstring r = Cmd();
-            return HasSentinels(r) ? LinearizeText(r) : r;
+            return Cmd();
         }
         pos++;
-        return std::wstring(1, ch);
+        return MathItalicStr(ch);
+    }
+
+    // 纯文本用途的参数：哨兵字符不能穿透进普通文本/占位，线性化处理
+    // （\mathbb、重音、\binom、\pmod 等把参数按字符拼接的场合）
+    std::wstring ArgPlain() {
+        std::wstring r = Arg();
+        return HasSentinels(r) ? LinearizeText(r) : r;
     }
 
     // 读取上下标参数的原始源文本：{..} / \命令 / 单字符
@@ -331,11 +387,10 @@ struct Converter {
         return std::wstring(1, ch);
     }
 
-    // 子字符串独立线性转换（上下标前瞻参数等）
+    // 子字符串独立转换（大运算符上下标前瞻参数等）：保留哨兵（支持嵌套）
     static std::wstring ConvertLinear(const std::wstring& raw) {
         if (raw.empty()) return L"";
-        std::wstring r = Converter(raw).Run();
-        return HasSentinels(r) ? LinearizeText(r) : r;
+        return Converter(raw).Run();
     }
 
     // 处理一组上下标（pos 已越过第一个 ^ 或 _）。
@@ -347,8 +402,7 @@ struct Converter {
         std::wstring arg1;
         if (kind1 == L'^' && Peek() == L'\\') {
             pos++;
-            arg1 = Cmd();
-            if (HasSentinels(arg1)) arg1 = LinearizeText(arg1);   // 病态嵌套：线性化
+            arg1 = Cmd();          // 哨兵保留：上标内容可为嵌套结构
             circ1 = (arg1 == L"∘");
         } else {
             arg1 = Arg();
@@ -377,10 +431,12 @@ struct Converter {
         }
         if (!kind2) return EmitScript(kind1, arg1);
 
-        // 双角标：合并为一个结构（sup/sub 垂直对齐）
+        // 双角标：合并为一个结构（sup/sub 垂直对齐）；占位用线性化文本
         const std::wstring sup = (kind1 == L'^') ? arg1 : arg2;
         const std::wstring sub = (kind1 == L'_') ? arg1 : arg2;
-        return EmitScriptPair(sup, sub, ScriptPh(kind1, arg1) + ScriptPh(kind2, arg2));
+        const std::wstring lin1 = HasSentinels(arg1) ? LinearizeText(arg1) : arg1;
+        const std::wstring lin2 = HasSentinels(arg2) ? LinearizeText(arg2) : arg2;
+        return EmitScriptPair(sup, sub, ScriptPh(kind1, lin1) + ScriptPh(kind2, lin2));
     }
 
     // 角标占位文本（复制/搜索用）：单字符 "_i"、多字符 "_(n+1)"
@@ -399,9 +455,11 @@ struct Converter {
     // x^2 与 x^{10} 的字号不一致。统一真排版保证所有上下标字号与位置一致
     static std::wstring EmitScript(wchar_t kind, const std::wstring& arg) {
         if (arg.empty()) return std::wstring(1, kind);   // 空参数：保留 ^ / _ 字面
-        // 结构哨兵：E008 <sup> E00B <sub> E009 <ph> E00A（单角标另一槽为空）
-        if (kind == L'^') return BuildScriptSentinel(arg, L"", ScriptPh(kind, arg));
-        return BuildScriptSentinel(L"", arg, ScriptPh(kind, arg));
+        // 结构哨兵：E008 <sup> E00B <sub> E009 <ph> E00A（单角标另一槽为空）。
+        // sup/sub 槽保留哨兵（嵌套结构），ph 槽为线性占位（哨兵不能穿透）
+        const std::wstring lin = HasSentinels(arg) ? LinearizeText(arg) : arg;
+        if (kind == L'^') return BuildScriptSentinel(arg, L"", ScriptPh(kind, lin));
+        return BuildScriptSentinel(L"", arg, ScriptPh(kind, lin));
     }
 
     // 构建真上下标结构哨兵（E008 <sup> E00B <sub> E009 <ph> E00A）
@@ -540,7 +598,7 @@ struct Converter {
         // ---- 颜色类：丢弃参数 ----
         if (name == L"color") { Arg(); return L""; }
         if (name == L"colorbox" || name == L"fcolorbox" || name == L"boxed") {
-            if (name == L"boxed") { std::wstring a = Arg(); return L"[" + a + L"]"; }
+            if (name == L"boxed") { std::wstring a = ArgPlain(); return L"[" + a + L"]"; }
             Arg(); if (name == L"fcolorbox") Arg();
             return Arg();
         }
@@ -572,8 +630,10 @@ struct Converter {
                     if (k != L'^' && k != L'_') { pos = save; break; }
                     pos++;
                     std::wstring text = ConvertLinear(ReadScriptRaw());
-                    if (k == L'^') { supText = text; ph += MakeScript(L'^', text); }
-                    else           { subText = text; ph += MakeScript(L'_', text); }
+                    // 槽文本保留哨兵（上下标可为嵌套结构），占位用线性化
+                    const std::wstring lin = HasSentinels(text) ? LinearizeText(text) : text;
+                    if (k == L'^') { supText = text; ph += MakeScript(L'^', lin); }
+                    else           { subText = text; ph += MakeScript(L'_', lin); }
                 }
                 std::wstring r;
                 r += kSentBig;
@@ -611,7 +671,7 @@ struct Converter {
                     std::wstring raw = s.substr(pos + 1, rb - pos - 1);
                     pos = rb + 1;
                     Converter sub(raw);
-                    idx = MakeScript(L'^', sub.Run());
+                    idx = MakeScript(L'^', LinearizeText(sub.Run()));  // 根指数占位线性化
                 }
             }
             std::wstring a = Arg();
@@ -654,7 +714,7 @@ struct Converter {
 
         // ---- 双线字母 ----
         if (name == L"mathbb" || name == L"Bbb") {
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             std::wstring out;
             for (wchar_t c : a) {
                 switch (c) {
@@ -676,7 +736,7 @@ struct Converter {
             auto& acc = AccentMap();
             auto it = acc.find(name);
             if (it != acc.end()) {
-                std::wstring a = Arg();
+                std::wstring a = ArgPlain();
                 if (a.size() == 1) return a + std::wstring(1, it->second);
                 // 多字符：逐字符加组合符（字体不支持时退化为普通文本）
                 std::wstring out;
@@ -695,24 +755,24 @@ struct Converter {
 
         // ---- 上下叠加 ----
         if (name == L"overset" || name == L"stackrel") {
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             std::wstring b = Arg();
             return b + MakeScript(L'^', a);
         }
         if (name == L"underset") {
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             std::wstring b = Arg();
             return b + MakeScript(L'_', a);
         }
         if (name == L"binom" || name == L"dbinom" || name == L"tbinom" ||
             name == L"choose") {
-            std::wstring a = Arg();
-            std::wstring b = Arg();
+            std::wstring a = ArgPlain();
+            std::wstring b = ArgPlain();
             return L"C(" + a + L"," + b + L")";
         }
         if (name == L"substack") {
             // \substack{a \\ b} -> 逗号连接
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             std::wstring r;
             for (wchar_t c : a) { if (c == L'\n') r += L","; else r += c; }
             return r;
@@ -727,11 +787,11 @@ struct Converter {
 
         // ---- \pmod / \bmod ----
         if (name == L"pmod") {
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             return L"(mod " + a + L")";
         }
         if (name == L"pod") {
-            std::wstring a = Arg();
+            std::wstring a = ArgPlain();
             return L"(" + a + L")";
         }
 
@@ -787,48 +847,68 @@ struct Converter {
             }
             // 撇号 -> prime 符号
             if (ch == L'\'') { pos++; out += L"′"; continue; }
-            // 普通字符：转义 LaTeX 中的 \# \% 等？主字符直接输出
-            out += ch;
+            // 普通字符：变量字母映射为数学斜体专用字形（BMP 外按代理对
+            // 编码；数字/符号保持正体）
+            out += MathItalicStr(ch);
             pos++;
         }
         return out;
     }
 };
 
-// ==================== 哨兵结构提取 ====================
+// ==================== 哨兵结构提取（嵌套递归） ====================
 
-// 扫描含哨兵的转换文本：
-//  - decos != nullptr：移除哨兵并生成 MathDeco（start 基于输出文本），占位字符保留
-//    （分式占位为 "/"，大运算符占位为 "符号+Unicode上下标"）
-//  - decos == nullptr：线性化——分式输出 (a)/(b)，大运算符输出占位文本（嵌套参数用）
-// 哨兵结构不嵌套（参数提取路径已线性化），顺序扫描即可。
-void ExtractDecos(const std::wstring& src, std::wstring& out,
-                  std::vector<MathDeco>* decos) {
+// 配对扫描：跳过嵌套的 open..close 对，返回 depth==0 处 target 哨兵的位置
+size_t ScanSentinel(const std::wstring& s, size_t from, wchar_t target,
+                    wchar_t open, wchar_t close) {
+    int depth = 0;
+    for (size_t i = from; i < s.size(); ++i) {
+        const wchar_t c = s[i];
+        if (c == open) { depth++; continue; }
+        if (c == close) {
+            if (depth == 0 && target == close) return i;
+            depth--;
+            continue;
+        }
+        if (c == target && depth == 0) return i;
+    }
+    return std::wstring::npos;
+}
+
+// 扫描含哨兵的转换文本，提取为排版节点：
+//  - decos != nullptr：结构化提取——移除哨兵、生成 MathDeco（start 基于输出
+//    文本，占位字符保留），参数段递归提取为子节点（任意深度嵌套）
+//  - decos == nullptr：线性化——分式输出 (a)/(b)，根式输出 √内容，
+//    大运算符/上下标输出占位文本（拼入普通文本/占位的场合，哨兵不能穿透）
+void ExtractNode(const std::wstring& src, std::wstring& out,
+                 std::vector<MathDeco>* decos) {
     out.clear();
     const size_t n = src.size();
     for (size_t i = 0; i < n; ++i) {
         wchar_t c = src[i];
         // 分式： E005 <top> E006 <bottom> E007
         if (c == kSentFrac) {
-            size_t pMid = src.find(kSentFracMid, i + 1);
-            size_t pEnd = (pMid == std::wstring::npos) ? std::wstring::npos
-                                                       : src.find(kSentFracEnd, pMid + 1);
+            const size_t pMid = ScanSentinel(src, i + 1, kSentFracMid, kSentFrac, kSentFracEnd);
+            const size_t pEnd = (pMid == std::wstring::npos)
+                ? std::wstring::npos
+                : ScanSentinel(src, pMid + 1, kSentFracEnd, kSentFrac, kSentFracEnd);
             if (pMid == std::wstring::npos || pEnd == std::wstring::npos) {
                 out += c;   // 防御：残缺哨兵按普通字符
                 continue;
             }
-            std::wstring top = src.substr(i + 1, pMid - i - 1);
-            std::wstring bottom = src.substr(pMid + 1, pEnd - pMid - 1);
             if (decos) {
                 MathDeco d;
                 d.kind = MathDeco::Kind::Frac;
                 d.start = (uint32_t)out.size();
                 d.len = 1;
-                d.top = top;
-                d.bottom = bottom;
-                decos->push_back(d);
+                ExtractNode(src.substr(i + 1, pMid - i - 1), d.top.text, &d.top.decos);
+                ExtractNode(src.substr(pMid + 1, pEnd - pMid - 1), d.bottom.text, &d.bottom.decos);
+                decos->push_back(std::move(d));
                 out += L"/";
             } else {
+                std::wstring top, bottom;
+                ExtractNode(src.substr(i + 1, pMid - i - 1), top, nullptr);
+                ExtractNode(src.substr(pMid + 1, pEnd - pMid - 1), bottom, nullptr);
                 out += MaybeParen(top);
                 out += L"/";
                 out += MaybeParen(bottom);
@@ -838,19 +918,21 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
         }
         // 大运算符： E001 <占位(符号+Unicode上下标)> E002 <sub> E003 <sup> E004
         if (c == kSentBig) {
-            size_t pSub = src.find(kSentBigSub, i + 1);
-            size_t pSup = (pSub == std::wstring::npos) ? std::wstring::npos
-                                                       : src.find(kSentBigSup, pSub + 1);
-            size_t pEnd = (pSup == std::wstring::npos) ? std::wstring::npos
-                                                       : src.find(kSentBigEnd, pSup + 1);
+            const size_t pSub = ScanSentinel(src, i + 1, kSentBigSub, kSentBig, kSentBigEnd);
+            const size_t pSup = (pSub == std::wstring::npos)
+                ? std::wstring::npos
+                : ScanSentinel(src, pSub + 1, kSentBigSup, kSentBig, kSentBigEnd);
+            const size_t pEnd = (pSup == std::wstring::npos)
+                ? std::wstring::npos
+                : ScanSentinel(src, pSup + 1, kSentBigEnd, kSentBig, kSentBigEnd);
             if (pSub == std::wstring::npos || pSup == std::wstring::npos ||
                 pEnd == std::wstring::npos) {
                 out += c;
                 continue;
             }
-            std::wstring ph  = src.substr(i + 1, pSub - i - 1);
-            std::wstring sub = src.substr(pSub + 1, pSup - pSub - 1);
-            std::wstring sup = src.substr(pSup + 1, pEnd - pSup - 1);
+            const std::wstring ph  = src.substr(i + 1, pSub - i - 1);  // 生成时已线性化
+            const std::wstring sub = src.substr(pSub + 1, pSup - pSub - 1);
+            const std::wstring sup = src.substr(pSup + 1, pEnd - pSup - 1);
             const uint32_t start = (uint32_t)out.size();
             out += ph;
             if (decos && !ph.empty()) {
@@ -858,47 +940,55 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
                 d.kind = MathDeco::Kind::BigOp;
                 d.start = start;
                 d.len = (uint32_t)ph.size();
-                d.top = sup;
-                d.bottom = sub;
+                ExtractNode(sub, d.bottom.text, &d.bottom.decos);
+                ExtractNode(sup, d.top.text, &d.top.decos);
                 d.symbol = ph[0];
-                decos->push_back(d);
+                decos->push_back(std::move(d));
             }
             i = pEnd;
             continue;
         }
         // 根式： E00C <被开方数> E00D（占位文本为 "√"+被开方数）
         if (c == kSentSqrt) {
-            size_t pEnd = src.find(kSentSqrtEnd, i + 1);
+            const size_t pEnd = ScanSentinel(src, i + 1, kSentSqrtEnd, kSentSqrt, kSentSqrtEnd);
             if (pEnd == std::wstring::npos) {
                 out += c;   // 防御：残缺哨兵按普通字符
                 continue;
             }
-            std::wstring inner = src.substr(i + 1, pEnd - i - 1);
+            const std::wstring inner = src.substr(i + 1, pEnd - i - 1);
             const uint32_t start = (uint32_t)out.size();
+            std::wstring innerOut;                       // 被开方数的线性化（占位文本）
+            ExtractNode(inner, innerOut, nullptr);
             out += L'√';
-            out += inner;
+            out += innerOut;
             if (decos) {
                 MathDeco d;
                 d.kind = MathDeco::Kind::Sqrt;
                 d.start = start;
-                d.len = (uint32_t)(inner.size() + 1);
-                d.top = inner;
-                decos->push_back(d);
+                d.len = (uint32_t)(innerOut.size() + 1);
+                ExtractNode(inner, d.top.text, &d.top.decos);
+                decos->push_back(std::move(d));
             }
             i = pEnd;
             continue;
         }
         // 真上下标： E008 <sup> E00B <sub> E009 <占位文本> E00A
         if (c == kSentScript) {
-            size_t pMid = src.find(kSentScrMid, i + 1);
-            size_t pEnd = (pMid == std::wstring::npos) ? std::wstring::npos
-                                                       : src.find(kSentScrEnd, pMid + 1);
-            if (pMid == std::wstring::npos || pEnd == std::wstring::npos) {
+            const size_t pSep = ScanSentinel(src, i + 1, kSentScrSep, kSentScript, kSentScrEnd);
+            const size_t pMid = (pSep == std::wstring::npos)
+                ? std::wstring::npos
+                : ScanSentinel(src, pSep + 1, kSentScrMid, kSentScript, kSentScrEnd);
+            const size_t pEnd = (pMid == std::wstring::npos)
+                ? std::wstring::npos
+                : ScanSentinel(src, pMid + 1, kSentScrEnd, kSentScript, kSentScrEnd);
+            if (pSep == std::wstring::npos || pMid == std::wstring::npos ||
+                pEnd == std::wstring::npos) {
                 out += c;
                 continue;
             }
-            const std::wstring content = src.substr(i + 1, pMid - i - 1);  // sup SEP sub
-            const std::wstring ph = src.substr(pMid + 1, pEnd - pMid - 1); // 占位文本
+            const std::wstring supSrc = src.substr(i + 1, pSep - i - 1);
+            const std::wstring subSrc = src.substr(pSep + 1, pMid - pSep - 1);
+            const std::wstring ph = src.substr(pMid + 1, pEnd - pMid - 1);  // 生成时已线性化
             const uint32_t start = (uint32_t)out.size();
             out += ph;
             if (decos) {
@@ -906,15 +996,10 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
                 d.kind = MathDeco::Kind::Script;
                 d.start = start;
                 d.len = (uint32_t)ph.size();
-                const size_t sep = content.find(kSentScrSep);
-                if (sep != std::wstring::npos) {
-                    d.top = content.substr(0, sep);
-                    d.bottom = content.substr(sep + 1);
-                } else {
-                    d.top = content;   // 防御：无分隔符时全作上标
-                }
-                if (!d.top.empty() || !d.bottom.empty()) {
-                    decos->push_back(d);
+                ExtractNode(supSrc, d.top.text, &d.top.decos);
+                ExtractNode(subSrc, d.bottom.text, &d.bottom.decos);
+                if (!d.top.text.empty() || !d.bottom.text.empty()) {
+                    decos->push_back(std::move(d));
                 }
             }
             i = pEnd;
@@ -924,10 +1009,10 @@ void ExtractDecos(const std::wstring& src, std::wstring& out,
     }
 }
 
-// 哨兵结构 -> 线性文本（丢弃二维信息；嵌套参数提取用）
+// 哨兵结构 -> 线性文本（丢弃二维信息；拼入普通文本/占位的场合使用）
 std::wstring LinearizeText(const std::wstring& s) {
     std::wstring out;
-    ExtractDecos(s, out, nullptr);
+    ExtractNode(s, out, nullptr);
     return out;
 }
 
@@ -987,9 +1072,9 @@ MathTextResult LatexToMathText(const std::wstring& latex) {
     // 1. 线性转换（嵌入哨兵）
     std::wstring raw = Converter(latex).Run();
 
-    // 2. 提取哨兵 -> 二维装饰（位置基于中间文本）
+    // 2. 提取哨兵 -> 结构化排版树（顶层 deco，位置基于中间文本）
     std::wstring mid;
-    ExtractDecos(raw, mid, &result.decos);
+    ExtractNode(raw, mid, &result.decos);
 
     // 3. 终清理 + 位置修正
     std::vector<size_t> map;

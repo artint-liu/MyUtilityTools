@@ -65,6 +65,27 @@ ScriptTextInfo GetTextInfo(IDWriteTextLayout* lay) {
     return info;
 }
 
+// 创建复合子布局：节点文本 + 嵌套 deco（递归挂子内联对象，任意深度嵌套）。
+// nested 时字号轻度衰减（每层 ×0.92）：深层结构（如嵌套根式）略小于外层，
+// 内层根号顶部低于外层顶横线，层次分明（LaTeX 的嵌套结构同样逐层缩小）。
+ComPtr<IDWriteTextLayout> MakeCompositeText(IDWriteFactory* dwrite, IDWriteTextFormat* fmt,
+                                            const MathTextNode& node, bool italic, bool nested) {
+    ComPtr<IDWriteTextFormat> f = fmt;
+    if (nested) {
+        f = MakeScriptFormat(dwrite, fmt, fmt->GetFontSize() * 0.92f, italic);
+        if (!f) f = fmt;
+    }
+    ComPtr<IDWriteTextLayout> lay = MakeText(dwrite, f.Get(), node.text);
+    if (!lay) return nullptr;
+    for (const auto& d : node.decos) {
+        if (d.start >= node.text.size()) continue;
+        const UINT32 dl = (std::min)(d.len, (UINT32)node.text.size() - d.start);
+        ComPtr<IDWriteInlineObject> obj = MathInlineObject::Create(d, dwrite, f.Get(), italic);
+        if (obj) lay->SetInlineObject(obj.Get(), DWRITE_TEXT_RANGE{ d.start, dl });
+    }
+    return lay;
+}
+
 } // namespace
 
 ComPtr<IDWriteInlineObject> MathInlineObject::Create(
@@ -91,8 +112,8 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         m_isScript = false;
         ComPtr<IDWriteTextFormat> f = MakeScriptFormat(dwrite, fmt, fontSize * 0.85f, italic);
         if (!f) return false;
-        m_top = MakeText(dwrite, f.Get(), deco.top);
-        m_bottom = MakeText(dwrite, f.Get(), deco.bottom);
+        m_top = MakeCompositeText(dwrite, f.Get(), deco.top, italic, true);
+        m_bottom = MakeCompositeText(dwrite, f.Get(), deco.bottom, italic, true);
         if (!m_top || !m_bottom) return false;
 
         DWRITE_TEXT_METRICS tm = {}, bm = {};
@@ -121,8 +142,8 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         m_isScript = true;
         ComPtr<IDWriteTextFormat> f = MakeScriptFormat(dwrite, fmt, fontSize * 0.72f, italic);
         if (!f) return false;
-        m_sup = MakeText(dwrite, f.Get(), deco.top);
-        m_sub = MakeText(dwrite, f.Get(), deco.bottom);
+        m_sup = MakeCompositeText(dwrite, f.Get(), deco.top, italic, true);
+        m_sub = MakeCompositeText(dwrite, f.Get(), deco.bottom, italic, true);
         if (!m_sup && !m_sub) return false;
 
         // LaTeX 惯例：上标基线在主基线上方约 0.42em，下标基线在下方约 0.18em
@@ -167,30 +188,28 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         m_isFrac = false;
         m_isScript = false;
         m_isSqrt = true;
-        // 被开方数与周围文本同字号；系统字体集时与 math run 一致用 Cambria Math
+        // 被开方数与周围文本同字号；系统字体集时与 math run 一致用 Cambria
+        // Math。正体样式：数学斜体由专用字形承担（U+1D44E 数学字母区）
         ComPtr<IDWriteTextFormat> f;
         if (!FontManager::Instance().HasCustomFonts()) {
             IDWriteFontCollection* coll = nullptr;
             fmt->GetFontCollection(&coll);
             dwrite->CreateTextFormat(L"Cambria Math", coll, DWRITE_FONT_WEIGHT_NORMAL,
-                DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STRETCH_NORMAL, fontSize,
+                DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, fontSize,
                 L"en-us", f.GetAddressOf());
             if (f) f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         }
         if (!f) f = MakeScriptFormat(dwrite, fmt, fontSize, italic);
         if (!f) return false;
-        m_sym = MakeText(dwrite, f.Get(), std::wstring(1, L'√'));
-        if (!m_sym) return false;
-        if (!deco.top.empty()) m_body = MakeText(dwrite, f.Get(), deco.top);
+        // 被开方数为复合布局（可含嵌套分式/根式/上下标，逐层递归）
+        if (!deco.top.text.empty()) m_body = MakeCompositeText(dwrite, f.Get(), deco.top, italic, true);
 
-        DWRITE_TEXT_METRICS sm = {}, bm = {};
-        m_sym->GetMetrics(&sm);
-        float symBase = sm.height * 0.8f, bodyBase = 0, bodyH = 0, bodyW = 0;
-        DWRITE_LINE_METRICS lm = {};
-        UINT32 cnt = 0;
-        if (SUCCEEDED(m_sym->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0)
-            symBase = lm.baseline;               // 根号行真实基线
+        // 被开方数度量（嵌套结构时高度已含子对象，如根号内分式约 1.6 行）
+        float bodyBase = 0, bodyH = 0, bodyW = 0;
         if (m_body) {
+            DWRITE_TEXT_METRICS bm = {};
+            DWRITE_LINE_METRICS lm = {};
+            UINT32 cnt = 0;
             m_body->GetMetrics(&bm);
             bodyW = bm.width;
             bodyH = bm.height;
@@ -199,12 +218,36 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
             else
                 bodyBase = bm.height * 0.8f;
         }
-        // 对象基线取根号行基线，被开方数按基线与根号对齐
-        m_baseline = symBase;
-        m_symTop = 0;
-        m_bodyTop = m_baseline - bodyBase;
+
+        // 根号随被开方数高度拉伸（高内容如分式时放大根号盖住整体，
+        // 近似 LaTeX 根号的垂直伸缩；单行内容保持原字号）
+        float symSize = fontSize;
+        if (m_body && bodyH > fontSize * 1.2f) {
+            const float ratio = bodyH / (fontSize * 1.25f);
+            symSize = fontSize * (std::min)((std::max)(ratio, 1.0f), 3.0f);
+        }
+        ComPtr<IDWriteTextFormat> symFmt = f;
+        if (symSize > fontSize * 1.02f) {
+            ComPtr<IDWriteTextFormat> bigger = MakeScriptFormat(dwrite, f.Get(), symSize, italic);
+            if (bigger) symFmt = bigger;
+        }
+        m_sym = MakeText(dwrite, symFmt.Get(), std::wstring(1, L'√'));
+        if (!m_sym) return false;
+
+        DWRITE_TEXT_METRICS sm = {};
+        m_sym->GetMetrics(&sm);
+        float symBase = sm.height * 0.8f;
+        DWRITE_LINE_METRICS lm = {};
+        UINT32 cnt = 0;
+        if (SUCCEEDED(m_sym->GetLineMetrics(&lm, 1, &cnt)) && cnt > 0)
+            symBase = lm.baseline;               // 根号行真实基线
+
+        // 基线对齐：对象基线取根号/被开方数中更大的 ascent，两者按基线对齐
+        m_baseline = (std::max)(symBase, m_body ? bodyBase : 0.0f);
+        m_symTop = m_baseline - symBase;         // 根号顶随拉伸上移
+        m_bodyTop = m_baseline - bodyBase;       // 同字号时为 0
         m_bodyX = sm.width * kSqrtWidthRatio;    // 被开方数从根号一半位置起排
-        m_height = (std::max)(sm.height, m_bodyTop + bodyH);
+        m_height = (std::max)(m_symTop + sm.height, m_bodyTop + bodyH);
         m_width = m_bodyX + bodyW;
 
         // 顶横线：与根号字形 ink 顶部同高（overhang.top 为负 = ink 距 layout
@@ -215,7 +258,7 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
         float inkTop = sm.height * 0.05f;        // 回退估计
         if (SUCCEEDED(m_sym->GetOverhangMetrics(&om)) && om.top < 0)
             inkTop = -om.top;
-        m_sqrtLineY = inkTop + m_sqrtLineW * 0.5f;
+        m_sqrtLineY = m_symTop + inkTop + m_sqrtLineW * 0.5f;
         m_sqrtLineX = m_bodyX + (sm.width * (1 - kSqrtWidthRatio)); // 公式首字符横线缩进一点
         return true;
     }
@@ -229,8 +272,8 @@ bool MathInlineObject::Init(const MathDeco& deco, IDWriteFactory* dwrite,
     if (!symFmt || !scrFmt) return false;
     m_sym = MakeText(dwrite, symFmt.Get(), std::wstring(1, deco.symbol));
     if (!m_sym) return false;
-    m_sup = MakeText(dwrite, scrFmt.Get(), deco.top);
-    m_sub = MakeText(dwrite, scrFmt.Get(), deco.bottom);
+    m_sup = MakeCompositeText(dwrite, scrFmt.Get(), deco.top, italic, true);
+    m_sub = MakeCompositeText(dwrite, scrFmt.Get(), deco.bottom, italic, true);
 
     DWRITE_TEXT_METRICS sm = {};
     m_sym->GetMetrics(&sm);
@@ -305,7 +348,7 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::GetBreakConditions(
     return S_OK;
 }
 
-HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDWriteTextRenderer*, FLOAT originX, FLOAT originY, BOOL, BOOL, IUnknown*)
+HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDWriteTextRenderer* renderer, FLOAT originX, FLOAT originY, BOOL, BOOL, IUnknown*)
 {
     auto* ctx = static_cast<RenderContext*>(clientDrawingContext);
     if (!ctx || !ctx->rt || !ctx->defaultBrush) return S_OK;
@@ -314,44 +357,44 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDW
     const float top = originY;   // originY 为对象顶部左上角（SDK 约定）
     constexpr auto kOpts = D2D1_DRAW_TEXT_OPTIONS_NONE;
 
+    // 子布局必须经 IDWriteTextLayout::Draw 用 CustomTextRenderer 绘制：
+    // 不能用 rt->DrawTextLayout——它没有 clientDrawingContext 参数，其中嵌套
+    // 的内联对象（孙层结构）收到的是 D2D 内部上下文而非 RenderContext*，
+    // 会导致第二层及以下的分式/根式/上下标整体不绘制。
+    // 经 layout->Draw 透传 ctx 与 renderer，孙对象的 Draw 回调链保持完整。
+    auto drawSub = [&](IDWriteTextLayout* lay, float x, float y) {
+        if (!lay) return;
+        if (renderer) {
+            lay->Draw(clientDrawingContext, renderer, x, y);
+        } else {
+            rt->DrawTextLayout(D2D1::Point2F(x, y), lay, brush, kOpts);
+        }
+    };
+
     if (m_isFrac) {
         // 分子（顶部居中）
-        rt->DrawTextLayout(D2D1::Point2F(originX + (m_width - m_topW) * 0.5f, top),
-                           m_top.Get(), brush, kOpts);
+        drawSub(m_top.Get(), originX + (m_width - m_topW) * 0.5f, top);
         // 分数线
         rt->DrawLine(D2D1::Point2F(originX + 1.0f, top + m_lineY),
                      D2D1::Point2F(originX + m_width - 1.0f, top + m_lineY),
                      brush, 1.0f);
         // 分母（分数线下方，居中）
-        rt->DrawTextLayout(D2D1::Point2F(originX + (m_width - m_botW) * 0.5f, top + m_botTop),
-                           m_bottom.Get(), brush, kOpts);
+        drawSub(m_bottom.Get(), originX + (m_width - m_botW) * 0.5f, top + m_botTop);
         return S_OK;
     }
 
     if (m_isScript) {
         // 真上标/下标：小字号文字（上标抬高、下标降低），m_scriptX 为左侧留白
-        if (m_sup) {
-            rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_supTop),
-                               m_sup.Get(), brush, kOpts);
-        }
-        if (m_sub) {
-            rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_subTop),
-                               m_sub.Get(), brush, kOpts);
-        }
+        drawSub(m_sup.Get(), originX + m_scriptX, top + m_supTop);
+        drawSub(m_sub.Get(), originX + m_scriptX, top + m_subTop);
         return S_OK;
     }
 
     if (m_isSqrt) {
         // 根号：完整字形绘制于对象原点（右半溢出，与被开方数重叠）
-        if (m_sym) {
-            rt->DrawTextLayout(D2D1::Point2F(originX, top + m_symTop), m_sym.Get(),
-                               brush, kOpts);
-        }
-        // 被开方数：从根号一半位置起排
-        if (m_body) {
-            rt->DrawTextLayout(D2D1::Point2F(originX + m_bodyX, top + m_bodyTop),
-                               m_body.Get(), brush, kOpts);
-        }
+        drawSub(m_sym.Get(), originX, top + m_symTop);
+        // 被开方数：从根号一半位置起排（复合布局，可含嵌套结构）
+        drawSub(m_body.Get(), originX + m_bodyX, top + m_bodyTop);
         // 顶横线：从被开方数第一个符号起笔，延伸覆盖整个被开方数
         const float x1 = originX + m_sqrtLineX;
         const float x2 = (std::max)(originX + m_width - 1.0f, x1 + 1.0f);
@@ -362,16 +405,8 @@ HRESULT STDMETHODCALLTYPE MathInlineObject::Draw(void* clientDrawingContext, IDW
     }
 
     // 大运算符：符号居中，上标右上、下标右下
-    if (m_sym) {
-        rt->DrawTextLayout(D2D1::Point2F(originX, top + m_symTop), m_sym.Get(), brush, kOpts);
-    }
-    if (m_sup) {
-        rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_supTop),
-                           m_sup.Get(), brush, kOpts);
-    }
-    if (m_sub) {
-        rt->DrawTextLayout(D2D1::Point2F(originX + m_scriptX, top + m_subTop),
-                           m_sub.Get(), brush, kOpts);
-    }
+    drawSub(m_sym.Get(), originX, top + m_symTop);
+    drawSub(m_sup.Get(), originX + m_scriptX, top + m_supTop);
+    drawSub(m_sub.Get(), originX + m_scriptX, top + m_subTop);
     return S_OK;
 }
