@@ -86,7 +86,8 @@ def convert_single_image(
         md_content = ""
         for res in output:
             # 保存 Markdown
-            res.save_to_markdown(save_path=output_dir)
+            # pretty=False：图片使用 Markdown 原生 ![](path) 格式，而非 HTML <img> 标签
+            res.save_to_markdown(save_path=output_dir, pretty=False)
             md_saved = True
 
             # 可选：保存 JSON
