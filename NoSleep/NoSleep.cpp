@@ -29,6 +29,7 @@ HINSTANCE hInst;                                // 当前实例
 WCHAR szTitle[MAX_LOADSTRING];                  // 标题栏文本
 WCHAR szWindowClass[MAX_LOADSTRING];            // 主窗口类名
 Gdiplus::Image* g_pMainImage = nullptr;
+bool g_bNoSleep = false;
 
 
 // 此代码模块中包含的函数的前向声明:
@@ -195,6 +196,7 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 void NoSleep(HWND hWnd, bool enabled)
 {
+    g_bNoSleep = enabled;
     if (enabled)
     {
         SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
@@ -261,13 +263,21 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             SYSTEMTIME time;
             GetLocalTime(&time);
-            if (time.wHour > 20 && time.wMinute > 30)
+            
+            // 计算当前时间对应的分钟数（0-1439）
+            int currentMinutes = time.wHour * 60 + time.wMinute;
+            
+            // 定义时间段：20:30 (20*60+30=1230) 到 次日9:30 (9*60+30=570)
+            bool isNightTime = (currentMinutes >= 1230) || (currentMinutes < 570);
+            
+            if (isNightTime && g_bNoSleep)
             {
+                // 夜间时间段（20:30到次日9:30），禁用NoSleep
                 NoSleep(hWnd, false);
-                UpdateIcon(hWnd, false);
             }
-            else if(time.wHour > 9 && time.wMinute > 30)
+            else if (!isNightTime && !g_bNoSleep)
             {
+                // 白天时间段（9:30到20:30），启用NoSleep
                 NoSleep(hWnd, true);
             }
         }
