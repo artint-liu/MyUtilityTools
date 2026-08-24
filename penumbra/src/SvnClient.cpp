@@ -311,7 +311,13 @@ std::vector<std::wstring> SvnClient::EnumerateCleanFiles(const std::wstring& svn
         args.push_back(L"--depth");
         args.push_back(L"immediates");
     }
-    args.push_back(target);
+    // 路径末尾追加 '@'：SVN 把路径中的 '@' 视为 peg revision 分隔符（path@rev）。
+    // 若工作副本路径本身含 '@'（如 npm/git 子模块目录 com.foo@1.2.3），
+    // 不追加 '@' 时 svn 会把 '@' 之后的部分当作 revision 解析，导致命令失败
+    //（svn cat/info 退出码 1，svn status 返回 0 条目）。
+    // 末尾 '@' 是 SVN 官方约定的 peg-revision 终止符，表示 peg rev 为空（用 BASE
+    // 或默认），对不含 '@' 的路径无副作用。
+    args.push_back(target + L"@");
     std::wstring cmd = BuildCmdLine(m_svnExe, args);
 
     Log(L"svn status（流式）：" + cmd);
@@ -426,6 +432,9 @@ bool SvnClient::CatFile(const std::wstring& svnRoot, const std::wstring& relPath
         return false;
     }
     std::wstring full = svnRoot + L"\\" + relPath;
+    // 同 EnumerateCleanFiles：路径末尾追加 '@' 以转义路径中可能出现的 '@'
+    //（SVN peg revision 分隔符），否则路径含 '@' 时 svn cat 退出码 1。
+    full.push_back(L'@');
     std::wstring cmd = BuildCmdLine(m_svnExe, { L"cat", full });
     DWORD code = 0;
     if (!RunStream(cmd, cb, code)) {
@@ -448,8 +457,9 @@ int64_t SvnClient::GetFileSize(const std::wstring& fullPath, const std::wstring&
         return (int64_t)sz.QuadPart;
     }
     if (!m_svnExe.empty()) {
+        // 同 CatFile：路径末尾追加 '@' 转义路径中的 '@'（SVN peg revision 分隔符）。
         std::wstring cmd = BuildCmdLine(m_svnExe,
-            { L"info", L"--show-item", L"size", fullPath });
+            { L"info", L"--show-item", L"size", fullPath + L"@" });
         std::string out;
         DWORD code = 0;
         if (RunCapture(cmd, out, code) && code == 0) {
