@@ -43,7 +43,7 @@ int wmain(int argc, WCHAR** argv)
 
                 clStringW strFile = data.cFileName;
                 strFile.MakeUpper();
-                if (clpathfile::CompareExtension(strFile, L"PNG"))
+                if (clpathfile::CompareExtension(strFile, L"PNG|TGA"))
                 {
                     return TRUE;
                 }
@@ -66,7 +66,7 @@ void OnProcessImage(const clStringW& strPath)
     //Gdiplus::Image* pImage = new Gdiplus::Image(strPath);
     Gdiplus::Bitmap* pBitmap = new Gdiplus::Bitmap(strPath);
 
-    if (pBitmap == NULL)
+    if (pBitmap == NULL || pBitmap->GetWidth() == 0 || pBitmap->GetHeight() == 0)
     {
         CLOG_ERROR(L"无法打开文件：%s", strPath);
         return;
@@ -96,7 +96,8 @@ b32 SmearImage(Gdiplus::Bitmap* pBitmap)
     b32 result = false;
     Gdiplus::BitmapData bitmapData = {0};
     Gdiplus::Rect rect(0, 0, pBitmap->GetWidth(), pBitmap->GetHeight());
-    if (pBitmap->LockBits(&rect, Gdiplus::ImageLockModeWrite | Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData) == Gdiplus::Ok)
+    Gdiplus::Status status = pBitmap->LockBits(&rect, Gdiplus::ImageLockModeWrite | Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bitmapData);
+    if (status == Gdiplus::Ok)
     {
         SmearImage(bitmapData);
         result = true;
@@ -148,48 +149,48 @@ void SmearImage(Gdiplus::BitmapData& bitmapData)
         {
             u32 c = GetPixel(bitmapData, x, y, nullptr);
             u32* pDest = reinterpret_cast<u32*>(reinterpret_cast<size_t>(buffer.GetPtr()) + line_index) + x;
-            *pDest = c;
-            if ((c & 0xff000000) == 0)
-            {
-                b32 success[8] = { false, false , false ,false ,false, false , false ,false };
-                u32 pixel[8] = { 0 };
-                pixel[0] = GetPixel(bitmapData, x - 1, y - 1, &success[0]);
-                pixel[1] = GetPixel(bitmapData, x    , y - 1, &success[1]);
-                pixel[2] = GetPixel(bitmapData, x + 1, y - 1, &success[2]);
+            *pDest = c << 1;
+            //if ((c & 0xff000000) == 0)
+            //{
+            //    b32 success[8] = { false, false , false ,false ,false, false , false ,false };
+            //    u32 pixel[8] = { 0 };
+            //    pixel[0] = GetPixel(bitmapData, x - 1, y - 1, &success[0]);
+            //    pixel[1] = GetPixel(bitmapData, x    , y - 1, &success[1]);
+            //    pixel[2] = GetPixel(bitmapData, x + 1, y - 1, &success[2]);
 
-                pixel[3] = GetPixel(bitmapData, x - 1, y    , &success[3]);
-                pixel[4] = GetPixel(bitmapData, x + 1, y    , &success[4]);
-                
-                pixel[5] = GetPixel(bitmapData, x - 1, y + 1, &success[5]);
-                pixel[6] = GetPixel(bitmapData, x    , y + 1, &success[6]);
-                pixel[7] = GetPixel(bitmapData, x + 1, y + 1, &success[7]);
+            //    pixel[3] = GetPixel(bitmapData, x - 1, y    , &success[3]);
+            //    pixel[4] = GetPixel(bitmapData, x + 1, y    , &success[4]);
+            //    
+            //    pixel[5] = GetPixel(bitmapData, x - 1, y + 1, &success[5]);
+            //    pixel[6] = GetPixel(bitmapData, x    , y + 1, &success[6]);
+            //    pixel[7] = GetPixel(bitmapData, x + 1, y + 1, &success[7]);
 
-                int n = 0;
-                u32 r = 0, g = 0, b = 0;
-                for (int i = 0; i < 8; i++)
-                {
-                    if (success[i] != false && (pixel[i] & 0xff000000) != 0)
-                    {
-                        r += GET_R(pixel[i]);
-                        g += GET_G(pixel[i]);
-                        b += GET_B(pixel[i]);
-                        n++;
-                    }
-                }
+            //    int n = 0;
+            //    u32 r = 0, g = 0, b = 0;
+            //    for (int i = 0; i < 8; i++)
+            //    {
+            //        if (success[i] != false && (pixel[i] & 0xff000000) != 0)
+            //        {
+            //            r += GET_R(pixel[i]);
+            //            g += GET_G(pixel[i]);
+            //            b += GET_B(pixel[i]);
+            //            n++;
+            //        }
+            //    }
 
-                if (n > 0)
-                {
-                    r = clamp(r / n, 0, 255);
-                    g = clamp(g / n, 0, 255);
-                    b = clamp(b / n, 0, 255);
+            //    if (n > 0)
+            //    {
+            //        r = clamp(r / n, 0, 255);
+            //        g = clamp(g / n, 0, 255);
+            //        b = clamp(b / n, 0, 255);
 
-                    *pDest = (r << 16) | (g << 8) | b;
-                }
-                else
-                {
-                    *pDest = 0;
-                }
-            }
+            //        *pDest = (r << 16) | (g << 8) | b;
+            //    }
+            //    else
+            //    {
+            //        *pDest = 0;
+            //    }
+            //}
         }
     }
 
