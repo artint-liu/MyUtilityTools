@@ -847,7 +847,7 @@ void VertexPaint::ModifyPolyObject(PolyObject* pPolyObj, TimeValue t, ModContext
 
     // sca 5/1/01 - this line isn't needed!  It's handled by things like PartsChanged.
     //NotifyDependents(FOREVER, PART_VERTCOLOR, REFMSG_CHANGE);
-    pPolyObj->UpdateValidity(VERT_COLOR_CHAN_NUM, Interval(t, t));
+    pPolyObj->UpdateValidity(GEOM_CHAN_NUM, Interval(t, t));
 }
 
 void VertexPaint::ModifyObject(TimeValue t, ModContext& mc, ObjectState* os, INode* node)

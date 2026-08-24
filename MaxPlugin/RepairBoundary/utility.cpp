@@ -275,34 +275,41 @@ void SetupBoundary(MNMesh* mesh, const std::vector<UserPoint>& userPoints, float
     const int numVerts = mesh->numv;
     for (int i = 0; i < numVerts; i++)
     {
-        Point3& v = mesh->P(i);
-    //    v.y += 100.f;
-    const UserPoint* pUserPoints = FindUserPoint(userPoints, v, epsilon);
-    if (pUserPoints)
-    {
-        v = pUserPoints->vertex; // 缝合顶点
-        //RVertex& rv = mesh->rve
-        //    RVert(i);
-        //rv.rn.setNormal(pUserPoints->normal);
-    }
-    //    //    mesh->setVert(i, pUserPoints->vertex);
-    //    //    //mesh->verts[i] = pUserPoints->vertex;
-    //    //    mesh->verts[i].y += 0.1f;
+        //Point3& p = mesh->P(i);
+        MNVert* v = mesh->V(i);
+        //    v.y += 100.f;
+        const UserPoint* pUserPoints = FindUserPoint(userPoints, v->p, epsilon);
+        if (pUserPoints)
+        {
+            v->p = pUserPoints->vertex; // 缝合顶点
+            v->SetFlag(MN_SEL_VERTEX);
+            //p = pUserPoints->vertex; // 缝合顶点
+            //RVertex& rv = mesh->rve
+            //    RVert(i);
+            //rv.rn.setNormal(pUserPoints->normal);
+        }
+        //    //    mesh->setVert(i, pUserPoints->vertex);
+        //    //    //mesh->verts[i] = pUserPoints->vertex;
+        //    //    mesh->verts[i].y += 0.1f;
 
-    
-    //    //    //const int numNormals = (rv.rFlags & NORCT_MASK);
-    //    //    //if (numNormals == 1)
-    //    //    {
-    //    //        rv.rn.setNormal(pUserPoints->normal);
-    //    //        rv.rFlags = SPECIFIED_NORMAL;
-    //    //    }
-    //    //}
+
+        //    //    //const int numNormals = (rv.rFlags & NORCT_MASK);
+        //    //    //if (numNormals == 1)
+        //    //    {
+        //    //        rv.rn.setNormal(pUserPoints->normal);
+        //    //        rv.rFlags = SPECIFIED_NORMAL;
+        //    //    }
+        //    //}
     }
 
-    //mesh->InvalidateGeomCache(); // 标记几何数据失效
-    //mesh->InvalidateTopologyCache(); // 标记拓扑数据失效
+    //mesh->InvalidateTopoCache(); // 标记拓扑数据失效
+    mesh->InvalidateGeomCache(); // 标记几何数据失效
     //mesh->buildNormals(); // 重新计算法线
     //mesh->buildBoundingBox(); // 更新包围盒
+
+    //if (mesh->GetFlag(MN_MESH_FILLED_IN)) {
+    //    mesh->SetFlag(MN_MESH_FILLED_IN, FALSE); // 清除某些内部状态标志
+    //}
 }
 
 void TestMoveMesh(Mesh* mesh)
