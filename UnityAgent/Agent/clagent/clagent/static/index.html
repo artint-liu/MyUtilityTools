@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clagent · Unity Agent</title>
+<link rel="icon" href="data:,">
+<style>
+:root{
+  --bg:#0d1017; --panel:#141824; --panel2:#1a2030; --panel3:#202638;
+  --border:#262d40; --border2:#323a52;
+  --text:#e8ebf2; --muted:#949db5; --faint:#5c6580;
+  --accent:#7c8cff; --accent-dim:rgba(124,140,255,.14);
+  --craft:#f59e0b; --ask:#60a5fa; --plan:#34d399;
+  --ok:#34d399; --err:#f87171; --warn:#fbbf24;
+  --mono:'Cascadia Code',Consolas,'JetBrains Mono',monospace;
+  --sans:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.6;overflow:hidden}
+#app{display:flex;height:100vh}
+
+/* ============ 侧栏 ============ */
+#sidebar{width:264px;min-width:264px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;transition:transform .25s}
+.side-head{display:flex;align-items:center;gap:10px;padding:16px 14px 12px}
+.logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#7c8cff,#5f6fd6);display:flex;align-items:center;justify-content:center;flex:none}
+.logo svg{width:19px;height:19px;color:#fff}
+.side-title{font-weight:700;font-size:15px;letter-spacing:.3px}
+.side-title small{display:block;font-weight:400;font-size:11px;color:var(--faint);letter-spacing:0}
+#newChatBtn{margin:0 12px 10px;display:flex;align-items:center;gap:8px;justify-content:center;padding:9px;border-radius:10px;border:1px solid var(--border2);background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px}
+#newChatBtn:hover{background:var(--panel3);border-color:var(--accent)}
+#newChatBtn svg{width:15px;height:15px}
+#sessionList{flex:1;overflow-y:auto;padding:2px 8px 8px}
+.session-item{position:relative;padding:9px 10px 9px 12px;border-radius:9px;cursor:pointer;margin-bottom:2px;border:1px solid transparent}
+.session-item:hover{background:var(--panel2)}
+.session-item.active{background:var(--accent-dim);border-color:rgba(124,140,255,.35)}
+.s-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:20px}
+.s-time{font-size:11px;color:var(--faint);margin-top:2px}
+.s-del{position:absolute;right:6px;top:8px;width:22px;height:22px;border:none;background:none;color:var(--faint);cursor:pointer;border-radius:6px;display:none;align-items:center;justify-content:center}
+.s-del svg{width:13px;height:13px}
+.session-item:hover .s-del{display:flex}
+.s-del:hover{color:var(--err);background:rgba(248,113,113,.12)}
+.side-foot{border-top:1px solid var(--border);padding:10px 14px;font-size:11px;color:var(--muted)}
+.side-foot .row{display:flex;align-items:center;gap:7px;margin-top:4px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--faint)}
+.dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(52,211,153,.7)}
+.dot.err{background:var(--err)}
+.dot.warn{background:var(--warn)}
+
+/* ============ 主区 ============ */
+#main{flex:1;min-width:0;display:flex;flex-direction:column}
+#topbar{display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--border);background:var(--panel)}
+#burger{display:none;border:none;background:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px}
+#burger svg{width:18px;height:18px}
+.top-title{font-weight:600;font-size:14px}
+.top-spacer{flex:1}
+.chip{display:flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);font-size:12px;color:var(--muted);cursor:pointer;max-width:220px;white-space:nowrap;overflow:hidden}
+.chip:hover{border-color:var(--accent)}
+.chip b{color:var(--text);font-weight:600}
+#settingsBtn{border:1px solid var(--border2);background:var(--panel2);color:var(--muted);width:32px;height:32px;border-radius:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+#settingsBtn:hover{color:var(--text);border-color:var(--accent)}
+#settingsBtn svg{width:16px;height:16px}
+
+#chatWrap{flex:1;overflow-y:auto;scroll-behavior:smooth}
+#chat{max-width:860px;margin:0 auto;padding:22px 22px 8px}
+
+/* hero 空状态 */
+.hero{padding:9vh 10px 30px;text-align:center}
+.hero .logo{width:58px;height:58px;border-radius:16px;margin:0 auto 18px}
+.hero .logo svg{width:32px;height:32px}
+.hero h1{font-size:26px;letter-spacing:.5px;margin-bottom:8px}
+.hero p{color:var(--muted);font-size:13.5px;margin-bottom:26px}
+.hero-modes{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-bottom:30px}
+.hero-mode{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
+.hero-mode i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.suggests{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;max-width:730px;margin:0 auto}
+.suggest{ text-align:left;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:var(--panel);cursor:pointer;transition:border-color .15s}
+.suggest:hover{border-color:var(--accent)}
+.suggest .sg-mode{font-size:11px;margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.suggest .sg-mode i{width:7px;height:7px;border-radius:50%}
+.suggest .sg-text{font-size:12.5px;color:var(--muted)}
+
+/* 消息 */
+.msg{display:flex;gap:12px;margin:20px 0}
+.msg-user{justify-content:flex-end}
+.msg-user .bubble{max-width:76%;background:var(--panel3);border:1px solid var(--border2);padding:10px 14px;border-radius:14px 14px 4px 14px;overflow-wrap:break-word}
+.avatar{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#7c8cff,#5f6fd6);display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px}
+.avatar svg{width:19px;height:19px;color:#fff}
+.msg-main{flex:1;min-width:0}
+.msg-head{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.msg-head .who{font-size:12.5px;font-weight:700;color:var(--muted)}
+.mode-badge{font-size:10.5px;font-weight:600;padding:1.5px 8px;border-radius:999px;border:1px solid;color:var(--accent);opacity:.95}
+
+/* markdown 内容 */
+.msg-content{overflow-wrap:break-word}
+.msg-content p{margin:7px 0}
+.msg-content h1,.msg-content h2,.msg-content h3,.msg-content h4{margin:16px 0 8px;line-height:1.35}
+.msg-content h1{font-size:19px}.msg-content h2{font-size:17px}.msg-content h3{font-size:15.5px}.msg-content h4{font-size:14px}
+.msg-content ul,.msg-content ol{margin:7px 0 7px 22px}
+.msg-content li{margin:3px 0}
+.msg-content li.task{list-style:none;display:flex;gap:8px;align-items:flex-start;margin-left:-18px}
+.msg-content li.task .cb{width:15px;height:15px;border:1.5px solid var(--border2);border-radius:4px;flex:none;margin-top:4px;position:relative}
+.msg-content li.task .cb.on{background:var(--ok);border-color:var(--ok)}
+.msg-content li.task .cb.on::after{content:'';position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #0d1017;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.msg-content li.task.done>span:last-child{color:var(--muted)}
+.msg-content code{font-family:var(--mono);font-size:12.5px;background:var(--panel3);border:1px solid var(--border);padding:1px 5px;border-radius:5px}
+.msg-content blockquote{border-left:3px solid var(--border2);padding:2px 12px;margin:8px 0;color:var(--muted)}
+.msg-content a{color:var(--accent)}
+.msg-content hr{border:none;border-top:1px solid var(--border);margin:14px 0}
+.msg-content table{border-collapse:collapse;margin:10px 0;font-size:13px;display:block;overflow-x:auto;max-width:100%}
+.msg-content th,.msg-content td{border:1px solid var(--border2);padding:6px 11px;text-align:left}
+.msg-content th{background:var(--panel2)}
+.codeblock{margin:10px 0;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#0b0e15}
+.codebar{display:flex;justify-content:space-between;align-items:center;padding:5px 8px 5px 12px;background:var(--panel2);border-bottom:1px solid var(--border)}
+.codebar span{font-size:11px;color:var(--faint);font-family:var(--mono)}
+.copybtn{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--panel3);color:var(--muted);cursor:pointer}
+.copybtn:hover{color:var(--text);border-color:var(--accent)}
+.codeblock pre{padding:12px 14px;overflow-x:auto}
+.codeblock code{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:none;border:none;padding:0}
+
+/* 思考过程 */
+details.reasoning{margin:6px 0 8px;border:1px dashed var(--border2);border-radius:9px;overflow:hidden}
+details.reasoning summary{cursor:pointer;padding:6px 12px;font-size:12px;color:var(--faint);user-select:none;list-style:none}
+details.reasoning summary::before{content:'▸ ';display:inline-block;transition:transform .15s}
+details.reasoning[open] summary::before{transform:rotate(90deg)}
+.reasoning-body{padding:2px 14px 10px;font-size:12.5px;color:var(--muted);white-space:pre-wrap;max-height:240px;overflow-y:auto}
+
+/* 工具卡片 */
+.toolcard{border:1px solid var(--border);border-radius:10px;background:var(--panel2);margin:9px 0;overflow:hidden}
+.toolcard.run{border-color:rgba(251,191,36,.4)}
+.toolcard.ok{border-color:rgba(52,211,153,.28)}
+.toolcard.err{border-color:rgba(248,113,113,.45)}
+.tool-head{display:flex;align-items:center;gap:9px;padding:8px 12px;cursor:pointer;user-select:none}
+.tool-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--faint)}
+.toolcard.run .tool-dot{background:var(--warn);animation:pulse 1s infinite}
+.toolcard.ok .tool-dot{background:var(--ok)}
+.toolcard.err .tool-dot{background:var(--err)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.tool-name{font-family:var(--mono);font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool-status{font-size:11.5px;color:var(--muted);margin-left:auto;flex:none}
+.toolcard.run .tool-status{color:var(--warn)}
+.toolcard.ok .tool-status{color:var(--ok)}
+.toolcard.err .tool-status{color:var(--err)}
+.tool-chev{width:14px;height:14px;color:var(--faint);flex:none;transition:transform .15s}
+.toolcard.open .tool-chev{transform:rotate(180deg)}
+.tool-body{display:none;border-top:1px solid var(--border);padding:10px 12px}
+.toolcard.open .tool-body,.toolcard.run .tool-body{display:block}
+.tool-sec{font-size:11px;color:var(--faint);margin:8px 0 4px}
+.tool-sec:first-child{margin-top:0}
+.tool-pre{font-family:var(--mono);font-size:12px;background:#0b0e15;border:1px solid var(--border);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;color:#c7cede}
+
+/* 计划执行按钮 */
+.plan-actions{margin:12px 0 4px}
+.btn-runplan{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:10px;border:1px solid rgba(52,211,153,.5);background:rgba(52,211,153,.1);color:var(--plan);cursor:pointer;font-size:13px;font-weight:600}
+.btn-runplan:hover{background:rgba(52,211,153,.18)}
+.btn-runplan svg{width:14px;height:14px}
+
+.cursor{display:inline-block;width:8px;height:15px;background:var(--accent);border-radius:2px;vertical-align:-2px;animation:pulse .9s infinite;margin-left:2px}
+
+/* 输入区 */
+#composer{border-top:1px solid var(--border);background:var(--panel);padding:12px 22px 16px}
+.composer-inner{max-width:860px;margin:0 auto}
+.mode-row{display:flex;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+.mode-chip{display:flex;align-items:center;gap:7px;padding:5.5px 13px;border-radius:999px;border:1px solid var(--border2);background:var(--panel2);color:var(--muted);cursor:pointer;font-size:12.5px;transition:all .15s}
+.mode-chip i{width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.mode-chip:hover{border-color:var(--accent);color:var(--text)}
+.mode-chip.active{border-color:var(--mc);color:var(--text);background:color-mix(in srgb,var(--mc) 13%,transparent)}
+.mode-chip.active i{background:var(--mc);box-shadow:0 0 7px var(--mc)}
+.mode-hint{font-size:11px;color:var(--faint);margin-left:auto;align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px}
+.input-row{display:flex;gap:10px;align-items:flex-end}
+#chatInput{flex:1;resize:none;background:var(--panel2);border:1px solid var(--border2);border-radius:13px;padding:11px 14px;color:var(--text);font-family:var(--sans);font-size:13.5px;line-height:1.5;max-height:200px;outline:none}
+#chatInput:focus{border-color:var(--accent)}
+#chatInput::placeholder{color:var(--faint)}
+.icon-btn{width:42px;height:42px;border-radius:12px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+#sendBtn{background:linear-gradient(135deg,#7c8cff,#5f6fd6);color:#fff}
+#sendBtn:hover{filter:brightness(1.12)}
+#sendBtn:disabled{opacity:.4;cursor:default}
+#stopBtn{background:var(--panel3);border:1px solid rgba(248,113,113,.5);color:var(--err);display:none}
+#stopBtn:hover{background:rgba(248,113,113,.12)}
+#stopBtn svg,#sendBtn svg{width:17px;height:17px}
+.composer-note{font-size:11px;color:var(--faint);margin-top:7px;text-align:center}
+body.running .session-item{pointer-events:none;opacity:.55}
+body.running .session-item.active{opacity:.85}
+
+/* ============ 设置弹窗 ============ */
+.modal-overlay{position:fixed;inset:0;background:rgba(5,7,12,.66);backdrop-filter:blur(3px);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+.hidden{display:none!important}
+.modal{width:min(760px,96vw);max-height:92vh;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border2);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.5)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-head b{font-size:15px}
+#closeSettings{border:none;background:none;color:var(--muted);font-size:20px;cursor:pointer;width:30px;height:30px;border-radius:8px}
+#closeSettings:hover{background:var(--panel3);color:var(--text)}
+.tabs{display:flex;gap:4px;padding:10px 20px 0;border-bottom:1px solid var(--border)}
+.tab-btn{padding:9px 16px;border:none;background:none;color:var(--muted);cursor:pointer;font-size:13.5px;border-bottom:2px solid transparent;border-radius:8px 8px 0 0}
+.tab-btn.active{color:var(--text);border-bottom-color:var(--accent)}
+.modal-body{padding:18px 20px;overflow-y:auto}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-grid .full{grid-column:1/-1}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+.field input,.field select,.field textarea{width:100%;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;padding:9px 11px;color:var(--text);font-size:13px;outline:none;font-family:var(--sans)}
+.field textarea{font-family:var(--mono);font-size:12px;resize:vertical;min-height:64px}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+.field .sub{font-size:11px;color:var(--faint);margin-top:4px}
+.range-row{display:flex;align-items:center;gap:12px}
+.range-row input[type=range]{flex:1;accent-color:var(--accent)}
+.range-row output{font-family:var(--mono);font-size:12.5px;color:var(--accent);min-width:34px;text-align:right}
+.modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--border)}
+.btn{padding:9px 20px;border-radius:10px;border:1px solid var(--border2);background:var(--panel2);color:var(--text);cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:linear-gradient(135deg,#7c8cff,#5f6fd6);border:none;color:#fff;font-weight:600}
+.btn.primary:hover{filter:brightness(1.1)}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:40px}
+.pw-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--faint);cursor:pointer;font-size:12px;padding:4px}
+
+/* MCP 卡片 */
+.mcp-card{border:1px solid var(--border);border-radius:12px;background:var(--panel2);padding:13px 14px;margin-bottom:12px}
+.mcp-card-head{display:flex;align-items:center;gap:10px;margin-bottom:11px}
+.mcp-card-head input{flex:1;min-width:0}
+.mcp-card-head select{width:96px}
+.m-name{background:var(--panel3);border:1px solid var(--border2);border-radius:8px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;font-family:var(--mono)}
+.mcp-card-head select{background:var(--panel3);border:1px solid var(--border2);border-radius:8px;padding:7px 6px;color:var(--text);font-size:12.5px;outline:none}
+.m-en{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.m-del{border:none;background:none;color:var(--faint);cursor:pointer;width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none}
+.m-del:hover{color:var(--err);background:rgba(248,113,113,.12)}
+.m-del svg{width:14px;height:14px}
+.mcp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mcp-grid .full{grid-column:1/-1}
+.mcp-grid input,.mcp-grid textarea{width:100%;background:var(--panel3);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;color:var(--text);font-size:12.5px;outline:none}
+.mcp-grid textarea{font-family:var(--mono);font-size:11.5px;resize:vertical;min-height:56px}
+.mcp-grid input:focus,.mcp-grid textarea:focus{border-color:var(--accent)}
+.m-status{margin-top:10px;font-size:12px;padding:8px 11px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--muted)}
+.m-status.ok{border-color:rgba(52,211,153,.35);color:var(--ok)}
+.m-status.err{border-color:rgba(248,113,113,.4);color:var(--err)}
+.m-status .tools-line{color:var(--faint);font-size:11px;font-family:var(--mono);margin-top:4px;word-break:break-all}
+#addMcpBtn{width:100%;padding:10px;border:1px dashed var(--border2);border-radius:12px;background:none;color:var(--muted);cursor:pointer;font-size:13px}
+#addMcpBtn:hover{border-color:var(--accent);color:var(--text)}
+.mcp-global{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:4px 0 14px}
+.mcp-global input{width:100%;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;padding:8px 10px;color:var(--text);font-size:12.5px;outline:none}
+.mcp-global label{font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px}
+
+/* toast */
+#toasts{position:fixed;top:16px;right:16px;z-index:99;display:flex;flex-direction:column;gap:8px;max-width:380px}
+.toast{padding:11px 15px;border-radius:11px;background:var(--panel3);border:1px solid var(--border2);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4);animation:slidein .2s;word-break:break-word}
+.toast.error{border-color:rgba(248,113,113,.55);color:#fca5a5}
+.toast.info{border-color:rgba(124,140,255,.45)}
+@keyframes slidein{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-thumb:hover{background:#3d4763;background-clip:content-box;border:2px solid transparent}
+::-webkit-scrollbar-track{background:transparent}
+
+@media (max-width:900px){
+  #sidebar{position:fixed;left:0;top:0;bottom:0;z-index:40;transform:translateX(-105%)}
+  body.side-open #sidebar{transform:none;box-shadow:20px 0 60px rgba(0,0,0,.5)}
+  #burger{display:block}
+  #chat{padding:16px 12px 8px}
+  #composer{padding:10px 12px 12px}
+  .form-grid,.mcp-grid{grid-template-columns:1fr}
+  .mode-hint{display:none}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="side-head">
+      <div class="logo" id="logoBox"></div>
+      <div class="side-title">clagent<small>Unity Agent · Craft / Ask / Plan</small></div>
+    </div>
+    <button id="newChatBtn">新建会话</button>
+    <div id="sessionList"></div>
+    <div class="side-foot">
+      <div class="row"><span class="dot" id="wsDot"></span><span id="wsText">连接中…</span></div>
+      <div class="row"><span class="dot" id="mcpDot"></span><span id="mcpText">MCP</span></div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <button id="burger" title="会话列表"></button>
+      <span class="top-title">clagent</span>
+      <span class="top-spacer"></span>
+      <button class="chip" id="llmChip" title="点击配置模型"><span>模型</span><b id="llmChipText">…</b></button>
+      <button class="chip" id="mcpChip" title="点击配置 MCP 服务器"><span>MCP</span><b id="mcpChipText">…</b></button>
+      <button id="settingsBtn" title="设置"></button>
+    </header>
+
+    <div id="chatWrap"><div id="chat"></div></div>
+
+    <div id="composer">
+      <div class="composer-inner">
+        <div class="mode-row" id="modeRow"></div>
+        <div class="input-row">
+          <textarea id="chatInput" rows="1" placeholder="给 clagent 发消息…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button class="icon-btn" id="sendBtn" title="发送"></button>
+          <button class="icon-btn" id="stopBtn" title="停止"></button>
+        </div>
+        <div class="composer-note">clagent 通过 MCP 服务器（clmcp）操作 Unity · 模式决定可用工具与行为边界</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal-overlay hidden" id="settingsModal">
+  <div class="modal">
+    <div class="modal-head"><b>设置</b><button id="closeSettings">×</button></div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="llm">模型（LLM）</button>
+      <button class="tab-btn" data-tab="mcp">MCP 服务器</button>
+    </div>
+    <div class="modal-body" id="tab-llm">
+      <div class="form-grid">
+        <div class="field full">
+          <label>API 地址（base_url，兼容 OpenAI 接口的本地 / 云端服务）</label>
+          <input id="f-baseurl" list="urlPresets" placeholder="https://api.openai.com/v1">
+          <datalist id="urlPresets">
+            <option value="https://api.openai.com/v1">OpenAI</option>
+            <option value="https://api.deepseek.com/v1">DeepSeek</option>
+            <option value="https://api.moonshot.cn/v1">Moonshot</option>
+            <option value="http://127.0.0.1:11434/v1">Ollama（本地）</option>
+            <option value="http://127.0.0.1:1234/v1">LM Studio（本地）</option>
+            <option value="http://127.0.0.1:8000/v1">vLLM（本地）</option>
+          </datalist>
+          <div class="sub">本地推理（Ollama / LM Studio / vLLM）无需填 API 密钥</div>
+        </div>
+        <div class="field full">
+          <label>API Key</label>
+          <div class="pw-wrap"><input id="f-apikey" type="password" placeholder="sk-…（本地服务可留空）"><button class="pw-eye" id="pwEye" type="button">显示</button></div>
+        </div>
+        <div class="field full">
+          <label>模型名称</label>
+          <input id="f-model" list="modelPresets" placeholder="gpt-4o-mini">
+          <datalist id="modelPresets">
+            <option value="gpt-4o"></option><option value="gpt-4o-mini"></option>
+            <option value="deepseek-chat"></option><option value="moonshot-v1-32k"></option>
+            <option value="qwen2.5:14b"></option><option value="llama3.1:8b"></option>
+          </datalist>
+          <div class="sub">建议选择支持 Function Calling 的模型</div>
+        </div>
+        <div class="field">
+          <label>温度（temperature）</label>
+          <div class="range-row"><input id="f-temp" type="range" min="0" max="2" step="0.1" value="0.3"><output id="f-tempOut">0.3</output></div>
+        </div>
+        <div class="field">
+          <label>最大生成长度（0 = 不限制）</label>
+          <input id="f-maxtokens" type="number" min="0" step="256" value="0">
+        </div>
+      </div>
+    </div>
+    <div class="modal-body hidden" id="tab-mcp">
+      <div class="mcp-global">
+        <div><label>工具调用超时（秒）</label><input id="f-calltimeout" type="number" min="5" step="5"></div>
+        <div><label>断线重连窗口（秒，覆盖 Unity 域重载）</label><input id="f-reconnect" type="number" min="0" step="1"></div>
+      </div>
+      <div id="mcpList"></div>
+      <button id="addMcpBtn">＋ 添加 MCP 服务器</button>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="mcpTestBtn">仅测试连接</button>
+      <button class="btn primary" id="saveSettings">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+'use strict';
+/* ================= 工具函数与图标 ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const I = {
+  bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7.5" width="16" height="11.5" rx="3"/><circle cx="9" cy="13" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1.4" fill="currentColor" stroke="none"/><path d="M12 7.5V4.5"/><circle cx="12" cy="3.4" r="1.1"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="8" cy="17" r="2" fill="var(--panel)"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 20 4l-7 16-2.2-6.8L4 11.5z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 13h9l1-13"/></svg>',
+  burger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
+  chev: '<svg class="tool-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>'
+};
+
+$('#logoBox').innerHTML = I.bot;
+$('#settingsBtn').innerHTML = I.gear;
+$('#sendBtn').innerHTML = I.send;
+$('#stopBtn').innerHTML = I.stop;
+$('#burger').innerHTML = I.burger;
+$('#newChatBtn').insertAdjacentHTML('afterbegin', I.plus);
+
+/* ================= Markdown 渲染 ================= */
+function inline(s){
+  s = esc(s);
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return s;
+}
+
+function renderCodeBlock(c){
+  const lang = (c.lang || 'text').toLowerCase();
+  return '<div class="codeblock"><div class="codebar"><span>' + esc(lang) + '</span>' +
+    '<button class="copybtn" data-code="' + encodeURIComponent(c.code) + '">复制</button></div>' +
+    '<pre><code>' + esc(c.code) + '</code></pre></div>';
+}
+
+function md(src){
+  if(!src) return '';
+  let s = String(src).replace(/\r\n?/g, '\n');
+  const codes = [];
+  // 先抽出围栏代码块（含未闭合的流式代码块）
+  s = s.replace(/```([\w+#.-]*)[ \t]*\n?([\s\S]*?)(?:```|$)/g, (m, lang, code) => {
+    codes.push({lang, code});
+    return '\x00C' + (codes.length - 1) + '\x00';
+  });
+  const lines = s.split('\n');
+  let html = '', para = [], listType = null, listItems = [], quote = [], tableRows = [];
+
+  const flushPara = () => { if(para.length){ html += '<p>' + para.map(inline).join('<br>') + '</p>'; para = []; } };
+  const flushList = () => {
+    if(!listItems.length) return;
+    const items = listItems.map(it => {
+      const m = it.match(/^\[( |x|X)\]\s+(.*)/);
+      if(m){
+        const on = m[1].toLowerCase() === 'x';
+        return '<li class="task' + (on ? ' done' : '') + '"><span class="cb' + (on ? ' on' : '') + '"></span><span>' + inline(m[2]) + '</span></li>';
+      }
+      return '<li>' + inline(it) + '</li>';
+    }).join('');
+    html += '<' + listType + '>' + items + '</' + listType + '>';
+    listItems = []; listType = null;
+  };
+  const flushQuote = () => { if(quote.length){ html += '<blockquote>' + quote.map(inline).join('<br>') + '</blockquote>'; quote = []; } };
+  const flushTable = () => {
+    if(!tableRows.length) return;
+    const rows = tableRows; tableRows = [];
+    const isSep = r => /^[\s|:-]+$/.test(r) && r.includes('-');
+    if(rows.length >= 2 && isSep(rows[1])){
+      const cells = r => r.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+      let t = '<table><thead><tr>' + cells(rows[0]).map(c => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>';
+      for(let i = 2; i < rows.length; i++) t += '<tr>' + cells(rows[i]).map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>';
+      html += t + '</tbody></table>';
+    } else {
+      rows.forEach(r => { html += '<p>' + inline(r) + '</p>'; });
+    }
+  };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
+
+  for(const raw of lines){
+    const t = raw.trim();
+    if(!t){ flushAll(); continue; }
+    let m = t.match(/^(#{1,4})\s+(.*)/);
+    if(m){ flushAll(); const h = m[1].length; html += '<h' + h + '>' + inline(m[2]) + '</h' + h + '>'; continue; }
+    if(/^(---+|\*\*\*+|___+)$/.test(t)){ flushAll(); html += '<hr>'; continue; }
+    if(t.startsWith('>')){ flushPara(); flushList(); flushTable(); quote.push(t.replace(/^>\s?/, '')); continue; }
+    m = t.match(/^[-*+]\s+(.*)/);
+    if(m){ flushPara(); flushQuote(); flushTable(); if(listType && listType !== 'ul') flushList(); listType = 'ul'; listItems.push(m[1]); continue; }
+    m = t.match(/^\d+[.)]\s+(.*)/);
+    if(m){ flushPara(); flushQuote(); flushTable(); if(listType && listType !== 'ol') flushList(); listType = 'ol'; listItems.push(m[1]); continue; }
+    if(t.includes('|') && t.indexOf('\x00') !== 0){ flushPara(); flushQuote(); flushList(); tableRows.push(t); continue; }
+    para.push(t);
+  }
+  flushAll();
+  return html.replace(/\x00C(\d+)\x00/g, (m, i) => renderCodeBlock(codes[+i]));
+}
+
+/* ================= 全局状态 ================= */
+const S = {
+  sessions: [], selected: null, modes: [], mode: 'craft',
+  config: null, mcp: [], running: false
+};
+const SUGGESTIONS = [
+  {mode:'ask',   text:'当前场景里有哪些物体？各自挂了什么组件？'},
+  {mode:'craft', text:'在原点创建一个名为 Player 的胶囊体，并挂上 CharacterController'},
+  {mode:'plan',  text:'帮我规划一个简易的背包系统（UI + 数据结构 + 存档）'}
+];
+
+let ws = null, backoff = 1000, autoTried = null;
+let live = null, liveEl = null, renderTimer = null;
+
+function send(obj){ if(ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+/* ================= WebSocket ================= */
+function connectWS(){
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(proto + '://' + location.host + '/api/ws');
+  ws.onopen = () => {
+    backoff = 1000; setWsStatus(true);
+    send({type:'state'});
+  };
+  ws.onmessage = e => { try{ handleEvent(JSON.parse(e.data)); }catch(err){ console.error(err); } };
+  ws.onclose = () => {
+    setWsStatus(false);
+    if(live){ live.streaming = false; renderLiveMsg(); live = null; liveEl = null; }
+    setRunning(false);
+    setTimeout(connectWS, backoff);
+    backoff = Math.min(backoff * 2, 15000);
+  };
+  ws.onerror = () => { try{ ws.close(); }catch(e){} };
+}
+
+function setWsStatus(ok){
+  $('#wsDot').className = 'dot ' + (ok ? 'ok' : 'warn');
+  $('#wsText').textContent = ok ? '服务已连接' : '正在重连…';
+}
+
+function handleEvent(ev){
+  switch(ev.type){
+    case 'state':
+      S.sessions = ev.sessions || []; S.modes = ev.modes || [];
+      S.config = ev.config || null; S.mcp = ev.mcp || [];
+      if(!S.modes.find(m => m.id === S.mode) && S.modes.length) S.mode = S.modes[0].id;
+      renderSidebar(); renderTopbar(); renderComposer(); maybeAutoSelect();
+      break;
+    case 'session':
+      S.selected = ev.sessionId; renderSidebar(); document.body.classList.remove('side-open');
+      break;
+    case 'history':
+      S.selected = ev.sessionId; renderChat(ev.messages || []);
+      document.body.classList.remove('side-open');
+      break;
+    case 'run_start': startLive(ev.mode); break;
+    case 'delta': pushText(ev.text); scheduleLive(); break;
+    case 'reasoning': if(live){ live.reasoning += ev.text; scheduleLive(); } break;
+    case 'tool_start':
+      if(live){
+        live.parts.push({type:'tool', id:ev.callId, name:ev.name, arguments:ev.arguments, ok:null, result:'', durationMs:0});
+        scheduleLive();
+      }
+      break;
+    case 'tool_end': {
+      if(!live) break;
+      const tc = live.parts.find(p => p.type === 'tool' && p.id === ev.callId);
+      if(tc){ tc.ok = ev.ok; tc.result = ev.result; tc.durationMs = ev.durationMs; }
+      scheduleLive(); break;
+    }
+    case 'run_end':
+      if(live){
+        live.streaming = false;
+        if(ev.stopped) pushText('\n\n*（已手动停止）*');
+        renderLiveMsg(); live = null; liveEl = null;
+      }
+      setRunning(false);
+      break;
+    case 'error': toast(ev.message, 'error'); break;
+    case 'notify': toast(ev.message, 'info'); break;
+  }
+}
+
+function maybeAutoSelect(){
+  if(S.selected || S.running || !S.sessions.length) return;
+  const first = S.sessions[0].id;
+  if(autoTried === first) return;
+  autoTried = first;
+  send({type:'select', sessionId:first});
+}
+
+/* ================= 渲染：侧栏 / 顶栏 / 输入区 ================= */
+function relTime(ts){
+  const d = Date.now()/1000 - ts;
+  if(d < 60) return '刚刚';
+  if(d < 3600) return Math.floor(d/60) + ' 分钟前';
+  if(d < 86400) return Math.floor(d/3600) + ' 小时前';
+  return Math.floor(d/86400) + ' 天前';
+}
+
+function renderSidebar(){
+  const box = $('#sessionList');
+  box.innerHTML = '';
+  if(!S.sessions.length){
+    box.innerHTML = '<div style="padding:14px 10px;font-size:12px;color:var(--faint)">暂无历史会话</div>';
+  }
+  S.sessions.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'session-item' + (s.id === S.selected ? ' active' : '');
+    el.innerHTML = '<div class="s-title">' + esc(s.title) + '</div>' +
+      '<div class="s-time">' + relTime(s.updated) + '</div>' +
+      '<button class="s-del" title="删除会话">' + I.trash + '</button>';
+    el.addEventListener('click', () => selectSession(s.id));
+    el.querySelector('.s-del').addEventListener('click', e => {
+      e.stopPropagation();
+      if(confirm('删除会话「' + (s.title || '新会话') + '」？')) send({type:'delete', sessionId:s.id});
+    });
+    box.appendChild(el);
+  });
+  // MCP 状态点
+  const n = (S.mcp || []).length, on = (S.mcp || []).filter(s => s.connected).length;
+  $('#mcpDot').className = 'dot ' + (!n ? 'warn' : (on === n ? 'ok' : (on ? 'warn' : 'err')));
+  $('#mcpText').textContent = n ? `MCP ${on}/${n}` : 'MCP 未配置';
+}
+
+function renderTopbar(){
+  const llm = S.config && S.config.llm || {};
+  $('#llmChipText').textContent = llm.model || '未配置';
+  const n = (S.mcp || []).length, on = (S.mcp || []).filter(s => s.connected).length;
+  $('#mcpChipText').textContent = n ? `${on}/${n} 在线` : '未配置';
+}
+
+function renderComposer(){
+  const row = $('#modeRow');
+  row.innerHTML = '';
+  S.modes.forEach(m => {
+    const el = document.createElement('button');
+    el.className = 'mode-chip' + (m.id === S.mode ? ' active' : '');
+    el.style.setProperty('--mc', m.accent);
+    el.title = m.desc;
+    el.innerHTML = '<i></i>' + esc(m.label) + ' · ' + esc(m.title);
+    el.addEventListener('click', () => { S.mode = m.id; renderComposer(); });
+    row.appendChild(el);
+  });
+  const hint = document.createElement('span');
+  hint.className = 'mode-hint';
+  const cur = S.modes.find(m => m.id === S.mode);
+  hint.textContent = cur ? cur.desc : '';
+  row.appendChild(hint);
+}
+
+/* ================= 渲染：聊天区 ================= */
+function renderChat(messages){
+  const chat = $('#chat');
+  chat.innerHTML = '';
+  if(!messages.length){ chat.appendChild(buildHero()); return; }
+  messages.forEach(m => chat.appendChild(buildMessage(m)));
+  scrollBottom(true);
+}
+
+function buildHero(){
+  const el = document.createElement('div');
+  el.className = 'hero';
+  el.innerHTML =
+    '<div class="logo">' + I.bot + '</div>' +
+    '<h1>clagent</h1>' +
+    '<p>Unity Agent · 网页对话 · 通过 MCP 服务器（clmcp）操作 Unity 编辑器</p>' +
+    '<div class="hero-modes">' +
+      S.modes.map(m => '<span class="hero-mode"><i style="background:' + m.accent + '"></i>' + esc(m.label) + ' · ' + esc(m.title) + '：' + esc(m.desc) + '</span>').join('') +
+    '</div>' +
+    '<div class="suggests">' +
+      SUGGESTIONS.map((sg, i) => {
+        const m = S.modes.find(x => x.id === sg.mode) || {accent:'#888', label:sg.mode};
+        return '<div class="suggest" data-i="' + i + '"><div class="sg-mode"><i style="background:' + m.accent + '"></i>' + esc(m.label) + '</div><div class="sg-text">' + esc(sg.text) + '</div></div>';
+      }).join('') +
+    '</div>';
+  el.querySelectorAll('.suggest').forEach(node => {
+    node.addEventListener('click', () => {
+      const sg = SUGGESTIONS[+node.dataset.i];
+      S.mode = sg.mode; renderComposer();
+      const ta = $('#chatInput');
+      ta.value = sg.text; autoResize(); ta.focus();
+    });
+  });
+  return el;
+}
+
+function modeBadge(mode){
+  const m = S.modes.find(x => x.id === mode);
+  if(!m) return '';
+  return '<span class="mode-badge" style="color:' + m.accent + ';border-color:' + m.accent + '55">' + esc(m.label) + '</span>';
+}
+
+function toolCardHtml(tc){
+  const status = tc.ok === null || tc.ok === undefined ? 'run' : (tc.ok ? 'ok' : 'err');
+  const statusText = status === 'run' ? '运行中…' : (status === 'ok' ? '完成' : '失败');
+  const dur = tc.durationMs ? ' · ' + (tc.durationMs/1000).toFixed(1) + 's' : '';
+  let argsPretty = tc.arguments || '{}';
+  try{ argsPretty = JSON.stringify(JSON.parse(tc.arguments || '{}'), null, 2); }catch(e){}
+  return '<div class="toolcard ' + status + '" data-callid="' + esc(tc.id) + '">' +
+    '<div class="tool-head"><span class="tool-dot"></span>' +
+    '<span class="tool-name">' + esc(tc.name) + '</span>' +
+    '<span class="tool-status">' + statusText + dur + '</span>' + I.chev + '</div>' +
+    '<div class="tool-body">' +
+    '<div class="tool-sec">参数</div><pre class="tool-pre">' + esc(argsPretty) + '</pre>' +
+    '<div class="tool-sec">结果</div><pre class="tool-pre">' + esc(tc.result || (status === 'run' ? '…' : '')) + '</pre>' +
+    '</div></div>';
+}
+
+function partsHtml(msg){
+  const parts = msg.parts || [];
+  let h = '';
+  parts.forEach((p, i) => {
+    if(p.type === 'text'){
+      const cursor = (msg.streaming && i === parts.length - 1) ? '<span class="cursor"></span>' : '';
+      h += '<div class="msg-content">' + md(p.content) + cursor + '</div>';
+    } else if(p.type === 'tool'){
+      h += toolCardHtml(p);
+    }
+  });
+  if(!parts.length && msg.streaming) h += '<div class="msg-content"><span class="cursor"></span></div>';
+  return h;
+}
+
+function buildMessage(msg){
+  const el = document.createElement('div');
+  if(msg.role === 'user'){
+    el.className = 'msg msg-user';
+    el.innerHTML = '<div class="bubble">' + md(msg.content) + '</div>';
+    return el;
+  }
+  el.className = 'msg msg-assistant';
+  let inner = '<div class="msg-head"><span class="who">clagent</span>' + modeBadge(msg.mode) + '</div>';
+  if(msg.reasoning){
+    inner += '<details class="reasoning"><summary>思考过程</summary><div class="reasoning-body">' + esc(msg.reasoning) + '</div></details>';
+  }
+  inner += partsHtml(msg);
+  if(!msg.streaming && msg.mode === 'plan' && planText(msg)){
+    inner += '<div class="plan-actions"><button class="btn-runplan">' + I.play + '在 Craft 中执行此计划</button></div>';
+  }
+  el.innerHTML = '<div class="avatar">' + I.bot + '</div><div class="msg-main">' + inner + '</div>';
+  const btn = el.querySelector('.btn-runplan');
+  if(btn){
+    btn.addEventListener('click', () => {
+      if(S.running) return;
+      S.mode = 'craft'; renderComposer();
+      sendMsg('请按照以下计划逐步执行；执行中如发现计划与实际不符，先说明偏差与调整方案再继续：\n\n' + planText(msg));
+    });
+  }
+  return el;
+}
+
+function planText(msg){
+  return (msg.parts || []).filter(p => p.type === 'text').map(p => p.content).join('\n\n');
+}
+
+/* ================= 流式消息 ================= */
+function startLive(mode){
+  if(live) return;
+  const chat = $('#chat');
+  const hero = chat.querySelector('.hero');
+  if(hero) hero.remove();
+  live = {role:'assistant', reasoning:'', mode, parts:[], streaming:true};
+  liveEl = document.createElement('div');
+  liveEl.className = 'msg msg-assistant';
+  liveEl.innerHTML = '<div class="avatar">' + I.bot + '</div><div class="msg-main">' + assistantInner(live) + '</div>';
+  chat.appendChild(liveEl);
+  scrollBottom(true);
+}
+
+function assistantInner(msg){
+  let inner = '<div class="msg-head"><span class="who">clagent</span>' + modeBadge(msg.mode) + '</div>';
+  if(msg.reasoning){
+    inner += '<details class="reasoning"><summary>思考过程</summary><div class="reasoning-body">' + esc(msg.reasoning) + '</div></details>';
+  }
+  inner += partsHtml(msg);
+  if(!msg.streaming && msg.mode === 'plan' && planText(msg)){
+    inner += '<div class="plan-actions"><button class="btn-runplan">' + I.play + '在 Craft 中执行此计划</button></div>';
+  }
+  return inner;
+}
+
+function pushText(text){
+  if(!live) return;
+  const last = live.parts[live.parts.length - 1];
+  if(last && last.type === 'text') last.content += text;
+  else live.parts.push({type:'text', content:text});
+}
+
+function scheduleLive(){
+  if(renderTimer) return;
+  renderTimer = setTimeout(() => { renderTimer = null; renderLiveMsg(); }, 90);
+}
+
+function renderLiveMsg(){
+  if(!liveEl || !live) return;
+  const main = liveEl.querySelector('.msg-main');
+  if(!main) return;
+  // 保留用户展开状态
+  const openIds = [...liveEl.querySelectorAll('.toolcard.open')].map(c => c.dataset.callid);
+  const reasonOpen = !!liveEl.querySelector('details.reasoning')?.open;
+  main.innerHTML = assistantInner(live);
+  openIds.forEach(id => {
+    const c = liveEl.querySelector('.toolcard[data-callid="' + CSS.escape(id) + '"]');
+    if(c) c.classList.add('open');
+  });
+  const r = liveEl.querySelector('details.reasoning');
+  if(r && reasonOpen) r.open = true;
+  const btn = liveEl.querySelector('.btn-runplan');
+  if(btn){
+    btn.addEventListener('click', () => {
+      if(S.running) return;
+      S.mode = 'craft'; renderComposer();
+      sendMsg('请按照以下计划逐步执行；执行中如发现计划与实际不符，先说明偏差与调整方案再继续：\n\n' + planText(live));
+    });
+  }
+  scrollBottom();
+}
+
+function nearBottom(){
+  const w = $('#chatWrap');
+  return w.scrollHeight - w.scrollTop - w.clientHeight < 120;
+}
+function scrollBottom(force){
+  if(force || nearBottom()){
+    const w = $('#chatWrap');
+    w.scrollTop = w.scrollHeight;
+  }
+}
+
+/* ================= 发送 / 停止 ================= */
+function setRunning(v){
+  S.running = v;
+  document.body.classList.toggle('running', v);
+  $('#sendBtn').style.display = v ? 'none' : '';
+  $('#stopBtn').style.display = v ? '' : 'none';
+  if(!v) scrollBottom();
+}
+
+function appendUserMsg(text){
+  const chat = $('#chat');
+  const hero = chat.querySelector('.hero');
+  if(hero) hero.remove();
+  chat.appendChild(buildMessage({role:'user', content:text}));
+  scrollBottom(true);
+}
+
+function sendMsg(text){
+  text = (text || '').trim();
+  if(!text || S.running) return;
+  appendUserMsg(text);
+  send({type:'send', sessionId:S.selected, mode:S.mode, text});
+  setRunning(true);
+}
+
+function selectSession(id){
+  if(S.running){ toast('请先停止当前任务，再切换会话', 'info'); return; }
+  send({type:'select', sessionId:id});
+}
+
+/* ================= 输入框 ================= */
+const ta = $('#chatInput');
+function autoResize(){
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+}
+ta.addEventListener('input', autoResize);
+ta.addEventListener('keydown', e => {
+  if(e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){
+    e.preventDefault();
+    sendMsg(ta.value);
+    ta.value = ''; autoResize();
+  }
+});
+$('#sendBtn').addEventListener('click', () => { sendMsg(ta.value); ta.value = ''; autoResize(); ta.focus(); });
+$('#stopBtn').addEventListener('click', () => send({type:'stop'}));
+$('#newChatBtn').addEventListener('click', () => {
+  if(S.running){ toast('请先停止当前任务', 'info'); return; }
+  send({type:'new'});
+});
+$('#burger').addEventListener('click', () => document.body.classList.toggle('side-open'));
+
+/* 复制按钮（事件委托） */
+$('#chat').addEventListener('click', e => {
+  const btn = e.target.closest('.copybtn');
+  if(!btn) return;
+  const code = decodeURIComponent(btn.dataset.code || '');
+  const done = () => { btn.textContent = '已复制'; setTimeout(() => btn.textContent = '复制', 1200); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(done).catch(() => fallback());
+  } else fallback();
+  function fallback(){
+    const t = document.createElement('textarea');
+    t.value = code; document.body.appendChild(t); t.select();
+    try{ document.execCommand('copy'); done(); }catch(err){}
+    t.remove();
+  }
+});
+/* 工具卡片折叠（事件委托） */
+$('#chat').addEventListener('click', e => {
+  const head = e.target.closest('.tool-head');
+  if(head) head.parentElement.classList.toggle('open');
+});
+
+/* ================= toast ================= */
+function toast(msg, type){
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || 'info');
+  el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 320); }, 4200);
+}
+
+/* ================= 设置弹窗 ================= */
+let mcpDraft = [];
+let curTab = 'llm';
+
+function openSettings(tab){
+  curTab = tab || curTab;
+  switchTab(curTab);
+  fillSettingsForm();
+  $('#settingsModal').classList.remove('hidden');
+}
+function closeSettings(){ $('#settingsModal').classList.add('hidden'); }
+
+function switchTab(tab){
+  curTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('#tab-llm').classList.toggle('hidden', tab !== 'llm');
+  $('#tab-mcp').classList.toggle('hidden', tab !== 'mcp');
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+$('#settingsBtn').addEventListener('click', () => openSettings('llm'));
+$('#llmChip').addEventListener('click', () => openSettings('llm'));
+$('#mcpChip').addEventListener('click', () => openSettings('mcp'));
+$('#closeSettings').addEventListener('click', closeSettings);
+$('#settingsModal').addEventListener('click', e => { if(e.target === $('#settingsModal')) closeSettings(); });
+$('#pwEye').addEventListener('click', () => {
+  const inp = $('#f-apikey');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  $('#pwEye').textContent = show ? '隐藏' : '显示';
+});
+
+function fillSettingsForm(){
+  const llm = (S.config && S.config.llm) || {};
+  $('#f-baseurl').value = llm.base_url || '';
+  $('#f-apikey').value = llm.api_key || '';
+  $('#f-model').value = llm.model || '';
+  $('#f-temp').value = llm.temperature ?? 0.3;
+  $('#f-tempOut').value = $('#f-temp').value;
+  $('#f-maxtokens').value = llm.max_tokens || 0;
+  const mcp = (S.config && S.config.mcp) || {};
+  $('#f-calltimeout').value = mcp.call_timeout ?? 300;
+  $('#f-reconnect').value = mcp.reconnect_seconds ?? 15;
+  mcpDraft = [];
+  const servers = mcp.servers || {};
+  Object.keys(servers).forEach(name => {
+    const s = servers[name] || {};
+    mcpDraft.push({
+      name, type: s.type === 'stdio' ? 'stdio' : 'tcp',
+      enabled: s.enabled !== false,
+      host: s.host || '127.0.0.1', port: s.port || 6400,
+      command: s.command || '', args: (s.args || []).join('\n')
+    });
+  });
+  renderMcpEditors();
+}
+
+function renderMcpEditors(){
+  const box = $('#mcpList');
+  box.innerHTML = '';
+  mcpDraft.forEach((d, i) => {
+    const st = (S.mcp || []).find(s => s.name === d.name);
+    let statusHtml = '<div class="m-status">尚未连接（保存或测试后更新）</div>';
+    if(st){
+      statusHtml = st.connected
+        ? '<div class="m-status ok">已连接 · ' + (st.tools || []).length + ' 个工具<div class="tools-line">' + esc((st.tools || []).join(' · ')) + '</div></div>'
+        : '<div class="m-status err">未连接' + (st.error ? '：' + esc(st.error) : '') + '</div>';
+    }
+    const el = document.createElement('div');
+    el.className = 'mcp-card';
+    el.innerHTML =
+      '<div class="mcp-card-head">' +
+        '<input class="m-name" value="' + esc(d.name) + '" placeholder="服务器名称">' +
+        '<select class="m-type"><option value="tcp"' + (d.type !== 'stdio' ? ' selected' : '') + '>TCP</option><option value="stdio"' + (d.type === 'stdio' ? ' selected' : '') + '>stdio</option></select>' +
+        '<label class="m-en"><input type="checkbox" class="m-enabled"' + (d.enabled ? ' checked' : '') + '>启用</label>' +
+        '<button class="m-del" title="删除">' + I.trash + '</button>' +
+      '</div>' +
+      '<div class="mcp-grid">' +
+        '<div class="mcp-tcp" style="display:' + (d.type === 'stdio' ? 'none' : 'contents') + '">' +
+          '<div><label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px">主机</label><input class="m-host" value="' + esc(d.host) + '"></div>' +
+          '<div><label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px">端口</label><input class="m-port" type="number" value="' + esc(d.port) + '"></div>' +
+        '</div>' +
+        '<div class="mcp-stdio" style="display:' + (d.type === 'stdio' ? 'contents' : 'none') + '">' +
+          '<div class="full"><label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px">命令（如 python / node）</label><input class="m-command" value="' + esc(d.command) + '"></div>' +
+          '<div class="full"><label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px">参数（每行一个）</label><textarea class="m-args">' + esc(d.args) + '</textarea></div>' +
+        '</div>' +
+      '</div>' + statusHtml;
+    el.querySelector('.m-del').addEventListener('click', () => { mcpDraft.splice(i, 1); renderMcpEditors(); });
+    el.querySelector('.m-type').addEventListener('change', e => {
+      d.type = e.target.value; renderMcpEditors();
+    });
+    box.appendChild(el);
+  });
+}
+
+$('#addMcpBtn').addEventListener('click', () => {
+  let n = 'mcp-' + (mcpDraft.length + 1);
+  while(mcpDraft.find(d => d.name === n)) n += '-x';
+  mcpDraft.push({name:n, type:'tcp', enabled:true, host:'127.0.0.1', port:6400, command:'', args:''});
+  renderMcpEditors();
+});
+
+function collectMcpDraft(){
+  const servers = {};
+  document.querySelectorAll('#mcpList .mcp-card').forEach((el, i) => {
+    const d = mcpDraft[i];
+    const name = (el.querySelector('.m-name').value || '').trim();
+    const type = el.querySelector('.m-type').value;
+    const enabled = el.querySelector('.m-enabled').checked;
+    if(!name) throw new Error('MCP 服务器名称不能为空');
+    const entry = {type, enabled};
+    if(type === 'stdio'){
+      entry.command = (el.querySelector('.m-command').value || '').trim();
+      if(!entry.command) throw new Error('stdio 服务器「' + name + '」需要填写 command');
+      entry.args = (el.querySelector('.m-args').value || '').split('\n').map(s => s.trim()).filter(Boolean);
+    } else {
+      entry.host = (el.querySelector('.m-host').value || '127.0.0.1').trim();
+      entry.port = parseInt(el.querySelector('.m-port').value) || 6400;
+    }
+    servers[name] = entry;
+  });
+  return servers;
+}
+
+$('#f-temp').addEventListener('input', () => { $('#f-tempOut').value = $('#f-temp').value; });
+
+async function postJson(url, body){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  return r.json();
+}
+
+function applyState(st){
+  if(st && st.state){
+    handleEvent({type:'state', ...st.state});
+  }
+}
+
+$('#saveSettings').addEventListener('click', async () => {
+  const btn = $('#saveSettings');
+  btn.disabled = true; btn.textContent = '保存中…';
+  try{
+    const llm = {
+      base_url: $('#f-baseurl').value.trim(),
+      api_key: $('#f-apikey').value.trim(),
+      model: $('#f-model').value.trim(),
+      temperature: parseFloat($('#f-temp').value) || 0,
+      max_tokens: parseInt($('#f-maxtokens').value) || 0
+    };
+    const mcp = {
+      call_timeout: parseFloat($('#f-calltimeout').value) || 300,
+      reconnect_seconds: parseFloat($('#f-reconnect').value) || 0,
+      servers: collectMcpDraft()
+    };
+    const resp = await postJson('/api/config', {llm, mcp});
+    if(resp.error){ toast(resp.error, 'error'); }
+    else toast('配置已保存' + ((resp.state && resp.state.mcp || []).some(s => s.connected) ? '' : '（MCP 未连接，请确认 Unity 已启动 CLMCP）'), 'info');
+    applyState(resp);
+    renderMcpEditors();
+  }catch(e){
+    toast('保存失败：' + e.message, 'error');
+  }finally{
+    btn.disabled = false; btn.textContent = '保存';
+  }
+});
+
+$('#mcpTestBtn').addEventListener('click', async () => {
+  const btn = $('#mcpTestBtn');
+  btn.disabled = true; btn.textContent = '连接中…';
+  try{
+    const resp = await postJson('/api/mcp/reconnect', {});
+    if(resp.error) toast(resp.error, 'error');
+    else{
+      const on = (resp.state.mcp || []).filter(s => s.connected).length;
+      toast('MCP 已连接 ' + on + ' / ' + (resp.state.mcp || []).length, 'info');
+    }
+    applyState(resp);
+    renderMcpEditors();
+  }catch(e){
+    toast('测试失败：' + e.message, 'error');
+  }finally{
+    btn.disabled = false; btn.textContent = '仅测试连接';
+  }
+});
+
+/* ================= 启动 ================= */
+connectWS();
+</script>
+</body>
+</html>
