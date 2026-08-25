@@ -24,6 +24,12 @@ public:
         const MathDeco& deco, IDWriteFactory* dwrite,
         IDWriteTextFormat* fmt, bool italic);
 
+    // 锚定基线（相对盒顶）：对象沿"分母链"对外的基线锚点——分式为其分母
+    // 行的锚定基线（分母含子分式时递归取子分母基线），根式为其排版基线，
+    // 其余等于 m_baseline。外层结构经 MakeCompositeText 合成行级锚定基线，
+    // 实现高度与基线数据从最内层逐层向外传递（根号据此定位与定字号）。
+    float AnchorBase() const { return m_anchorBase; }
+
     // ---- IUnknown ----
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
     ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&m_ref); }
@@ -48,6 +54,7 @@ private:
     bool m_isScript = false;           // 真上标/下标（上下标无法映射为 Unicode 时）
     bool m_isSqrt = false;             // 根号（宽度压缩，与被开方数重叠排版）
     float m_width = 0, m_height = 0, m_baseline = 0;   // metrics（DIP）
+    float m_anchorBase = 0;            // 锚定基线（相对盒顶，见 AnchorBase）
 
     // 分式布局
     Microsoft::WRL::ComPtr<IDWriteTextLayout> m_top, m_bottom;  // 分子/分母
