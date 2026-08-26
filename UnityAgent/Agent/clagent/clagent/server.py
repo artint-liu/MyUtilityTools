@@ -12,6 +12,7 @@ import asyncio
 import errno
 import json
 import os
+import socket
 import sys
 import threading
 import webbrowser
@@ -20,6 +21,7 @@ from aiohttp import web, WSMsgType
 
 from .agent import AgentRunner, display_messages
 from .config import ConfigStore, DATA_DIR
+from . import llm as llm_mod
 from .mcp import McpManager
 from .prompts import MODES
 from .session import SessionStore
@@ -157,6 +159,61 @@ async def reconnect_handler(request):
     return web.json_response({"ok": True, "state": build_state(request.app)})
 
 
+async def test_handler(request):
+    """测试连接：按提交的（未保存亦可）配置分别测试模型服务与 MCP 服务器。
+
+    返回逐项详细结果：
+    - llm: {ok, message}——message 含阶段化诊断（网络不通 / Key 无效 / 路径或模型名错误…）
+    - mcp: {servers: [{name, connected, tools, error}], error?}
+    """
+    app = request.app
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "请求体不是合法 JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "请求体必须是 JSON 对象"}, status=400)
+
+    try:
+        if isinstance(body.get("llm"), dict):
+            llm_cfg = _sanitize_llm(body["llm"])
+        else:
+            llm_cfg = _sanitize_llm(dict(app["ctx"]["cfg"].cfg.get("llm") or {}))
+        if isinstance(body.get("mcp"), dict):
+            mcp_cfg = _sanitize_mcp(body["mcp"])
+        else:
+            mcp_cfg = _sanitize_mcp(dict(app["ctx"]["cfg"].cfg.get("mcp") or {}))
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+    # 1) 模型服务
+    try:
+        llm_ok, llm_msg = await llm_mod.test_llm(llm_cfg)
+    except Exception as e:
+        llm_ok, llm_msg = False, f"测试出错：{type(e).__name__}: {e}"
+
+    # 2) MCP（使用临时管理器，不影响运行中的连接，也不保存配置）
+    mcp_error, servers = None, []
+    try:
+        mgr = McpManager(mcp_cfg)
+        try:
+            await mgr.connect_all(per_server_timeout=8)
+            servers = mgr.status()
+        finally:
+            await mgr.close_all()
+    except Exception as e:
+        mcp_error = f"MCP 测试出错：{type(e).__name__}: {e}"
+
+    all_ok = (llm_ok and mcp_error is None and bool(servers)
+              and all(s.get("connected") for s in servers))
+    resp = {"ok": all_ok,
+            "llm": {"ok": llm_ok, "message": llm_msg},
+            "mcp": {"servers": servers}}
+    if mcp_error:
+        resp["mcp"]["error"] = mcp_error
+    return web.json_response(resp)
+
+
 # ---------------------------------------------------------------- WebSocket
 
 def _emit_history(emit, session):
@@ -260,6 +317,7 @@ async def ws_handler(request):
                     emit({"type": "error", "message": "会话正在运行，无法删除。"})
                 else:
                     app["ctx"]["sessions"].delete(sid)
+                    emit({"type": "session_deleted", "sessionId": sid})
                     emit({"type": "state", **build_state(app)})
     finally:
         if task is not None:
@@ -281,7 +339,7 @@ async def _on_cleanup(app):
     await app["ctx"]["mcp"].close_all()
 
 
-def build_app(cfg_store: ConfigStore, data_dir: str = None) -> web.Application:
+def build_app(cfg_store: ConfigStore, data_dir: "str | None" = None) -> web.Application:
     sessions = SessionStore(data_dir or DATA_DIR)
     mcp = McpManager(cfg_store.cfg.get("mcp") or {})
     agent = AgentRunner(cfg_store, mcp, sessions)
@@ -292,6 +350,7 @@ def build_app(cfg_store: ConfigStore, data_dir: str = None) -> web.Application:
     app.router.add_get("/api/state", state_handler)
     app.router.add_post("/api/config", config_handler)
     app.router.add_post("/api/mcp/reconnect", reconnect_handler)
+    app.router.add_post("/api/test", test_handler)
     app.router.add_get("/api/ws", ws_handler)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
@@ -323,19 +382,45 @@ def main(argv=None):
         if not args.no_browser:
             threading.Timer(0.5, lambda: webbrowser.open(url)).start()
 
+    def _port_reason(e: OSError):
+        """返回端口失败的可读原因；不可自动重试时返回 None。"""
+        if e.errno in (errno.EADDRINUSE, 10048):
+            return "已被占用"
+        # EACCES(10013)：端口落在系统保留范围（netsh excludedportrange），
+        # 或被其他进程的出站连接占用为源端口（动态端口范围覆盖该端口时常见）
+        if e.errno in (errno.EACCES, 10013):
+            return "无法绑定（可能被系统保留，或被其他进程的出站连接占用为源端口）"
+        return None
+
     last_err = None
     for _ in range(10):
-        app = build_app(cfg_store)
-        app.on_startup.append(_announce)
+        # 预探测端口可用性：绑定失败时提前换端口，避免 on_startup 误报“就绪”
         try:
-            web.run_app(app, host=host, port=port, print=None)
-            return
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                probe.bind((host, port))
+            finally:
+                probe.close()
         except OSError as e:
             last_err = e
-            if e.errno in (errno.EADDRINUSE, 10048) and host in ("127.0.0.1", "localhost", "0.0.0.0"):
-                print(f"[clagent] 端口 {port} 已被占用，尝试 {port + 1} …")
-                port += 1
-                continue
-            break
+        else:
+            app = build_app(cfg_store)
+            app.on_startup.append(_announce)
+            try:
+                web.run_app(app, host=host, port=port, print=None)
+                return
+            except OSError as e:  # 预探测与实际绑定之间的极小竞争窗口
+                last_err = e
+
+        reason = _port_reason(last_err)
+        if reason and host in ("127.0.0.1", "localhost", "0.0.0.0"):
+            print(f"[clagent] 端口 {port} {reason}，尝试 {port + 1} …")
+            port += 1
+            continue
+        break
     print(f"[clagent] 启动失败：{last_err}")
+    print("[clagent] 排查提示：")
+    print("  - netstat -ano | findstr <端口>     查看端口占用进程")
+    print("  - netsh interface ipv4 show excludedportrange protocol=tcp   查看系统保留端口范围")
+    print("  - netsh int ipv4 show dynamicport tcp   查看出站连接源端口范围（避开该范围更稳妥）")
     sys.exit(1)

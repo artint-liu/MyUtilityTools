@@ -84,7 +84,13 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14
 /* 消息 */
 .msg{display:flex;gap:12px;margin:20px 0}
 .msg-user{justify-content:flex-end}
-.msg-user .bubble{max-width:76%;background:var(--panel3);border:1px solid var(--border2);padding:10px 14px;border-radius:14px 14px 4px 14px;overflow-wrap:break-word}
+.msg-user .user-col{max-width:76%;min-width:0;display:flex;flex-direction:column;align-items:flex-end}
+.msg-user .bubble{background:var(--panel3);border:1px solid var(--border2);padding:10px 14px;border-radius:14px 14px 4px 14px;overflow-wrap:break-word}
+.msg-foot{display:flex;align-items:center;gap:6px;margin-top:4px;padding-right:2px}
+.msg-time{font-size:11px;color:var(--faint)}
+.copymsg{font-size:11px;color:var(--faint);background:none;border:none;cursor:pointer;padding:2px 5px;border-radius:5px;font-family:var(--sans)}
+.copymsg:hover{color:var(--accent);background:var(--panel2)}
+.copymsg.copied{color:var(--ok)}
 .avatar{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#7c8cff,#5f6fd6);display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px}
 .avatar svg{width:19px;height:19px;color:#fff}
 .msg-main{flex:1;min-width:0}
@@ -126,6 +132,9 @@ details.reasoning summary::before{content:'▸ ';display:inline-block;transition
 details.reasoning[open] summary::before{transform:rotate(90deg)}
 .reasoning-body{padding:2px 14px 10px;font-size:12.5px;color:var(--muted);white-space:pre-wrap;max-height:240px;overflow-y:auto}
 
+/* 推理速度统计 */
+.llm-stats{font-size:11px;color:var(--faint);font-family:var(--mono);padding:1px 2px;margin:3px 0 2px;user-select:all}
+
 /* 工具卡片 */
 .toolcard{border:1px solid var(--border);border-radius:10px;background:var(--panel2);margin:9px 0;overflow:hidden}
 .toolcard.run{border-color:rgba(251,191,36,.4)}
@@ -149,6 +158,7 @@ details.reasoning[open] summary::before{transform:rotate(90deg)}
 .tool-sec{font-size:11px;color:var(--faint);margin:8px 0 4px}
 .tool-sec:first-child{margin-top:0}
 .tool-pre{font-family:var(--mono);font-size:12px;background:#0b0e15;border:1px solid var(--border);border-radius:8px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto;color:#c7cede}
+.tool-body .codeblock{margin:8px 0 2px}
 
 /* 计划执行按钮 */
 .plan-actions{margin:12px 0 4px}
@@ -157,6 +167,11 @@ details.reasoning[open] summary::before{transform:rotate(90deg)}
 .btn-runplan svg{width:14px;height:14px}
 
 .cursor{display:inline-block;width:8px;height:15px;background:var(--accent);border-radius:2px;vertical-align:-2px;animation:pulse .9s infinite;margin-left:2px}
+
+/* 等待模型响应指示 */
+.waiting{display:inline-flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);padding:7px 2px;animation:wpulse 1.6s ease-in-out infinite}
+.waiting .wsec{font-family:var(--mono);color:var(--accent)}
+@keyframes wpulse{0%,100%{opacity:1}50%{opacity:.45}}
 
 /* 输入区 */
 #composer{border-top:1px solid var(--border);background:var(--panel);padding:12px 22px 16px}
@@ -176,8 +191,10 @@ details.reasoning[open] summary::before{transform:rotate(90deg)}
 #sendBtn{background:linear-gradient(135deg,#7c8cff,#5f6fd6);color:#fff}
 #sendBtn:hover{filter:brightness(1.12)}
 #sendBtn:disabled{opacity:.4;cursor:default}
-#stopBtn{background:var(--panel3);border:1px solid rgba(248,113,113,.5);color:var(--err);display:none}
-#stopBtn:hover{background:rgba(248,113,113,.12)}
+#stopBtn{background:var(--panel3);border:1px solid rgba(248,113,113,.5);color:var(--err)}
+#stopBtn:disabled{opacity:.35;cursor:default;border-color:var(--border2);color:var(--faint)}
+#stopBtn:not(:disabled){animation:wpulse 1.6s ease-in-out infinite}
+#stopBtn:not(:disabled):hover{background:rgba(248,113,113,.12)}
 #stopBtn svg,#sendBtn svg{width:17px;height:17px}
 .composer-note{font-size:11px;color:var(--faint);margin-top:7px;text-align:center}
 body.running .session-item{pointer-events:none;opacity:.55}
@@ -240,6 +257,16 @@ body.running .session-item.active{opacity:.85}
 .mcp-global input{width:100%;background:var(--panel2);border:1px solid var(--border2);border-radius:9px;padding:8px 10px;color:var(--text);font-size:12.5px;outline:none}
 .mcp-global label{font-size:11.5px;color:var(--muted);display:block;margin-bottom:4px}
 
+/* 连接测试结果面板 */
+.test-result{margin:0 20px;padding:12px 14px;border:1px solid var(--border2);border-radius:11px;background:var(--panel2);font-size:12.5px;display:flex;flex-direction:column;gap:9px;max-height:190px;overflow-y:auto}
+.tr-title{font-weight:700;font-size:12px;color:var(--muted);letter-spacing:.5px}
+.tr-row{display:flex;gap:9px;align-items:flex-start;line-height:1.5}
+.tr-row .dot{margin-top:6px;flex:none}
+.tr-msg{color:var(--muted);word-break:break-word}
+.tr-row.ok .tr-msg{color:var(--ok)}
+.tr-row.err .tr-msg{color:var(--err)}
+.tr-msg b{font-weight:700}
+
 /* toast */
 #toasts{position:fixed;top:16px;right:16px;z-index:99;display:flex;flex-direction:column;gap:8px;max-width:380px}
 .toast{padding:11px 15px;border-radius:11px;background:var(--panel3);border:1px solid var(--border2);font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.4);animation:slidein .2s;word-break:break-word}
@@ -295,9 +322,9 @@ body.running .session-item.active{opacity:.85}
       <div class="composer-inner">
         <div class="mode-row" id="modeRow"></div>
         <div class="input-row">
-          <textarea id="chatInput" rows="1" placeholder="给 clagent 发消息…（Enter 发送，Shift+Enter 换行）"></textarea>
-          <button class="icon-btn" id="sendBtn" title="发送"></button>
-          <button class="icon-btn" id="stopBtn" title="停止"></button>
+          <textarea id="chatInput" rows="1" placeholder="给 clagent 发消息…（Enter 发送，Ctrl+Enter 换行）"></textarea>
+          <button class="icon-btn" id="sendBtn" title="发送（Enter）"></button>
+          <button class="icon-btn" id="stopBtn" title="终止对话（当前无进行中的任务）" disabled></button>
         </div>
         <div class="composer-note">clagent 通过 MCP 服务器（clmcp）操作 Unity · 模式决定可用工具与行为边界</div>
       </div>
@@ -360,8 +387,9 @@ body.running .session-item.active{opacity:.85}
       <div id="mcpList"></div>
       <button id="addMcpBtn">＋ 添加 MCP 服务器</button>
     </div>
+    <div id="testResult" class="test-result hidden"></div>
     <div class="modal-foot">
-      <button class="btn" id="mcpTestBtn">仅测试连接</button>
+      <button class="btn" id="mcpTestBtn">测试连接</button>
       <button class="btn primary" id="saveSettings">保存</button>
     </div>
   </div>
@@ -379,7 +407,7 @@ const I = {
   bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7.5" width="16" height="11.5" rx="3"/><circle cx="9" cy="13" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1.4" fill="currentColor" stroke="none"/><path d="M12 7.5V4.5"/><circle cx="12" cy="3.4" r="1.1"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="8" cy="17" r="2" fill="var(--panel)"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 20 4l-7 16-2.2-6.8L4 11.5z"/></svg>',
-  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 13h9l1-13"/></svg>',
   burger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
@@ -475,7 +503,7 @@ function md(src){
 /* ================= 全局状态 ================= */
 const S = {
   sessions: [], selected: null, modes: [], mode: 'craft',
-  config: null, mcp: [], running: false
+  config: null, mcp: [], running: false, waiting: false
 };
 const SUGGESTIONS = [
   {mode:'ask',   text:'当前场景里有哪些物体？各自挂了什么组件？'},
@@ -484,6 +512,8 @@ const SUGGESTIONS = [
 ];
 
 let ws = null, backoff = 1000, autoTried = null;
+let waitStart = null;  // 模型推理等待起始时间（毫秒），null 表示未在等待
+let stayNew = false;   // 删除当前会话后停留在初始页，不自动跳到其他会话
 let live = null, liveEl = null, renderTimer = null;
 
 function send(obj){ if(ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
@@ -499,6 +529,7 @@ function connectWS(){
   ws.onmessage = e => { try{ handleEvent(JSON.parse(e.data)); }catch(err){ console.error(err); } };
   ws.onclose = () => {
     setWsStatus(false);
+    S.waiting = false; waitStart = null;
     if(live){ live.streaming = false; renderLiveMsg(); live = null; liveEl = null; }
     setRunning(false);
     setTimeout(connectWS, backoff);
@@ -521,18 +552,36 @@ function handleEvent(ev){
       renderSidebar(); renderTopbar(); renderComposer(); maybeAutoSelect();
       break;
     case 'session':
-      S.selected = ev.sessionId; renderSidebar(); document.body.classList.remove('side-open');
+      S.selected = ev.sessionId; stayNew = false;
+      renderSidebar(); document.body.classList.remove('side-open');
+      break;
+    case 'session_deleted':
+      // 删除的是当前会话：清空聊天区回到初始页（不自动跳到其他会话）
+      if(S.selected === ev.sessionId){
+        S.selected = null;
+        stayNew = true;
+        renderChat([]);
+      }
       break;
     case 'history':
       S.selected = ev.sessionId; renderChat(ev.messages || []);
       document.body.classList.remove('side-open');
       break;
     case 'run_start': startLive(ev.mode); break;
-    case 'delta': pushText(ev.text); scheduleLive(); break;
-    case 'reasoning': if(live){ live.reasoning += ev.text; scheduleLive(); } break;
+    case 'llm_start': setWaiting(true); break;
+    case 'llm_end':
+      setWaiting(false);
+      if(live && ev.text){
+        live.parts.push({type:'stats', content:ev.text});
+        scheduleLive();
+      }
+      break;
+    case 'delta': setWaiting(false); pushText(ev.text); scheduleLive(); break;
+    case 'reasoning': setWaiting(false); if(live){ pushReasoning(ev.text); scheduleLive(); } break;
     case 'tool_start':
+      setWaiting(false);
       if(live){
-        live.parts.push({type:'tool', id:ev.callId, name:ev.name, arguments:ev.arguments, ok:null, result:'', durationMs:0});
+        live.parts.push({type:'tool', id:ev.callId, name:ev.name, arguments:ev.arguments, ok:null, result:'', durationMs:0, _startTs:Date.now()});
         scheduleLive();
       }
       break;
@@ -543,6 +592,7 @@ function handleEvent(ev){
       scheduleLive(); break;
     }
     case 'run_end':
+      setWaiting(false);
       if(live){
         live.streaming = false;
         if(ev.stopped) pushText('\n\n*（已手动停止）*');
@@ -556,7 +606,7 @@ function handleEvent(ev){
 }
 
 function maybeAutoSelect(){
-  if(S.selected || S.running || !S.sessions.length) return;
+  if(stayNew || S.selected || S.running || !S.sessions.length) return;
   const first = S.sessions[0].id;
   if(autoTried === first) return;
   autoTried = first;
@@ -669,45 +719,88 @@ function toolCardHtml(tc){
   const status = tc.ok === null || tc.ok === undefined ? 'run' : (tc.ok ? 'ok' : 'err');
   const statusText = status === 'run' ? '运行中…' : (status === 'ok' ? '完成' : '失败');
   const dur = tc.durationMs ? ' · ' + (tc.durationMs/1000).toFixed(1) + 's' : '';
-  let argsPretty = tc.arguments || '{}';
-  try{ argsPretty = JSON.stringify(JSON.parse(tc.arguments || '{}'), null, 2); }catch(e){}
-  return '<div class="toolcard ' + status + '" data-callid="' + esc(tc.id) + '">' +
+  const startAttr = (status === 'run' && tc._startTs) ? ' data-start="' + tc._startTs + '"' : '';
+  return '<div class="toolcard ' + status + '"' + startAttr + ' data-callid="' + esc(tc.id) + '">' +
     '<div class="tool-head"><span class="tool-dot"></span>' +
     '<span class="tool-name">' + esc(tc.name) + '</span>' +
     '<span class="tool-status">' + statusText + dur + '</span>' + I.chev + '</div>' +
     '<div class="tool-body">' +
-    '<div class="tool-sec">参数</div><pre class="tool-pre">' + esc(argsPretty) + '</pre>' +
+    '<div class="tool-sec">参数</div>' + argsHtml(tc) +
     '<div class="tool-sec">结果</div><pre class="tool-pre">' + esc(tc.result || (status === 'run' ? '…' : '')) + '</pre>' +
     '</div></div>';
+}
+
+/* 工具参数智能渲染：短参数合并为 JSON；长文本参数（如 execute_csharp 的 code）
+   单独渲染为真正的代码块（保留换行、可复制），便于对照报错行号阅读代码 */
+function argsHtml(tc){
+  let args;
+  try{ args = JSON.parse(tc.arguments || '{}'); }catch(e){
+    return '<pre class="tool-pre">' + esc(tc.arguments || '{}') + '</pre>';
+  }
+  if(typeof args !== 'object' || args === null) args = {value: args};
+  const entries = Object.entries(args);
+  if(!entries.length) return '<pre class="tool-pre">{}</pre>';
+  const shorts = {}, longs = [];
+  entries.forEach(([k, v]) => {
+    if(typeof v === 'string' && (v.indexOf('\n') >= 0 || v.length > 120)) longs.push([k, v]);
+    else shorts[k] = v;
+  });
+  let h = '';
+  if(Object.keys(shorts).length){
+    h += '<pre class="tool-pre">' + esc(JSON.stringify(shorts, null, 2)) + '</pre>';
+  }
+  longs.forEach(([k, v]) => {
+    const isCsharp = String(tc.name || '').toLowerCase().indexOf('csharp') >= 0 && k === 'code';
+    h += '<div class="codeblock"><div class="codebar"><span>' + (isCsharp ? 'csharp' : esc(k)) +
+      '</span><button class="copybtn" data-code="' + encodeURIComponent(v) + '">复制</button></div>' +
+      '<pre><code>' + esc(v) + '</code></pre></div>';
+  });
+  return h;
 }
 
 function partsHtml(msg){
   const parts = msg.parts || [];
   let h = '';
   parts.forEach((p, i) => {
-    if(p.type === 'text'){
+    if(p.type === 'reasoning'){
+      // 时间顺序穿插的思考块：正在思考的最后一块自动展开并显示字数
+      const isActive = msg.streaming && i === parts.length - 1;
+      const label = isActive ? '思考中…（' + p.content.length + ' 字）' : '思考过程';
+      h += '<details class="reasoning"' + (isActive ? ' open' : '') + '><summary>' + label +
+        '</summary><div class="reasoning-body">' + esc(p.content) + '</div></details>';
+    } else if(p.type === 'text'){
       const cursor = (msg.streaming && i === parts.length - 1) ? '<span class="cursor"></span>' : '';
       h += '<div class="msg-content">' + md(p.content) + cursor + '</div>';
+    } else if(p.type === 'stats'){
+      h += '<div class="llm-stats">' + esc(p.content) + '</div>';
     } else if(p.type === 'tool'){
       h += toolCardHtml(p);
     }
   });
-  if(!parts.length && msg.streaming) h += '<div class="msg-content"><span class="cursor"></span></div>';
+  if(!parts.length && msg.streaming && !S.waiting) h += '<div class="msg-content"><span class="cursor"></span></div>';
   return h;
+}
+
+function fmtTime(ts){
+  if(!ts) return '';
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  if(d.toDateString() === now.toDateString()) return hm;
+  return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm;
 }
 
 function buildMessage(msg){
   const el = document.createElement('div');
   if(msg.role === 'user'){
     el.className = 'msg msg-user';
-    el.innerHTML = '<div class="bubble">' + md(msg.content) + '</div>';
+    el.innerHTML = '<div class="user-col"><div class="bubble">' + md(msg.content) + '</div>' +
+      '<div class="msg-foot"><span class="msg-time">' + fmtTime(msg.ts) + '</span>' +
+      '<button class="copymsg" data-text="' + encodeURIComponent(msg.content || '') + '">复制</button></div></div>';
     return el;
   }
   el.className = 'msg msg-assistant';
   let inner = '<div class="msg-head"><span class="who">clagent</span>' + modeBadge(msg.mode) + '</div>';
-  if(msg.reasoning){
-    inner += '<details class="reasoning"><summary>思考过程</summary><div class="reasoning-body">' + esc(msg.reasoning) + '</div></details>';
-  }
   inner += partsHtml(msg);
   if(!msg.streaming && msg.mode === 'plan' && planText(msg)){
     inner += '<div class="plan-actions"><button class="btn-runplan">' + I.play + '在 Craft 中执行此计划</button></div>';
@@ -734,7 +827,7 @@ function startLive(mode){
   const chat = $('#chat');
   const hero = chat.querySelector('.hero');
   if(hero) hero.remove();
-  live = {role:'assistant', reasoning:'', mode, parts:[], streaming:true};
+  live = {role:'assistant', mode, parts:[], streaming:true};
   liveEl = document.createElement('div');
   liveEl.className = 'msg msg-assistant';
   liveEl.innerHTML = '<div class="avatar">' + I.bot + '</div><div class="msg-main">' + assistantInner(live) + '</div>';
@@ -742,12 +835,37 @@ function startLive(mode){
   scrollBottom(true);
 }
 
+/* ---- 等待模型响应的状态指示 ---- */
+function setWaiting(v){
+  if(v){ S.waiting = true; waitStart = Date.now(); }
+  else { S.waiting = false; waitStart = null; }
+  scheduleLive();
+}
+
+function fmtSec(s){
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+}
+
+/* 每秒刷新：等待秒数 + 运行中工具的已耗时 */
+setInterval(() => {
+  if(waitStart){
+    const el = document.querySelector('.waiting .wsec');
+    if(el) el.textContent = fmtSec(Math.floor((Date.now() - waitStart) / 1000));
+  }
+  document.querySelectorAll('.toolcard[data-start]').forEach(el => {
+    const s = Math.floor((Date.now() - (+el.dataset.start)) / 1000);
+    const st = el.querySelector('.tool-status');
+    if(st) st.textContent = '运行中… ' + fmtSec(s);
+  });
+}, 1000);
+
 function assistantInner(msg){
   let inner = '<div class="msg-head"><span class="who">clagent</span>' + modeBadge(msg.mode) + '</div>';
-  if(msg.reasoning){
-    inner += '<details class="reasoning"><summary>思考过程</summary><div class="reasoning-body">' + esc(msg.reasoning) + '</div></details>';
-  }
   inner += partsHtml(msg);
+  if(msg.streaming && S.waiting){
+    const sec = waitStart ? Math.floor((Date.now() - waitStart) / 1000) : 0;
+    inner += '<div class="waiting">模型推理中<span class="wsec">' + fmtSec(sec) + '</span></div>';
+  }
   if(!msg.streaming && msg.mode === 'plan' && planText(msg)){
     inner += '<div class="plan-actions"><button class="btn-runplan">' + I.play + '在 Craft 中执行此计划</button></div>';
   }
@@ -761,6 +879,15 @@ function pushText(text){
   else live.parts.push({type:'text', content:text});
 }
 
+function pushReasoning(text){
+  if(!live) return;
+  // 思考块按时间顺序穿插：连续的 reasoning 事件归入同一块，
+  // 中间发生过工具调用 / 正文输出则新起一块
+  const last = live.parts[live.parts.length - 1];
+  if(last && last.type === 'reasoning') last.content += text;
+  else live.parts.push({type:'reasoning', content:text});
+}
+
 function scheduleLive(){
   if(renderTimer) return;
   renderTimer = setTimeout(() => { renderTimer = null; renderLiveMsg(); }, 90);
@@ -770,16 +897,31 @@ function renderLiveMsg(){
   if(!liveEl || !live) return;
   const main = liveEl.querySelector('.msg-main');
   if(!main) return;
-  // 保留用户展开状态
+  // 保留用户交互状态：工具卡片展开（按 callid）；
+  // 思考块展开 + 滚动位置（按序号，重渲染会重建 DOM 导致 scrollTop 丢失）
   const openIds = [...liveEl.querySelectorAll('.toolcard.open')].map(c => c.dataset.callid);
-  const reasonOpen = !!liveEl.querySelector('details.reasoning')?.open;
+  const reasonStates = [...liveEl.querySelectorAll('details.reasoning')].map(d => {
+    const body = d.querySelector('.reasoning-body');
+    const atBottom = body
+      ? (body.scrollHeight - body.scrollTop - body.clientHeight < 24)
+      : true;
+    return {open: d.open, scrollTop: body ? body.scrollTop : 0, atBottom};
+  });
   main.innerHTML = assistantInner(live);
   openIds.forEach(id => {
     const c = liveEl.querySelector('.toolcard[data-callid="' + CSS.escape(id) + '"]');
     if(c) c.classList.add('open');
   });
-  const r = liveEl.querySelector('details.reasoning');
-  if(r && reasonOpen) r.open = true;
+  liveEl.querySelectorAll('details.reasoning').forEach((d, i) => {
+    const st = reasonStates[i];
+    if(!st) return;
+    if(st.open) d.open = true;
+    const body = d.querySelector('.reasoning-body');
+    if(body){
+      // 停留在底部 → 跟随最新 token；上翻阅读 → 保持位置不被重置拉回
+      body.scrollTop = st.atBottom ? body.scrollHeight : st.scrollTop;
+    }
+  });
   const btn = liveEl.querySelector('.btn-runplan');
   if(btn){
     btn.addEventListener('click', () => {
@@ -806,8 +948,9 @@ function scrollBottom(force){
 function setRunning(v){
   S.running = v;
   document.body.classList.toggle('running', v);
-  $('#sendBtn').style.display = v ? 'none' : '';
-  $('#stopBtn').style.display = v ? '' : 'none';
+  const stop = $('#stopBtn');
+  stop.disabled = !v;
+  stop.title = v ? '终止对话（停止模型推理与工具执行）' : '终止对话（当前无进行中的任务）';
   if(!v) scrollBottom();
 }
 
@@ -815,7 +958,7 @@ function appendUserMsg(text){
   const chat = $('#chat');
   const hero = chat.querySelector('.hero');
   if(hero) hero.remove();
-  chat.appendChild(buildMessage({role:'user', content:text}));
+  chat.appendChild(buildMessage({role:'user', content:text, ts:Date.now() / 1000}));
   scrollBottom(true);
 }
 
@@ -829,6 +972,7 @@ function sendMsg(text){
 
 function selectSession(id){
   if(S.running){ toast('请先停止当前任务，再切换会话', 'info'); return; }
+  stayNew = false;
   send({type:'select', sessionId:id});
 }
 
@@ -838,37 +982,64 @@ function autoResize(){
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
 }
+function insertNewline(){
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  ta.value = ta.value.slice(0, start) + '\n' + ta.value.slice(end);
+  ta.selectionStart = ta.selectionEnd = start + 1;
+  autoResize();
+}
 ta.addEventListener('input', autoResize);
 ta.addEventListener('keydown', e => {
-  if(e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){
+  if(e.key !== 'Enter') return;
+  // Ctrl+Enter 换行（textarea 默认不处理，需手动插入）
+  if(e.ctrlKey && !e.isComposing && e.keyCode !== 229){
+    e.preventDefault();
+    insertNewline();
+    return;
+  }
+  // Shift+Enter 保持浏览器默认换行
+  if(e.shiftKey) return;
+  // Enter 发送（输入法组词中不触发）
+  if(!e.isComposing && e.keyCode !== 229){
     e.preventDefault();
     sendMsg(ta.value);
     ta.value = ''; autoResize();
   }
 });
 $('#sendBtn').addEventListener('click', () => { sendMsg(ta.value); ta.value = ''; autoResize(); ta.focus(); });
-$('#stopBtn').addEventListener('click', () => send({type:'stop'}));
+$('#stopBtn').addEventListener('click', () => { if(S.running) send({type:'stop'}); });
 $('#newChatBtn').addEventListener('click', () => {
   if(S.running){ toast('请先停止当前任务', 'info'); return; }
   send({type:'new'});
 });
 $('#burger').addEventListener('click', () => document.body.classList.toggle('side-open'));
 
-/* 复制按钮（事件委托） */
-$('#chat').addEventListener('click', e => {
-  const btn = e.target.closest('.copybtn');
-  if(!btn) return;
-  const code = decodeURIComponent(btn.dataset.code || '');
-  const done = () => { btn.textContent = '已复制'; setTimeout(() => btn.textContent = '复制', 1200); };
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(code).then(done).catch(() => fallback());
-  } else fallback();
-  function fallback(){
+/* 复制文本（Clipboard API，失败回退 execCommand） */
+function copyText(text, done){
+  const fallback = () => {
     const t = document.createElement('textarea');
-    t.value = code; document.body.appendChild(t); t.select();
+    t.value = text; document.body.appendChild(t); t.select();
     try{ document.execCommand('copy'); done(); }catch(err){}
     t.remove();
-  }
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  } else fallback();
+}
+
+/* 复制按钮：代码块 + 用户消息（事件委托） */
+$('#chat').addEventListener('click', e => {
+  const btn = e.target.closest('.copybtn, .copymsg');
+  if(!btn) return;
+  const raw = btn.classList.contains('copymsg') ? btn.dataset.text : btn.dataset.code;
+  copyText(decodeURIComponent(raw || ''), () => {
+    btn.textContent = '已复制';
+    if(btn.classList.contains('copymsg')) btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = '复制';
+      btn.classList.remove('copied');
+    }, 1200);
+  });
 });
 /* 工具卡片折叠（事件委托） */
 $('#chat').addEventListener('click', e => {
@@ -887,6 +1058,7 @@ function toast(msg, type){
 
 /* ================= 设置弹窗 ================= */
 let mcpDraft = [];
+let mcpTestStatus = {};  // 最近一次「测试连接」的 MCP 结果（按名称），优先于运行状态展示
 let curTab = 'llm';
 
 function openSettings(tab){
@@ -908,7 +1080,6 @@ $('#settingsBtn').addEventListener('click', () => openSettings('llm'));
 $('#llmChip').addEventListener('click', () => openSettings('llm'));
 $('#mcpChip').addEventListener('click', () => openSettings('mcp'));
 $('#closeSettings').addEventListener('click', closeSettings);
-$('#settingsModal').addEventListener('click', e => { if(e.target === $('#settingsModal')) closeSettings(); });
 $('#pwEye').addEventListener('click', () => {
   const inp = $('#f-apikey');
   const show = inp.type === 'password';
@@ -917,6 +1088,8 @@ $('#pwEye').addEventListener('click', () => {
 });
 
 function fillSettingsForm(){
+  mcpTestStatus = {};
+  $('#testResult').classList.add('hidden');
   const llm = (S.config && S.config.llm) || {};
   $('#f-baseurl').value = llm.base_url || '';
   $('#f-apikey').value = llm.api_key || '';
@@ -945,7 +1118,7 @@ function renderMcpEditors(){
   const box = $('#mcpList');
   box.innerHTML = '';
   mcpDraft.forEach((d, i) => {
-    const st = (S.mcp || []).find(s => s.name === d.name);
+    const st = mcpTestStatus[d.name] || (S.mcp || []).find(s => s.name === d.name);
     let statusHtml = '<div class="m-status">尚未连接（保存或测试后更新）</div>';
     if(st){
       statusHtml = st.connected
@@ -1021,26 +1194,32 @@ function applyState(st){
   }
 }
 
-$('#saveSettings').addEventListener('click', async () => {
-  const btn = $('#saveSettings');
-  btn.disabled = true; btn.textContent = '保存中…';
-  try{
-    const llm = {
+function collectFormConfig(){
+  return {
+    llm: {
       base_url: $('#f-baseurl').value.trim(),
       api_key: $('#f-apikey').value.trim(),
       model: $('#f-model').value.trim(),
       temperature: parseFloat($('#f-temp').value) || 0,
       max_tokens: parseInt($('#f-maxtokens').value) || 0
-    };
-    const mcp = {
+    },
+    mcp: {
       call_timeout: parseFloat($('#f-calltimeout').value) || 300,
       reconnect_seconds: parseFloat($('#f-reconnect').value) || 0,
       servers: collectMcpDraft()
-    };
-    const resp = await postJson('/api/config', {llm, mcp});
+    }
+  };
+}
+
+$('#saveSettings').addEventListener('click', async () => {
+  const btn = $('#saveSettings');
+  btn.disabled = true; btn.textContent = '保存中…';
+  try{
+    const resp = await postJson('/api/config', collectFormConfig());
     if(resp.error){ toast(resp.error, 'error'); }
-    else toast('配置已保存' + ((resp.state && resp.state.mcp || []).some(s => s.connected) ? '' : '（MCP 未连接，请确认 Unity 已启动 CLMCP）'), 'info');
+    else toast('配置已保存' + ((resp.state && resp.state.mcp || []).some(s => s.connected) ? '' : '（MCP 未连接，可点「测试连接」排查）'), 'info');
     applyState(resp);
+    mcpTestStatus = {};
     renderMcpEditors();
   }catch(e){
     toast('保存失败：' + e.message, 'error');
@@ -1049,22 +1228,65 @@ $('#saveSettings').addEventListener('click', async () => {
   }
 });
 
+/* ---- 测试连接（模型 + MCP，成功失败均有详细提示） ---- */
+
+function showTesting(){
+  const box = $('#testResult');
+  box.classList.remove('hidden');
+  box.innerHTML = '<div class="tr-title">连接测试</div>' +
+    '<div class="tr-row"><span class="dot warn"></span><span class="tr-msg">正在测试模型服务与 MCP 服务器…</span></div>';
+}
+
+function renderTestResult(resp){
+  const box = $('#testResult');
+  box.classList.remove('hidden');
+  let html = '<div class="tr-title">连接测试结果</div>';
+  const llm = resp.llm || {};
+  html += '<div class="tr-row ' + (llm.ok ? 'ok' : 'err') + '"><span class="dot ' + (llm.ok ? 'ok' : 'err') + '"></span>' +
+    '<span class="tr-msg"><b>模型服务</b>：' + esc(llm.message || (llm.ok ? '连接成功' : '连接失败')) + '</span></div>';
+  const mcp = resp.mcp || {};
+  const servers = mcp.servers || [];
+  if(mcp.error){
+    html += '<div class="tr-row err"><span class="dot err"></span><span class="tr-msg"><b>MCP 服务器</b>：' + esc(mcp.error) + '</span></div>';
+  }
+  if(!servers.length && !mcp.error){
+    html += '<div class="tr-row err"><span class="dot err"></span><span class="tr-msg"><b>MCP 服务器</b>：未配置任何启用的服务器</span></div>';
+  }
+  servers.forEach(s => {
+    const ok = !!s.connected;
+    const tools = s.tools || [];
+    const detail = ok
+      ? '已连接 · ' + tools.length + ' 个工具' + (tools.length ? '（' + tools.join(', ') + '）' : '')
+      : '未连接' + (s.error ? ' — ' + s.error : '');
+    html += '<div class="tr-row ' + (ok ? 'ok' : 'err') + '"><span class="dot ' + (ok ? 'ok' : 'err') + '"></span>' +
+      '<span class="tr-msg"><b>MCP ' + esc(s.name) + '</b>：' + esc(detail) + '</span></div>';
+  });
+  box.innerHTML = html;
+}
+
 $('#mcpTestBtn').addEventListener('click', async () => {
   const btn = $('#mcpTestBtn');
-  btn.disabled = true; btn.textContent = '连接中…';
+  let body;
+  try{ body = collectFormConfig(); }
+  catch(e){ toast(e.message, 'error'); return; }
+  btn.disabled = true; btn.textContent = '测试中…';
+  showTesting();
   try{
-    const resp = await postJson('/api/mcp/reconnect', {});
-    if(resp.error) toast(resp.error, 'error');
-    else{
-      const on = (resp.state.mcp || []).filter(s => s.connected).length;
-      toast('MCP 已连接 ' + on + ' / ' + (resp.state.mcp || []).length, 'info');
+    const resp = await postJson('/api/test', body);
+    if(resp.error && !resp.llm){
+      toast(resp.error, 'error');
+      $('#testResult').classList.add('hidden');
+    } else {
+      renderTestResult(resp);
+      mcpTestStatus = {};
+      ((resp.mcp && resp.mcp.servers) || []).forEach(s => { mcpTestStatus[s.name] = s; });
+      renderMcpEditors();
     }
-    applyState(resp);
-    renderMcpEditors();
   }catch(e){
     toast('测试失败：' + e.message, 'error');
+    $('#testResult').classList.add('hidden');
   }finally{
-    btn.disabled = false; btn.textContent = '仅测试连接';
+    btn.disabled = false; btn.textContent = '测试连接';
   }
 });
 

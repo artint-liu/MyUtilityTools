@@ -36,7 +36,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
     "clmcp-unity": {
       "type": "stdio",
       "command": "node",
-      "args": ["Scripts/Editor/clmcp/bridge/clmcp-bridge.mjs"],
+      "args": ["Scripts/Editor/MCP/clmcp/bridge/clmcp-bridge.mjs"],
       "description": "Unity CLMCP (Tools/CLMCP)"
     }
   }
@@ -51,7 +51,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
     "clmcp-unity": {
       "type": "stdio",
       "command": "python",
-      "args": ["Scripts/Editor/clmcp/bridge/clmcp_bridge.py"],
+      "args": ["Scripts/Editor/MCP/clmcp/bridge/clmcp_bridge.py"],
       "description": "Unity CLMCP (Tools/CLMCP)"
     }
   }
@@ -61,7 +61,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
 **相对路径说明**：
 
 - 相对路径以 **MCP 客户端拉起子进程时的工作目录**为基准。上例假定工作区为 **`<工程根>/Assets`**（即 CodeBuddy 打开的是 Assets 目录）；
-- 若工作区为**工程根目录**（`TestUnityMCP`），请改为 `Assets/Scripts/Editor/clmcp/bridge/...`；
+- 若工作区为**工程根目录**（`TestUnityMCP`），请改为 `Assets/Scripts/Editor/MCP/clmcp/bridge/...`；
 - 若相对路径无法启动（MCP 列表红色），说明该客户端不支持按工作区解析相对路径，此时回退为绝对路径：
 
 ```json
@@ -70,7 +70,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
     "clmcp-unity": {
       "type": "stdio",
       "command": "node",
-      "args": ["D:/MyCodes/TestUnityMCP/Assets/Scripts/Editor/clmcp/bridge/clmcp-bridge.mjs"],
+      "args": ["D:/MyCodes/TestUnityMCP/Assets/Scripts/Editor/MCP/clmcp/bridge/clmcp-bridge.mjs"],
       "description": "Unity CLMCP (Tools/CLMCP)"
     }
   }
@@ -90,6 +90,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
    - “执行 C# 代码：返回当前场景所有根物体的名称”
    - “在场景里创建一个名为 Test 的立方体”
    - “读取 Unity 控制台最近的日志”
+   - “截一张当前游戏画面”
 
 ### 其他 MCP 客户端（Claude Desktop / Cursor 等）
 
@@ -119,6 +120,7 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
 | `create_gameobject` | 创建 GameObject（可选基本体/坐标/父节点） |
 | `delete_gameobject` | 按路径或 instanceID 删除物体 |
 | `refresh_assets` | 刷新资源数据库 |
+| `capture_screenshot` | 截图：返回 base64 图片内容（多模态 AI 可直接查看）并保存文件 |
 
 ### execute_csharp 代码约定（二选一）
 
@@ -142,8 +144,27 @@ public static class Script
 ```
 
 - 代码在 **Unity 主线程**执行，可安全调用 UnityEngine / UnityEditor 及工程内所有已编译类型；
-- 编译失败会返回带行号的诊断信息；执行期间产生的日志会随结果一起返回；
+- 编译失败会返回带行号的诊断信息，**语句模式的行号已自动映射回用户源码**（不含包装壳偏移）；CS0433（类型定义了多次）会附带"定义该类型的程序集"清单便于定位；
+- 引用集自动过滤影子 BCL 副本（其他 Mono profile / netstandard 垫片）：Roslyn 主路径保留 Facades 类型转发器（.NET Standard 工程需要），mcs 兜底路径全部排除（mcs 不支持转发器）；
+- 执行期间产生的日志会随结果一起返回；
 - 最近 16 次的动态程序集会作为后续编译的引用（可复用之前定义的类型）。
+
+### capture_screenshot 截图说明
+
+```json
+{ "target": "game", "maxSize": 1280 }
+```
+
+| 参数 | 说明 |
+|---|---|
+| `target` | `game`（默认，相机离屏渲染，不依赖窗口状态）/ `gameview`（Game 视图）/ `sceneview`（Scene 视图视角，不含 Gizmo） |
+| `camera` | `target=game` 时按名称指定相机，默认 `Camera.main` |
+| `width` / `height` | 渲染尺寸（仅 game/sceneview），只给一边时按相机纵横比推算 |
+| `maxSize` | 图片最长边上限，超出等比缩小（默认 1280，控制 base64 体积与 token 成本） |
+| `format` | `png`（默认）/ `jpg` |
+| `path` | 保存路径（相对工程根或绝对），默认 `Screenshots/clmcp_时间戳.png` |
+
+返回 MCP 多 content 结构：`text`（来源/分辨率/保存路径）+ `image`（base64，多模态 AI 客户端可直接查看）；纯文本客户端至少能拿到保存路径。存入 `Assets/` 内会自动刷新资源数据库。
 
 ---
 
@@ -159,12 +180,12 @@ public static class Script
 ## 5. 文件结构
 
 ```
-Scripts/Editor/clmcp/
+Scripts/Editor/MCP/clmcp/
 ├── ClmcpBootstrap.cs        # 引导：域重载自动停止/重启服务器
 ├── ClmcpToolbar.cs          # 工具栏 MCP 按钮 + Tools/CLMCP 菜单 + 端口设置
 ├── ClmcpServer.cs           # TCP 服务器（端口绑定唯一性检测、多客户端）
 ├── ClmcpProtocol.cs         # JSON-RPC 2.0 协议分发（MCP）
-├── ClmcpTools.cs            # 11 个工具实现
+├── ClmcpTools.cs            # 12 个工具实现（含截图）
 ├── ClmcpCSharpCompiler.cs   # C# JIT 内存编译器（Roslyn 反射加载，不落盘）
 ├── ClmcpJson.cs             # 自研 JSON 解析/序列化（无外部依赖）
 ├── ClmcpMainThread.cs       # 网络线程 → Unity 主线程派发器

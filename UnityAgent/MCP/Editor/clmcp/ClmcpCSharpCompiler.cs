@@ -48,8 +48,8 @@ namespace Clmcp
             if (string.IsNullOrEmpty(code) || code.Trim().Length == 0)
                 throw new ArgumentException("code 不能为空");
 
-            string source = PrepareSource(code);
-            Assembly assembly = CompileToMemory(source);
+            string source = PrepareSource(code, out int lineOffset);
+            Assembly assembly = CompileToMemory(source, lineOffset);
 
             MethodInfo entry = FindEntryPoint(assembly, mainTypeName, methodName);
             if (entry == null)
@@ -67,14 +67,15 @@ namespace Clmcp
         static readonly Regex s_typeKeywordRegex =
             new Regex(@"\b(class|struct|enum|interface|record)\b", RegexOptions.Compiled);
 
-        static string PrepareSource(string code)
+        static string PrepareSource(string code, out int lineOffset)
         {
-            // 包含类型定义关键字则视为完整源码，原样编译
-            if (s_typeKeywordRegex.IsMatch(code)) return code;
+            // 包含类型定义关键字则视为完整源码，原样编译（无行偏移）
+            if (s_typeKeywordRegex.IsMatch(code)) { lineOffset = 0; return code; }
 
             // 语句模式：提取前导 using，其余包进自动生成的入口方法
             StringBuilder usings = new StringBuilder();
             StringBuilder body = new StringBuilder();
+            int usingCount = 0;
             string[] lines = code.Split('\n');
             bool leading = true;
             foreach (string raw in lines)
@@ -84,7 +85,7 @@ namespace Clmcp
                 if (leading)
                 {
                     if (t.Length == 0) { body.AppendLine(); continue; }
-                    if (t.StartsWith("using ") && t.EndsWith(";")) { usings.AppendLine(line); continue; }
+                    if (t.StartsWith("using ") && t.EndsWith(";")) { usings.AppendLine(line); usingCount++; continue; }
                     leading = false;
                 }
                 body.AppendLine(line);
@@ -106,19 +107,21 @@ namespace Clmcp
             sb.AppendLine("        return null;");
             sb.AppendLine("    }");
             sb.AppendLine("}");
+            // 用户代码首行在生成文件中的行号 - 1（5 默认 using + 用户 using + 空行 + 4 行包装壳）
+            lineOffset = 10 + usingCount;
             return sb.ToString();
         }
 
         // ================= 编译调度 =================
 
-        static Assembly CompileToMemory(string source)
+        static Assembly CompileToMemory(string source, int lineOffset)
         {
             Exception roslynFailure;
             if (EnsureRoslyn(out roslynFailure))
             {
                 try
                 {
-                    return CompileWithRoslyn(source);
+                    return CompileWithRoslyn(source, lineOffset);
                 }
                 catch (ClmcpCompileException)
                 {
@@ -127,12 +130,13 @@ namespace Clmcp
                 catch (Exception infra)
                 {
                     roslynFailure = infra; // Roslyn 基础设施异常 → 走兜底
+                    LogRoslynFailure(infra);
                 }
             }
 
             try
             {
-                return CompileWithCodeDom(source);
+                return CompileWithCodeDom(source, lineOffset);
             }
             catch (ClmcpCompileException)
             {
@@ -282,9 +286,9 @@ namespace Clmcp
                     if (s_parseTreeAdvanced == null || ps.Length < s_parseTreeAdvanced.GetParameters().Length)
                         s_parseTreeAdvanced = m;
                 }
-                else if (s_parseTreeSimple == null)
+                else if (s_parseTreeSimple == null || ps.Length < s_parseTreeSimple.GetParameters().Length)
                 {
-                    s_parseTreeSimple = m;
+                    s_parseTreeSimple = m; // 同样取参数最少的（“单参版”可能并不存在）
                 }
             }
             if (s_parseTreeSimple == null && s_parseTreeAdvanced == null)
@@ -532,7 +536,7 @@ namespace Clmcp
 
         // ================= Roslyn 编译 =================
 
-        static Assembly CompileWithRoslyn(string source)
+        static Assembly CompileWithRoslyn(string source, int lineOffset)
         {
             // 1) 语法树
             // 注意：优先使用单参数重载 ParseSyntaxTree(string)——部分 Mono 运行时对
@@ -542,7 +546,9 @@ namespace Clmcp
             {
                 if (s_parseTreeSimple != null)
                 {
-                    tree = InvokeCore(s_parseTreeSimple, null, new object[] { source });
+                    // “简单”重载也可能带可选参数（path / encoding / cancellationToken），
+                    // 统一按默认值补全，避免 Mono 反射的参数数量误报
+                    tree = InvokeWithDefaults(s_parseTreeSimple, null, new object[] { source });
                 }
                 else if (s_parseTreeAdvanced != null)
                 {
@@ -571,16 +577,12 @@ namespace Clmcp
             Array trees = Array.CreateInstance(s_syntaxTreeType, 1);
             trees.SetValue(tree, 0);
 
-            // 2) 引用：当前所有已加载程序集 + 历史动态程序集
+            // 2) 引用：当前所有已加载程序集（过滤影子重复副本，见 CollectReferencePaths）+ 历史动态程序集
+            //    Roslyn 路径保留 Facades 转发器（.NET Standard 工程的程序集需要 netstandard 解析类型）
+            List<string> skipped = null;
             List<object> references = new List<object>(256);
-            HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (string path in CollectReferencePaths(ref skipped, true))
             {
-                string path = null;
-                try { path = asm.Location; }
-                catch (Exception) { }
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
-                if (!seenPaths.Add(path)) continue;
                 try
                 {
                     object r = InvokeWithDefaults(s_createRefFromFile, null, new object[] { path });
@@ -588,6 +590,7 @@ namespace Clmcp
                 }
                 catch (Exception) { /* 个别程序集无法建立引用则跳过 */ }
             }
+            LogSkippedReferences(skipped);
             for (int i = 0; i < s_history.Count; i++)
             {
                 try
@@ -630,7 +633,7 @@ namespace Clmcp
                 }
                 bool success = GetPropertyBool(emitResult, "Success");
                 if (!success)
-                    throw new ClmcpCompileException(FormatDiagnostics(emitResult));
+                    throw new ClmcpCompileException(FormatDiagnostics(emitResult, lineOffset));
 
                 byte[] image = peStream.ToArray();
                 Assembly assembly = Assembly.Load(image); // 装载进内存，Mono JIT 按需编译各方法
@@ -639,7 +642,7 @@ namespace Clmcp
             }
         }
 
-        static string FormatDiagnostics(object emitResult)
+        static string FormatDiagnostics(object emitResult, int lineOffset)
         {
             StringBuilder errors = new StringBuilder();
             StringBuilder warnings = new StringBuilder();
@@ -663,12 +666,17 @@ namespace Clmcp
                     if (severity == "Error")
                     {
                         errorCount++;
-                        errors.AppendLine(Convert.ToString(d));
+                        string text = RemapLineNumbers(Convert.ToString(d), lineOffset);
+                        errors.AppendLine(text);
+                        // CS0433（类型定义了多次）：附上定义该类型的程序集清单，便于定位影子副本来源
+                        Match m0433 = s_cs0433Regex.Match(text);
+                        if (m0433.Success)
+                            errors.Append("  定义该类型的程序集:").Append(FindTypeDefiners(m0433.Groups[1].Value));
                     }
                     else if (severity == "Warning")
                     {
                         warningCount++;
-                        if (warningCount <= 20) warnings.AppendLine(Convert.ToString(d));
+                        if (warningCount <= 20) warnings.AppendLine(RemapLineNumbers(Convert.ToString(d), lineOffset));
                     }
                 }
             }
@@ -687,6 +695,182 @@ namespace Clmcp
             if (errorCount == 0 && warningCount == 0)
                 result.AppendLine("编译失败（无诊断信息）。");
             return result.ToString().TrimEnd();
+        }
+
+        // ================= 引用过滤与诊断辅助 =================
+
+        static bool s_refSkipLogged;
+
+        static string SafeLocation(Assembly asm)
+        {
+            try { return asm.Location; }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>运行时 BCL 目录（当前域 mscorlib 所在目录）。</summary>
+        static string GetRuntimeBclDir()
+        {
+            try
+            {
+                string corePath = SafeLocation(typeof(object).Assembly);
+                if (!string.IsNullOrEmpty(corePath))
+                    return Path.GetDirectoryName(corePath);
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        /// <summary>
+        /// 判断程序集是否为"影子 BCL 副本"——netstandard 兼容垫片、Facades 外观程序集、
+        /// 或与运行时 mscorlib 不同目录的其他 Mono profile 副本。
+        /// 它们与运行时程序集重复呈现同一批类型：mcs(CodeDom) 不支持类型转发器，
+        /// 一并引用会触发 CS0433，必须排除；Roslyn 能正确处理转发器，
+        /// 反而需要 netstandard 等外观程序集来解析 .NET Standard 工程的程序集（includeFacades=true）。
+        /// </summary>
+        static bool IsShadowBclCopy(string path, string runtimeBclDir, bool includeFacades)
+        {
+            string p = path.Replace('\\', '/');
+            if (includeFacades)
+            {
+                // Roslyn 路径：保留运行时 profile 树下的一切（含 Facades 转发器子目录），仅排除其他 profile 副本
+                if (p.IndexOf("/MonoBleedingEdge/lib/mono/", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    if (string.IsNullOrEmpty(runtimeBclDir)) return false;
+                    string dir = Path.GetDirectoryName(path).Replace('\\', '/');
+                    string rt = runtimeBclDir.Replace('\\', '/');
+                    // 等于运行时目录（mscorlib 等本体）或位于其下（Facades 子目录）→ 保留
+                    bool under = string.Equals(dir, rt, StringComparison.OrdinalIgnoreCase) ||
+                        dir.StartsWith(rt + "/", StringComparison.OrdinalIgnoreCase);
+                    return !under;
+                }
+                return false;
+            }
+            if (p.IndexOf("/NetStandard/compat/", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (p.IndexOf("/Facades/", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (p.IndexOf("/MonoBleedingEdge/lib/mono/", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                if (string.IsNullOrEmpty(runtimeBclDir)) return false; // 运行时目录不可得时不盲目过滤
+                return !string.Equals(
+                    Path.GetDirectoryName(path).Replace('\\', '/'),
+                    runtimeBclDir.Replace('\\', '/'),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 从当前已加载程序集收集编译引用路径：
+        ///  - 同名程序集只取最先加载的一份（域自身的运行时副本先于后续解析进来的副本）；
+        ///  - 影子 BCL 副本排除（见 IsShadowBclCopy；Roslyn 路径保留 Facades 转发器）。
+        /// skipped（可为 null 引用）接收被排除清单，用于一次性日志。
+        /// </summary>
+        static List<string> CollectReferencePaths(ref List<string> skipped, bool includeFacades)
+        {
+            string runtimeBclDir = GetRuntimeBclDir();
+            List<string> paths = new List<string>(256);
+            HashSet<string> seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                string name = null;
+                try { name = asm.GetName().Name; } catch (Exception) { }
+                string path = SafeLocation(asm);
+                if (!string.IsNullOrEmpty(name) && !seenNames.Add(name))
+                {
+                    if (skipped == null) skipped = new List<string>();
+                    if (path != null) skipped.Add("[同名副本] " + name + " => " + path);
+                    continue;
+                }
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
+                if (!seenPaths.Add(path)) continue;
+                if (IsShadowBclCopy(path, runtimeBclDir, includeFacades))
+                {
+                    if (skipped == null) skipped = new List<string>();
+                    skipped.Add("[影子BCL] " + path);
+                    continue;
+                }
+                paths.Add(path);
+            }
+            return paths;
+        }
+
+        static void LogSkippedReferences(List<string> skipped)
+        {
+            if (skipped == null || skipped.Count == 0 || s_refSkipLogged) return;
+            s_refSkipLogged = true;
+            try
+            {
+                int limit = skipped.Count > 30 ? 30 : skipped.Count;
+                StringBuilder sb = new StringBuilder("[CLMCP] 已排除 ").Append(skipped.Count)
+                    .Append(" 个重复/影子程序集引用（列前 ").Append(limit).AppendLine(" 个）：");
+                for (int i = 0; i < limit; i++) sb.Append("  ").AppendLine(skipped[i]);
+                UnityEngine.Debug.Log(sb.ToString());
+            }
+            catch (Exception) { }
+        }
+
+        static bool s_roslynFailLogged;
+
+        /// <summary>Roslyn 主路径失败（回退 CodeDom）时记录原因，便于诊断（每域一次）。</summary>
+        static void LogRoslynFailure(Exception infra)
+        {
+            if (s_roslynFailLogged) return;
+            s_roslynFailLogged = true;
+            try
+            {
+                Exception root = infra;
+                while (root is TargetInvocationException && root.InnerException != null)
+                    root = root.InnerException;
+                UnityEngine.Debug.LogWarning("[CLMCP] Roslyn 编译路径不可用，已回退 CodeDom(mcs)。原因: " + root.Message);
+            }
+            catch (Exception) { }
+        }
+
+        static readonly Regex s_cs0433Regex = new Regex(
+            "error CS0433: The imported type `([^']+)'", RegexOptions.Compiled);
+        static readonly Regex s_lineColRegex = new Regex(@"\((\d+),(\d+)\)");
+
+        /// <summary>
+        /// 把编译诊断的行号映射回用户源码：语句模式下用户代码被包进生成类壳（前置若干行），
+        /// Roslyn / mcs 报的是包装后文件的行号，这里减去偏移使其与用户原始代码一致。
+        /// </summary>
+        static string RemapLineNumbers(string message, int lineOffset)
+        {
+            if (lineOffset <= 0 || string.IsNullOrEmpty(message)) return message;
+            return s_lineColRegex.Replace(message, delegate(Match m)
+            {
+                int line;
+                if (!int.TryParse(m.Groups[1].Value, out line) || line <= lineOffset) return m.Value;
+                return "(" + (line - lineOffset) + "," + m.Groups[2].Value + ")";
+            });
+        }
+
+        /// <summary>列出所有已加载程序集中"定义"了指定类型的（不含类型转发者），用于 CS0433 诊断。</summary>
+        static string FindTypeDefiners(string displayName)
+        {
+            string reflectionName = displayName;
+            int lt = displayName.IndexOf('<');
+            if (lt >= 0)
+            {
+                int commas = 0;
+                foreach (char c in displayName.Substring(lt))
+                {
+                    if (c == '>') break;
+                    if (c == ',') commas++;
+                }
+                reflectionName = displayName.Substring(0, lt) + "`" + (commas + 1);
+            }
+            StringBuilder sb = new StringBuilder();
+            foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    if (asm.GetType(reflectionName, false) != null)
+                        sb.Append("\n    ").Append(asm.GetName().Name).Append(" => ").Append(SafeLocation(asm));
+                }
+                catch (Exception) { }
+            }
+            return sb.Length > 0 ? sb.ToString() : "\n    (未找到)";
         }
 
         // ================= 入口点定位与调用 =================
@@ -821,7 +1005,8 @@ namespace Clmcp
         /// <summary>
         /// 统一反射调用入口：兼容构造函数（无 target 语义）与普通方法；
         /// 若 Mono 对多可选参数方法误报 "Number of parameters..."，
-        /// 则按长度递减逐个重试（Mono 期望的参数数量可能与元数据不一致）。
+        /// 则按长度递减逐个重试（Mono 期望的参数数量可能与元数据不一致；
+        /// 该误报可能直接抛出，也可能被包装为 TargetInvocationException）。
         /// </summary>
         static object InvokeCore(MethodBase method, object target, object[] args)
         {
@@ -829,11 +1014,9 @@ namespace Clmcp
             {
                 return InvokeDirect(method, target, args);
             }
-            catch (ArgumentException ae)
+            catch (Exception e)
             {
-                if (ae.Message == null ||
-                    ae.Message.IndexOf("Number of parameters", StringComparison.Ordinal) < 0)
-                    throw;
+                if (!IsMonoParamCountQuirk(e)) throw;
 
                 // Mono 数量误报：从较短长度逐个重试
                 for (int len = args.Length - 1; len >= 1; len--)
@@ -844,16 +1027,24 @@ namespace Clmcp
                     {
                         return InvokeDirect(method, target, trimmed);
                     }
-                    catch (ArgumentException ae2)
+                    catch (Exception e2)
                     {
-                        if (ae2.Message == null ||
-                            ae2.Message.IndexOf("Number of parameters", StringComparison.Ordinal) < 0)
-                            throw;
+                        if (!IsMonoParamCountQuirk(e2)) throw;
                         // 继续尝试更短长度
                     }
                 }
                 throw;
             }
+        }
+
+        /// <summary>识别 Mono 的 "Number of parameters ..." 参数数量误报（直接抛出或被包装均可）。</summary>
+        static bool IsMonoParamCountQuirk(Exception e)
+        {
+            ArgumentException ae = e as ArgumentException;
+            if (ae == null && e is TargetInvocationException && e.InnerException != null)
+                ae = e.InnerException as ArgumentException;
+            return ae != null && ae.Message != null &&
+                ae.Message.IndexOf("Number of parameters", StringComparison.Ordinal) >= 0;
         }
 
         static object InvokeDirect(MethodBase method, object target, object[] args)
@@ -888,7 +1079,7 @@ namespace Clmcp
 
         // ================= CodeDom 兜底 =================
 
-        static Assembly CompileWithCodeDom(string source)
+        static Assembly CompileWithCodeDom(string source, int lineOffset)
         {
             // 兜底路径（Mono mcs）。注意：个别平台实现可能产生临时文件，主路径 Roslyn 为全内存。
             // Microsoft.CSharp.dll 不在 Unity 默认引用集中，且已加载副本引用的 System.CodeDom 类型
@@ -929,14 +1120,11 @@ namespace Clmcp
                     refsProp != null ? refsProp.GetValue(parameters, null) as System.Collections.IList : null;
                 if (refs != null)
                 {
-                    foreach (Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        string path = null;
-                        try { path = asm.Location; }
-                        catch (Exception) { }
-                        if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
-                        if (!refs.Contains(path)) refs.Add(path);
-                    }
+                    // mcs 不支持类型转发器：Facades / 垫片会以"重复定义"参与解析（CS0433），全部排除
+                    List<string> skipped = null;
+                    foreach (string p in CollectReferencePaths(ref skipped, false))
+                        if (!refs.Contains(p)) refs.Add(p);
+                    LogSkippedReferences(skipped);
                 }
 
                 object results = compileMethod.Invoke(provider, new object[] { parameters, new[] { source } });
@@ -952,7 +1140,14 @@ namespace Clmcp
                         foreach (object err in errorList)
                         {
                             if (err == null) continue;
-                            if (!GetPropBool(err, "IsWarning")) sb.AppendLine(Convert.ToString(err));
+                            if (!GetPropBool(err, "IsWarning"))
+                            {
+                                string text = RemapLineNumbers(Convert.ToString(err), lineOffset);
+                                sb.AppendLine(text);
+                                Match m0433 = s_cs0433Regex.Match(text);
+                                if (m0433.Success)
+                                    sb.Append("  定义该类型的程序集:").Append(FindTypeDefiners(m0433.Groups[1].Value));
+                            }
                         }
                     }
                     throw new ClmcpCompileException("编译错误：\n" + sb.ToString().TrimEnd());

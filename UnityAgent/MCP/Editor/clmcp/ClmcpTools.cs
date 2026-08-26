@@ -92,6 +92,21 @@ namespace Clmcp
 
             tools.Add(Tool("refresh_assets", "刷新资源数据库（导入新增 / 变更文件）。", Schema(null)));
 
+            tools.Add(Tool("capture_screenshot",
+                "截取画面截图：返回 PNG/JPG 图片内容（base64，多模态 AI 可直接查看）并保存文件。" +
+                "target=game（默认）用指定相机离屏渲染，不依赖编辑器窗口状态；" +
+                "target=gameview 抓取编辑器 Game 视图；target=sceneview 按 Scene 视图当前视角渲染（不含 Gizmo）。",
+                Schema(new Dictionary<string, object>
+                {
+                    { "target", Prop("string", "截图目标：game（默认）| gameview | sceneview") },
+                    { "camera", Prop("string", "可选：target=game 时按名称指定相机，默认 Camera.main，其次场景第一个相机") },
+                    { "width", Prop("number", "可选：渲染宽度像素（仅 target=game/sceneview），默认相机尺寸") },
+                    { "height", Prop("number", "可选：渲染高度像素（仅 target=game/sceneview），默认相机尺寸") },
+                    { "maxSize", Prop("number", "可选：图片最长边像素上限，超出等比缩小，默认 1280") },
+                    { "format", Prop("string", "可选：png（默认）| jpg") },
+                    { "path", Prop("string", "可选：保存路径（相对工程根或绝对路径），默认 Screenshots/clmcp_时间戳.png") }
+                })));
+
             return new Dictionary<string, object> { { "tools", tools } };
         }
 
@@ -101,6 +116,8 @@ namespace Clmcp
         {
             string text;
             bool isError;
+            // 工具可附加非文本内容块（如截图的 image 块），遵循 MCP 多 content 规范
+            List<object> extraContent = new List<object>();
 
             string name = parameters != null ? parameters.GetStr("name") : null;
             Dictionary<string, object> args = parameters != null ? parameters.GetDict("arguments") : null;
@@ -115,7 +132,7 @@ namespace Clmcp
             {
                 try
                 {
-                    text = Dispatch(name, args, out isError);
+                    text = Dispatch(name, args, out isError, extraContent);
                 }
                 catch (ClmcpCompileException e)
                 {
@@ -135,6 +152,7 @@ namespace Clmcp
                 { "type", "text" },
                 { "text", text }
             });
+            if (extraContent.Count > 0) content.AddRange(extraContent);
             return new Dictionary<string, object>
             {
                 { "content", content },
@@ -142,7 +160,8 @@ namespace Clmcp
             };
         }
 
-        static string Dispatch(string name, Dictionary<string, object> args, out bool isError)
+        static string Dispatch(string name, Dictionary<string, object> args, out bool isError,
+            List<object> extraContent)
         {
             switch (name)
             {
@@ -194,6 +213,9 @@ namespace Clmcp
                         return null;
                     }, 120000);
                     return "资源数据库已刷新。";
+
+                case "capture_screenshot":
+                    return CaptureScreenshot(args, out isError, extraContent);
 
                 default:
                     isError = true;
@@ -499,6 +521,216 @@ namespace Clmcp
                 return "已删除: " + desc;
             }, 30000);
             return (string)result;
+        }
+
+        // ================= 截图 =================
+
+        static string CaptureScreenshot(Dictionary<string, object> args, out bool isError,
+            List<object> extraContent)
+        {
+            isError = false;
+
+            string target = (args.GetStr("target", "game") ?? "game").Trim().ToLowerInvariant();
+            string cameraName = args.GetStr("camera");
+            string format = (args.GetStr("format", "png") ?? "png").Trim().ToLowerInvariant();
+            string savePath = args.GetStr("path");
+            int width = args.GetInt("width", 0);
+            int height = args.GetInt("height", 0);
+            int maxSize = args.GetInt("maxSize", 1280);
+
+            if (target != "game" && target != "gameview" && target != "sceneview")
+                throw new ArgumentException("无效 target（应为 game / gameview / sceneview）: " + target);
+            bool jpg = format == "jpg" || format == "jpeg";
+            if (!jpg && format != "png")
+                throw new ArgumentException("无效 format（应为 png / jpg）: " + format);
+            if (maxSize <= 0) maxSize = 1280;
+
+            string text = null;
+            ClmcpMainThread.Run(delegate
+            {
+                Texture2D tex;
+                string source;
+
+                if (target == "gameview")
+                {
+                    source = "GameView（编辑器 Game 视图）";
+                    try { tex = ScreenCapture.CaptureScreenshotAsTexture(); }
+                    catch (Exception) { tex = null; }
+                    if (tex == null)
+                    {
+                        // Game 视图尚未渲染（编辑器后台 / 失焦）时降级为相机离屏渲染
+                        Camera cam = FindCamera(null);
+                        source = "GameView 暂不可用，已降级为相机离屏渲染: " + cam.name;
+                        int w, h;
+                        GetRenderSize(cam, 0, 0, out w, out h);
+                        tex = RenderCameraToTexture(cam, w, h);
+                    }
+                }
+                else if (target == "sceneview")
+                {
+                    source = "SceneView（Scene 视图视角离屏渲染，不含 Gizmo）";
+                    SceneView sv = SceneView.lastActiveSceneView;
+                    if (sv == null || sv.camera == null)
+                        throw new InvalidOperationException("没有可用的 Scene 视图相机（target=sceneview）");
+                    int w, h;
+                    GetRenderSize(sv.camera, width, height, out w, out h);
+                    tex = RenderCameraToTexture(sv.camera, w, h);
+                }
+                else
+                {
+                    Camera cam = FindCamera(cameraName);
+                    source = "game（相机离屏渲染: " + cam.name + "）";
+                    int w, h;
+                    GetRenderSize(cam, width, height, out w, out h);
+                    tex = RenderCameraToTexture(cam, w, h);
+                }
+
+                tex = DownscaleTexture(tex, maxSize);
+
+                byte[] bytes = jpg ? tex.EncodeToJPG(85) : tex.EncodeToPNG();
+                int pixelWidth = tex.width;
+                int pixelHeight = tex.height;
+                UnityEngine.Object.DestroyImmediate(tex);
+
+                string savedTo = SaveScreenshotBytes(bytes, savePath, jpg);
+
+                // MCP image 内容块：base64 数据，供多模态 AI 客户端直接查看
+                extraContent.Add(new Dictionary<string, object>
+                {
+                    { "type", "image" },
+                    { "data", Convert.ToBase64String(bytes) },
+                    { "mimeType", jpg ? "image/jpeg" : "image/png" }
+                });
+
+                text = "截图完成\n来源: " + source +
+                       "\n分辨率: " + pixelWidth + "x" + pixelHeight +
+                       "\n大小: " + bytes.Length + " bytes (" + (jpg ? "jpg" : "png") + ")" +
+                       "\n已保存: " + savedTo;
+                return null;
+            }, 60000);
+            return text;
+        }
+
+        /// <summary>按名称查找相机；未指定名称时用 Camera.main，其次场景第一个相机。</summary>
+        static Camera FindCamera(string cameraName)
+        {
+            Camera cam = null;
+            if (!string.IsNullOrEmpty(cameraName))
+            {
+                GameObject go = GameObject.Find(cameraName);
+                cam = go != null ? go.GetComponent<Camera>() : null;
+                if (cam == null)
+                    throw new ArgumentException("未找到相机: " + cameraName);
+            }
+            if (cam == null) cam = Camera.main;
+            if (cam == null) cam = UnityEngine.Object.FindObjectOfType<Camera>();
+            if (cam == null)
+                throw new ArgumentException("场景中未找到相机");
+            return cam;
+        }
+
+        /// <summary>解析渲染尺寸：均未指定用相机像素尺寸；只指定一边时按相机纵横比推算另一边。</summary>
+        static void GetRenderSize(Camera cam, int width, int height, out int w, out int h)
+        {
+            int cw = cam.pixelWidth > 0 ? cam.pixelWidth : 1280;
+            int ch = cam.pixelHeight > 0 ? cam.pixelHeight : 720;
+            w = width > 0 ? width : 0;
+            h = height > 0 ? height : 0;
+            if (w <= 0 && h <= 0) { w = cw; h = ch; }
+            else if (w <= 0) w = Mathf.Max(1, Mathf.RoundToInt(h * ((float)cw / ch)));
+            else if (h <= 0) h = Mathf.Max(1, Mathf.RoundToInt(w * ((float)ch / cw)));
+        }
+
+        /// <summary>相机离屏渲染到 Texture2D（RGBA32，CPU 可读）。</summary>
+        static Texture2D RenderCameraToTexture(Camera cam, int width, int height)
+        {
+            RenderTexture rt = new RenderTexture(width, height, 24,
+                RenderTextureFormat.Default, RenderTextureReadWrite.sRGB);
+            RenderTexture prevTarget = cam.targetTexture;
+            RenderTexture prevActive = RenderTexture.active;
+            Texture2D tex;
+            try
+            {
+                cam.targetTexture = rt;
+                cam.Render();
+                RenderTexture.active = rt;
+                tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                tex.Apply(false, false);
+            }
+            finally
+            {
+                cam.targetTexture = prevTarget;
+                RenderTexture.active = prevActive;
+                UnityEngine.Object.DestroyImmediate(rt);
+            }
+            return tex;
+        }
+
+        /// <summary>长边超过 maxSize 时等比缩小（GPU blit + 读回）。</summary>
+        static Texture2D DownscaleTexture(Texture2D src, int maxSize)
+        {
+            if (maxSize <= 0 || (src.width <= maxSize && src.height <= maxSize)) return src;
+
+            float scale = Mathf.Min((float)maxSize / src.width, (float)maxSize / src.height);
+            int w = Mathf.Max(1, Mathf.RoundToInt(src.width * scale));
+            int h = Mathf.Max(1, Mathf.RoundToInt(src.height * scale));
+
+            RenderTexture rt = RenderTexture.GetTemporary(w, h, 0,
+                RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+            RenderTexture prevActive = RenderTexture.active;
+            Texture2D dst;
+            try
+            {
+                Graphics.Blit(src, rt);
+                RenderTexture.active = rt;
+                dst = new Texture2D(w, h, TextureFormat.RGBA32, false);
+                dst.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                dst.Apply(false, false);
+            }
+            finally
+            {
+                RenderTexture.active = prevActive;
+                RenderTexture.ReleaseTemporary(rt);
+            }
+            UnityEngine.Object.DestroyImmediate(src);
+            return dst;
+        }
+
+        /// <summary>写盘；path 为空时保存到 工程根/Screenshots/clmcp_时间戳；返回完整路径。</summary>
+        static string SaveScreenshotBytes(byte[] bytes, string path, bool jpg)
+        {
+            string ext = jpg ? ".jpg" : ".png";
+            string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+
+            string file;
+            if (string.IsNullOrEmpty(path))
+            {
+                string dir = Path.Combine(projectRoot, "Screenshots");
+                Directory.CreateDirectory(dir);
+                file = Path.Combine(dir, "clmcp_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ext);
+            }
+            else
+            {
+                path = path.Replace('\\', '/').Trim();
+                file = Path.IsPathRooted(path)
+                    ? path
+                    : Path.Combine(projectRoot, path.Replace('/', Path.DirectorySeparatorChar));
+                if (Path.GetExtension(file).Length == 0) file += ext;
+                string dir = Path.GetDirectoryName(file);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllBytes(file, bytes);
+
+            // 保存进 Assets 时刷新资源数据库，使文件立即在 Project 窗口可见
+            string unified = file.Replace('\\', '/').ToLowerInvariant();
+            string assetsRoot = (Application.dataPath + "/").Replace('\\', '/').ToLowerInvariant();
+            if (unified.StartsWith(assetsRoot, StringComparison.Ordinal))
+                AssetDatabase.Refresh();
+
+            return file;
         }
 
         // ================= 辅助 =================
