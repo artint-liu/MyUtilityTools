@@ -292,6 +292,23 @@ namespace Clmcp
             return ClmcpServer.IsRunning;
         }
 
+        const string kAutoStartMenuPath = "Tools/CLMCP/编辑器启动时自动运行";
+
+        [MenuItem(kAutoStartMenuPath, priority = 105)]
+        static void ToggleAutoStart()
+        {
+            EditorPrefs.SetBool(ClmcpBootstrap.AutoStartPrefKey,
+                !EditorPrefs.GetBool(ClmcpBootstrap.AutoStartPrefKey, true));
+        }
+
+        [MenuItem(kAutoStartMenuPath, true)]
+        static bool ToggleAutoStartValidate()
+        {
+            // 菜单项左侧显示勾选状态，反映当前偏好
+            Menu.SetChecked(kAutoStartMenuPath, EditorPrefs.GetBool(ClmcpBootstrap.AutoStartPrefKey, true));
+            return true;
+        }
+
         [MenuItem("Tools/CLMCP/复制连接信息", priority = 110)]
         static void CopyConnectionInfo()
         {
