@@ -1,0 +1,59 @@
+# ImageToScene 默认配置：256x256 灰度图 -> 场景几何体 token 序列
+
+data:
+  train_parquet: data/train.parquet   # 列: image(binary, PNG/JPEG字节), objects(JSON string)
+  val_parquet: data/val.parquet
+  image_size: 256
+  max_objects: 6          # 场景中最多几何体数量（每个物体 7 个 token）
+
+tokenizer:
+  n_bins: 256             # 连续参数量化 bin 数
+  params:                 # 各槽位取值范围 (min, max)
+    # 相机条件（Unity 坐标，左手系，+Y 向上）
+    cam_ex: [-7.0, 7.0]
+    cam_ey: [-7.0, 7.0]
+    cam_ez: [-7.0, 7.0]
+    cam_tx: [-2.0, 2.0]
+    cam_ty: [-2.0, 2.0]
+    cam_tz: [-2.0, 2.0]
+    cam_fov: [30.0, 90.0]
+    # 物体位置
+    cx: [-2.0, 2.0]
+    cy: [0.0, 2.5]
+    cz: [-2.0, 2.0]
+    # 四元数 (x, y, z, w)
+    q0: [-1.0, 1.0]
+    q1: [-1.0, 1.0]
+    q2: [-1.0, 1.0]
+    q3: [-1.0, 1.0]
+    # 尺寸槽位
+    s0: [0.05, 1.5]
+    s1: [0.05, 1.5]
+    s2: [0.05, 1.5]
+
+# 模型: ViT-Large/16 编码器 (~304M) + 20 层 Transformer 解码器 (~724M) ≈ 1.03B
+model:
+  patch_size: 16
+  enc_dim: 1024
+  enc_depth: 24
+  enc_heads: 16
+  dec_dim: 1536
+  dec_depth: 20
+  dec_heads: 24
+  mlp_ratio: 4.0
+  dropout: 0.0
+
+train:
+  epochs: 40
+  batch_size: 8
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  warmup_ratio: 0.05
+  weight_decay: 0.05
+  grad_clip: 1.0
+  amp: auto                # cuda 上自动启用 (bf16 优先)，cpu 关闭
+  num_workers: 2
+  seed: 42
+  out_dir: outputs
+  resume: null
+  log_every: 10
