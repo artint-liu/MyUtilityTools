@@ -1,0 +1,37 @@
+# ML-Agents PPO 配置 — MiniChicken 双足速度指令跟随
+# 用法: mlagents-learn training/biped_locomotion.yaml --run-id=biped_v1
+
+behaviors:
+  BipedLocomotion:
+    trainer_type: ppo
+    hyperparameters:
+      batch_size: 4096
+      buffer_size: 40960
+      learning_rate: 3.0e-4
+      beta: 0.005          # 熵正则，鼓励探索步态
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: linear
+    network_settings:
+      normalize: true      # 输入自动标准化
+      hidden_units: 512
+      num_layers: 3
+      vis_encode_type: simple
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+    max_steps: 5.0e7       # 16 并行环境约需数千万步收敛
+    time_horizon: 64
+    summary_freq: 30000
+    keep_checkpoints: 5
+    checkpoint_interval: 500000
+    threaded: true
+
+# 推理测试（可选）: mlagents-learn ... 去掉 --run-id 加 --inference
+engine_settings:
+  width: 84
+  height: 84
+  quality_level: 5
+  time_scale: 20          # 训练时 Unity Time Scale（也可在 Edit > Project Settings > Time 设置）

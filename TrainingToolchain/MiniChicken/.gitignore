@@ -1,0 +1,46 @@
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.apk
+*.aab
+*.unitypackage
+crashlytics-build.properties
+/[Pp]rojectSettings/ProjectVersion.txt.orig
+
+# Python (training)
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# ML-Agents results
+results/
+summaries/
+*.onnx
+.vsconfig
+
+# ML-Agents runtime generated (per-scene timer stats)
+Assets/ML-Agents/
+
+# Unity IAP generated
+Assets/Resources/BillingMode.json
+Assets/Resources/BillingMode.json.meta
+
+# OS
+.DS_Store
+Thumbs.db
