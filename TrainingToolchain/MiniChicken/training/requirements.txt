@@ -1,3 +1,37 @@
-# ML-Agents release_21 对应 Python 包（需 Python 3.10.x）
+﻿# ML-Agents release_21 对应 Python 包
+#
+# ⚠️ 安装说明（重要）:
+# 1) mlagents-envs==1.0.0 硬依赖 numpy==1.21.2（精确锁定），但该版本没有 Windows / Python 3.10
+#    的预编译 wheel，pip 会尝试从源码编译 numpy，因旧版 numpy 的 distutils 与 setuptools>=60
+#    不兼容而失败：
+#       TypeError: CCompiler_spawn() got an unexpected keyword argument 'env'
+# 2) mlagents 1.0.0 仍 `import pkg_resources`，而 setuptools>=81 已移除该模块，会报
+#       ModuleNotFoundError: No module named 'pkg_resources'
+#    因此必须把 setuptools 锁在 <81。
+# 3) mlagents 1.0.0 用到 np.float / np.int 等已废弃别名，这些在 numpy>=1.24 被移除，
+#    因此 numpy 不能用 1.24+。Python 3.10 下需用 1.23.5（有 cp310 wheel 且保留别名）；
+#    Python 3.9 下用 1.21.2（mlagents-envs 的精确约束，本身也有别名）。
+# 4) torch 必须锁 2.0.1（不要写 >=1.13.1，否则会解析到 2.2+，其新 ONNX 导出器强制依赖
+#    onnxscript，而 onnxscript 又要求 protobuf>=4.25 / onnx>=1.17，会顶掉上面的
+#    3.19.6/1.12.0 并把 numpy 顶到 2.x，破坏整个环境）。torch 2.0.1 用旧导出器，无需 onnxscript。
+#    ⚠️ 切勿 `pip install onnxscript`。
+#
+# 方案 A（推荐，最干净）: 用 Python 3.9 建虚拟环境
+#       python -m venv venv
+#       venv\Scripts\activate
+#       pip install "setuptools<81"
+#       pip install -r requirements.txt
+#   （numpy 1.21.2 有 cp39 wheel，可正常安装，完全满足 mlagents-envs 的精确约束）
+#
+# 方案 B（保持在 Python 3.10）: 先装带 wheel 的 numpy + 旧版 setuptools，再用 --no-deps
+#   跳过严格的 numpy==1.21.2 约束，最后补装其余依赖：
+#       pip install "setuptools<81"
+#       pip install "numpy==1.23.5"
+#       pip install --no-deps mlagents==1.0.0 mlagents-envs==1.0.0
+#       pip install grpcio "h5py>=2.9.0" Pillow "protobuf<3.20,>=3.6" pyyaml "cloudpickle==2.2.1" "tensorboard>=2.14" "torch==2.0.1" six "attrs>=19.3.0" "huggingface-hub>=0.14" "onnx==1.12.0" "pypiwin32==223" "cattrs<1.7,>=1.1.0"
+#   （已验证：numpy 1.23.5 + torch 2.0.1+cpu + onnx 1.12.0 + protobuf 3.19.6 + setuptools 80.9.0
+#    可正常 import 运行，且 proto 握手字段正常）
+#   cloudpickle 为 mlagents 训练链必需（SubprocessEnvManager）；
+#   filelock 由 torch 依赖自动带上；gym/pettingzoo 仅 mlagents_envs 的 gym 兼容层需要，Unity 训练可不装。
 mlagents==1.0.0
 # torch 由 mlagents 依赖自动安装 (>=1.10.1)

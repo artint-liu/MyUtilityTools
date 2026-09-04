@@ -37,6 +37,10 @@ summaries/
 # ML-Agents runtime generated (per-scene timer stats)
 Assets/ML-Agents/
 
+# Pose editor tool scene (recreatable via MiniChicken menu; pose data lives in Assets/Configs/BipedPose.json)
+Assets/Scenes/PoseEditor.unity
+Assets/Scenes/PoseEditor.unity.meta
+
 # Unity IAP generated
 Assets/Resources/BillingMode.json
 Assets/Resources/BillingMode.json.meta

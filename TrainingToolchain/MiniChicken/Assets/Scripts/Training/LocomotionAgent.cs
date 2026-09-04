@@ -9,14 +9,14 @@ namespace MiniChicken.Training
 {
     /// <summary>
     /// 双足机器人速度指令跟随任务：
-    /// 观测 47 维 / 动作 12 维连续 / PD 关节位置目标控制。
+    /// 观测 40 维 / 动作 10 维连续 / PD 关节位置目标控制。
     /// 奖励与终止条件详见 docs/RobotDesign.md。
     /// </summary>
     [RequireComponent(typeof(BehaviorParameters))]
     public class LocomotionAgent : Agent
     {
-        public const int NumJoints = 12;
-        public const int ObsSize = 3 + 3 + NumJoints * 3 + 2 + 3; // 47
+        public const int NumJoints = 10;
+        public const int ObsSize = 3 + 3 + NumJoints * 3 + 2 + 3; // 40
         public const int ActSize = NumJoints;
 
         [Header("Environment")]
@@ -42,12 +42,21 @@ namespace MiniChicken.Training
         public float wActionMagnitude = 0.005f;
         public float fallPenalty = 1.0f;
 
+        [Header("Debug")]
+        [Tooltip("开启后在控制台输出回合起止、模型更新、决策心跳等日志，用于确认训练/卡顿状态")]
+        public bool debugLog = true;
+        [Tooltip("每隔多少回合打印一次回合日志（0 = 每回合都打印）")]
+        public int logEveryEpisodes = 50;
+        static int s_totalDecisions;   // 跨所有 Agent 累计的决策次数（含并行环境）
+
         RobotRig rig;
         GameObject rigGO;
         readonly float[] curAction = new float[NumJoints];
         readonly float[] prevAction = new float[NumJoints];
         Vector3 cmdVel;   // x: vx, y: yawRate, z: vz
         int episodeCount;
+        bool episodeEndLogged;   // 防止 FixedUpdate 多次触发时重复打印回合结束
+        float lastDecisionTime = -1f;   // 上一决策时刻，用于检测主线程卡顿（如模型重载）
 
         public RobotRig Rig => rig;
         public Vector3 Command => cmdVel;
@@ -55,6 +64,13 @@ namespace MiniChicken.Training
         public override void Initialize()
         {
             MaxStep = maxEpisodeSteps;
+
+            // 训练时允许 Unity 在失焦/后台下继续推进，避免 Editor 节流导致 gRPC 步骤超时
+            Application.runInBackground = true;
+
+            var bp = GetComponent<BehaviorParameters>();
+            if (debugLog)
+                Debug.Log($"[LocomotionAgent] Initialize: maxEpisodeSteps={maxEpisodeSteps}, behavior={bp.BehaviorType}");
         }
 
         void Start()
@@ -97,7 +113,12 @@ namespace MiniChicken.Training
 
             SampleCommands();
 
+            if (debugLog && (logEveryEpisodes <= 0 || episodeCount % logEveryEpisodes == 0))
+                Debug.Log($"[LocomotionAgent] Episode #{episodeCount} 开始 | cmd=(vx={cmdVel.x:F2},vz={cmdVel.z:F2},yaw={cmdVel.y:F2}) | Step={StepCount}");
+
             for (int i = 0; i < NumJoints; i++) { curAction[i] = 0f; prevAction[i] = 0f; }
+            episodeEndLogged = false;
+            lastDecisionTime = -1f;   // 新回合开始，避免把回合间隔误报为卡顿
         }
 
         /// <summary>内置课程：前 N 个回合内指令范围从 ±minCmdSpeed 扩大到 ±maxCmdSpeed。</summary>
@@ -149,6 +170,21 @@ namespace MiniChicken.Training
         public override void OnActionReceived(ActionBuffers actionBuffers)
         {
             if (rig == null) return;
+            s_totalDecisions++;
+
+            // 卡顿检测：正常 10 Hz 决策间隔约 0.1s，若间隔 > 1s 说明主线程被阻塞
+            // （最可能是训练器推送并同步加载新模型）。把报警时刻与训练器日志的 saved model 对齐即可确认。
+            if (lastDecisionTime >= 0f)
+            {
+                float gap = Time.time - lastDecisionTime;
+                if (gap > 1f)
+                    Debug.LogWarning($"[LocomotionAgent] 决策间隔异常 {gap:F1}s @ Step={StepCount}（主线程疑似卡顿，可能为训练器推送并加载模型）");
+            }
+            lastDecisionTime = Time.time;
+
+            if (debugLog && s_totalDecisions % 5000 == 0)
+                Debug.Log($"[LocomotionAgent] 决策心跳: 累计决策={s_totalDecisions} | Step={StepCount} | t={Time.time:F1}s");
+
             var a = actionBuffers.ContinuousActions;
 
             for (int i = 0; i < NumJoints; i++) prevAction[i] = curAction[i];
@@ -182,13 +218,20 @@ namespace MiniChicken.Training
             float dt = Time.fixedDeltaTime;
             AddReward(ComputeReward() * dt);
 
-            // 终止判定：摔倒
+            // 终止判定
             float h = rig.Root.transform.position.y;
             float up = Vector3.Dot(rig.Root.transform.up, Vector3.up);
-            if (h < rig.FallHeight || up < 0.3f)
+            string reason = null;
+            if (h < rig.FallHeight || up < 0.3f) reason = "fall";
+            else if (StepCount >= MaxStep) reason = "timeout";
+
+            if (reason != null)
             {
-                AddReward(-fallPenalty);
-                EndEpisode();
+                if (reason == "fall") AddReward(-fallPenalty);
+                if (debugLog && !episodeEndLogged && (logEveryEpisodes <= 0 || episodeCount % logEveryEpisodes == 0))
+                    Debug.Log($"[LocomotionAgent] Episode #{episodeCount} 结束 reason={reason} | cumReward={GetCumulativeReward():F2} | Step={StepCount}");
+                episodeEndLogged = true;
+                if (reason == "fall") EndEpisode();   // timeout 由引擎在 MaxStep 时自动结束
             }
         }
 
