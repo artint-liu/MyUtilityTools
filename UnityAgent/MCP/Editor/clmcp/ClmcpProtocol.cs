@@ -5,7 +5,7 @@ namespace Clmcp
 {
     /// <summary>
     /// MCP 协议层：JSON-RPC 2.0（TCP 传输，每行一条消息——与 MCP stdio 帧格式一致）。
-    /// 支持 initialize / ping / tools/list / tools/call，以及 resources、prompts 的空实现。
+    /// 支持 initialize / ping / tools/list / tools/call / prompts/list / prompts/get，resources 为空实现。
     /// </summary>
     internal static class ClmcpProtocol
     {
@@ -61,10 +61,10 @@ namespace Clmcp
                         };
                         break;
                     case "prompts/list":
-                        result = new System.Collections.Generic.Dictionary<string, object>
-                        {
-                            { "prompts", new System.Collections.Generic.List<object>() }
-                        };
+                        result = ClmcpPrompts.BuildList();
+                        break;
+                    case "prompts/get":
+                        result = ClmcpPrompts.HandleGet(parameters);
                         break;
                     default:
                         if (method.StartsWith("notifications/", StringComparison.Ordinal))
@@ -72,6 +72,11 @@ namespace Clmcp
                         return hasId ? Error(id, -32601, "Method not found: " + method) : null;
                 }
                 return hasId ? Success(id, result) : null;
+            }
+            catch (ClmcpPrompts.PromptException pe)
+            {
+                // prompts/get 的参数问题属于客户端错误，用 Invalid params 而非 Internal error
+                return hasId ? Error(id, -32602, pe.Message) : null;
             }
             catch (Exception e)
             {
@@ -92,7 +97,10 @@ namespace Clmcp
             result.Add("protocolVersion", version);
             result.Add("capabilities", new System.Collections.Generic.Dictionary<string, object>
             {
-                { "tools", new System.Collections.Generic.Dictionary<string, object> { { "listChanged", false } } }
+                // 声明支持工具列表变更通知：脚本重编译新增工具后，
+                // 客户端可通过 notifications/tools/list_changed 重新拉取，无需重连
+                { "tools", new System.Collections.Generic.Dictionary<string, object> { { "listChanged", true } } },
+                { "prompts", new System.Collections.Generic.Dictionary<string, object>() }
             });
             result.Add("serverInfo", new System.Collections.Generic.Dictionary<string, object>
             {

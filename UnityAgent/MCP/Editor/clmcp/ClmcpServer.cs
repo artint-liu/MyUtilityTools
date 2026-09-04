@@ -110,6 +110,16 @@ namespace Clmcp
             StopCore();
         }
 
+        /// <summary>
+        /// 向所有已连接客户端推送一条 JSON-RPC 通知行（无 id，客户端无需应答）。
+        /// 用于 notifications/tools/list_changed 等服务端主动通知。
+        /// </summary>
+        public static int Broadcast(string line)
+        {
+            Core core = s_core;
+            return core != null ? core.Broadcast(line) : 0;
+        }
+
         static void StopCore()
         {
             Core core = s_core;
@@ -231,6 +241,29 @@ namespace Clmcp
                     }
                     m_clients.Clear();
                 }
+            }
+
+            /// <summary>向所有客户端写一行通知；返回成功写入的客户端数。</summary>
+            public int Broadcast(string line)
+            {
+                if (string.IsNullOrEmpty(line)) return 0;
+                byte[] payload = new UTF8Encoding(false).GetBytes(line + "\n");
+                int sent = 0;
+                lock (m_gate)
+                {
+                    for (int i = m_clients.Count - 1; i >= 0; i--)
+                    {
+                        try
+                        {
+                            NetworkStream stream = m_clients[i].GetStream();
+                            stream.Write(payload, 0, payload.Length);
+                            stream.Flush();
+                            sent++;
+                        }
+                        catch (Exception) { }
+                    }
+                }
+                return sent;
             }
         }
     }

@@ -97,6 +97,8 @@ namespace Clmcp
             sb.AppendLine("using System.Linq;");
             sb.AppendLine("using UnityEngine;");
             sb.AppendLine("using UnityEditor;");
+            // 让 ClmcpBuild 场景构建 API 开箱即用（对标 Blender MCP 中始终可用的 bpy）
+            sb.AppendLine("using Clmcp;");
             sb.Append(usings);
             sb.AppendLine();
             sb.AppendLine("public static class ClmcpInlineScript");
@@ -107,8 +109,8 @@ namespace Clmcp
             sb.AppendLine("        return null;");
             sb.AppendLine("    }");
             sb.AppendLine("}");
-            // 用户代码首行在生成文件中的行号 - 1（5 默认 using + 用户 using + 空行 + 4 行包装壳）
-            lineOffset = 10 + usingCount;
+            // 用户代码首行在生成文件中的行号 - 1（6 默认 using + 用户 using + 空行 + 4 行包装壳）
+            lineOffset = 11 + usingCount;
             return sb.ToString();
         }
 

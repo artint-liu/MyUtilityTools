@@ -107,6 +107,9 @@ namespace Clmcp
                     { "path", Prop("string", "可选：保存路径（相对工程根或绝对路径），默认 Screenshots/clmcp_时间戳.png") }
                 })));
 
+            // 建模 / 场景构建工具（create_material / create_mesh / batch ...）
+            tools.AddRange(ClmcpToolsScene.BuildToolsList());
+
             return new Dictionary<string, object> { { "tools", tools } };
         }
 
@@ -218,8 +221,13 @@ namespace Clmcp
                     return CaptureScreenshot(args, out isError, extraContent);
 
                 default:
+                {
+                    // 未命中内置工具时，交给建模工具集处理
+                    string sceneResult = ClmcpToolsScene.Dispatch(name, args, out isError);
+                    if (sceneResult != null) return sceneResult;
                     isError = true;
                     return "未知工具: " + name;
+                }
             }
         }
 
@@ -826,7 +834,7 @@ namespace Clmcp
 
         // ================= 工具描述辅助 =================
 
-        static Dictionary<string, object> Tool(string name, string description,
+        internal static Dictionary<string, object> Tool(string name, string description,
             Dictionary<string, object> inputSchema)
         {
             return new Dictionary<string, object>
@@ -837,7 +845,7 @@ namespace Clmcp
             };
         }
 
-        static Dictionary<string, object> Prop(string type, string description)
+        internal static Dictionary<string, object> Prop(string type, string description)
         {
             return new Dictionary<string, object>
             {
@@ -846,7 +854,7 @@ namespace Clmcp
             };
         }
 
-        static Dictionary<string, object> Schema(Dictionary<string, object> properties, params string[] required)
+        internal static Dictionary<string, object> Schema(Dictionary<string, object> properties, params string[] required)
         {
             Dictionary<string, object> s = new Dictionary<string, object>();
             s.Add("type", "object");
