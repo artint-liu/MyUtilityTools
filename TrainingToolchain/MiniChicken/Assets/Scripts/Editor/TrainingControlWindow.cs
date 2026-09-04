@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Globalization;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -57,6 +59,8 @@ namespace MiniChicken.EditorTools
         static bool s_logDirty;
         static bool s_autoPlayPending;
         static double s_nextTail;
+        static float s_maxSteps = 5.0e7f;   // 从配置读取，用于 ETA 估计
+        static int s_etaStep;               // 上次已打印 ETA 的步数，避免重复
 
         class Cmd { public string Title, FileName, Args, FailHint; }
         static Queue<Cmd> s_setupQueue;
@@ -250,6 +254,38 @@ namespace MiniChicken.EditorTools
             Log($"{tag} ■ 已停止。");
         }
 
+        /// <summary>从训练配置解析 max_steps（支持 5.0e7 科学计数法，忽略行内注释）。</summary>
+        static float ParseMaxSteps(string yamlPath)
+        {
+            try
+            {
+                if (!File.Exists(yamlPath)) return 5.0e7f;
+                foreach (var line in File.ReadAllLines(yamlPath))
+                {
+                    int idx = line.IndexOf("max_steps:", StringComparison.Ordinal);
+                    if (idx < 0) continue;
+                    var val = line.Substring(idx + "max_steps:".Length).Trim();
+                    int end = val.IndexOfAny(new[] { ' ', '\t', '#' });
+                    if (end >= 0) val = val.Substring(0, end);
+                    if (float.TryParse(val, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) && v > 0f)
+                        return v;
+                }
+            }
+            catch { }
+            return 5.0e7f;
+        }
+
+        static string FormatDur(float sec)
+        {
+            if (sec <= 0f) return "0s";
+            int s = (int)sec;
+            int h = s / 3600; s %= 3600;
+            int m = s / 60; s %= 60;
+            if (h > 0) return $"{h}h{m:D2}m{s:D2}s";
+            if (m > 0) return $"{m}m{s:D2}s";
+            return $"{s}s";
+        }
+
         // ------------------------------------------------------------------
         // 主循环
         // ------------------------------------------------------------------
@@ -278,6 +314,18 @@ namespace MiniChicken.EditorTools
                 if (chunk != null)
                 {
                     LogRaw(chunk);
+                    // ETA：解析训练器每 summary 输出的 Step / Time Elapsed，估算完成时间
+                    foreach (Match m in Regex.Matches(chunk, @"Step:\s*(\d+)\.\s*Time Elapsed:\s*([\d.]+)\s*s"))
+                    {
+                        if (!float.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float step) || step <= 0f) continue;
+                        if (!float.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float elapsed)) continue;
+                        if (step <= s_etaStep) continue;   // 只在步数前进时更新
+                        s_etaStep = (int)step;
+                        float rate = step / elapsed;                                  // 平均步/秒
+                        float remain = s_maxSteps > step ? (s_maxSteps - step) / rate : 0f;
+                        var done = DateTime.Now.AddSeconds(remain);
+                        Log($"[ETA] Step {step:#,0}/{s_maxSteps:#,0} ({step / s_maxSteps * 100f:F1}%) | {rate:F0} steps/s | 剩余 {FormatDur(remain)} | 预计完成 {done:HH:mm:ss}");
+                    }
                     // 训练器就绪 / worker 重启后，若训练进程存活且 Unity 未在 Play，自动进入或重连 Play
                     // （不再依赖一次性标记 s_autoPlayPending，可自动从偶发卡顿后的重启中恢复）
                     if (autoEnterPlay && IsTrackedAlive(TrainerPidKey) && !EditorApplication.isPlaying &&
@@ -461,6 +509,9 @@ namespace MiniChicken.EditorTools
 
             Log($"[Train] ▶ 启动训练{(resume ? "（继续）" : "")}: run-id={id} | 配置={configPath} | 端口={basePort}");
             StartLongRunning(TrainerPidKey, TrainerLog, args, "[Train]");
+
+            s_maxSteps = ParseMaxSteps(Path.Combine(ProjectRoot, configPath));
+            s_etaStep = 0;
 
             if (autoEnterPlay)
             {
