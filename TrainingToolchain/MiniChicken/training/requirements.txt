@@ -28,9 +28,9 @@
 #       pip install "setuptools<81"
 #       pip install "numpy==1.23.5"
 #       pip install --no-deps mlagents==1.0.0 mlagents-envs==1.0.0
-#       pip install grpcio "h5py>=2.9.0" Pillow "protobuf<3.20,>=3.6" pyyaml "cloudpickle==2.2.1" "tensorboard>=2.14" "torch==2.0.1" six "attrs>=19.3.0" "huggingface-hub>=0.14" "onnx==1.12.0" "pypiwin32==223" "cattrs<1.7,>=1.1.0"
-#   （已验证：numpy 1.23.5 + torch 2.0.1+cpu + onnx 1.12.0 + protobuf 3.19.6 + setuptools 80.9.0
-#    可正常 import 运行，且 proto 握手字段正常）
+#       pip install --extra-index-url https://download.pytorch.org/whl/cu118 grpcio "h5py>=2.9.0" Pillow "protobuf<3.20,>=3.6" pyyaml "cloudpickle==2.2.1" "tensorboard>=2.14" "torch==2.0.1+cu118" six "attrs>=19.3.0" "huggingface-hub>=0.14" "onnx==1.12.0" "pypiwin32==223" "cattrs<1.7,>=1.1.0"
+#   （已验证：numpy 1.23.5 + torch 2.0.1+cu118 + onnx 1.12.0 + protobuf 3.19.6 + setuptools 80.9.0
+#    可正常 import 运行，且 proto 握手字段正常；cu118 含 CUDA 11.8 运行时，支持 RTX 30/40 系 GPU）
 #   cloudpickle 为 mlagents 训练链必需（SubprocessEnvManager）；
 #   filelock 由 torch 依赖自动带上；gym/pettingzoo 仅 mlagents_envs 的 gym 兼容层需要，Unity 训练可不装。
 mlagents==1.0.0

@@ -61,12 +61,15 @@ namespace MiniChicken.EditorTools
         static double s_nextTail;
         static float s_maxSteps = 5.0e7f;   // 从配置读取，用于 ETA 估计
         static int s_etaStep;               // 上次已打印 ETA 的步数，避免重复
+        static float s_etaLastStep;         // 上一条 ETA 的累计步数（滚动速率用）
+        static float s_etaLastElapsed;      // 上一条 ETA 的累计耗时（滚动速率用）
 
         class Cmd { public string Title, FileName, Args, FailHint; }
         static Queue<Cmd> s_setupQueue;
         static Process s_setupProc;   // 安装步骤：直接管道读取（期间无 Play/重编译）
         static string s_setupTitle;
         static string s_setupFailHint;
+        static Process s_cudaProc;    // CUDA 环境测试：一次性管道读取（不阻塞后台训练）
 
         // ------------------------------------------------------------------
         // Inspector 字段
@@ -306,6 +309,15 @@ namespace MiniChicken.EditorTools
                 }
             }
 
+            // CUDA 环境测试完成
+            if (s_cudaProc != null && s_cudaProc.HasExited)
+            {
+                int code = 0;
+                try { code = s_cudaProc.ExitCode; } catch { }
+                s_cudaProc = null;
+                Log($"[CUDA] 测试完成：{(code == 0 ? "✓ 检测到 GPU（CUDA 可用）" : "✗ 未检测到 GPU（将使用 CPU 训练）")}");
+            }
+
             // 节流读取训练 / TensorBoard 日志
             if (EditorApplication.timeSinceStartup >= s_nextTail)
             {
@@ -315,14 +327,26 @@ namespace MiniChicken.EditorTools
                 {
                     LogRaw(chunk);
                     // ETA：解析训练器每 summary 输出的 Step / Time Elapsed，估算完成时间
+                    // 注意：Time Elapsed 是「自训练启动的累计耗时」，因此 step/elapsed 是累计平均速率。
+                    // 起步阶段远快于稳态，累计平均会被持续拉低，导致「剩余时间」越算越长（假象）。
+                    // 故改用相邻两条 summary 之间的瞬时速率（滚动窗口），立刻反映真实速度。
                     foreach (Match m in Regex.Matches(chunk, @"Step:\s*(\d+)\.\s*Time Elapsed:\s*([\d.]+)\s*s"))
                     {
                         if (!float.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float step) || step <= 0f) continue;
                         if (!float.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out float elapsed)) continue;
                         if (step <= s_etaStep) continue;   // 只在步数前进时更新
+
+                        // 新一次训练（resume 后累计耗时重置）或首条：回退到累计平均
+                        bool newRun = elapsed < s_etaLastElapsed - 1f || s_etaLastStep <= 0f;
+                        float rate = newRun
+                            ? step / elapsed
+                            : (step - s_etaLastStep) / (elapsed - s_etaLastElapsed);   // 最近一段的瞬时步/秒
+
                         s_etaStep = (int)step;
-                        float rate = step / elapsed;                                  // 平均步/秒
-                        float remain = s_maxSteps > step ? (s_maxSteps - step) / rate : 0f;
+                        s_etaLastStep = step;
+                        s_etaLastElapsed = elapsed;
+
+                        float remain = s_maxSteps > step && rate > 0f ? (s_maxSteps - step) / rate : 0f;
                         var done = DateTime.Now.AddSeconds(remain);
                         Log($"[ETA] Step {step:#,0}/{s_maxSteps:#,0} ({step / s_maxSteps * 100f:F1}%) | {rate:F0} steps/s | 剩余 {FormatDur(remain)} | 预计完成 {done:HH:mm:ss}");
                     }
@@ -383,6 +407,48 @@ namespace MiniChicken.EditorTools
             else { exe = path; prefix = ""; }
         }
 
+        // ------------------------------------------------------------------
+        // GPU 检测：根据显卡型号选择对应的 torch / CUDA 版本
+        // - RTX 40/30/20 及更早（Ampere/Turing 及以前，CUDA 11.x 即可）→ torch 2.0.1+cu118
+        //   （本项目验证过的组合，onnx/protobuf 等其余依赖维持原锁版本）
+        // - RTX 50 系（Blackwell，计算能力 12.x，需 CUDA 12.4+）→ torch 2.6.0+cu124
+        //   （cu118 不含 sm_120 目标，无法在 RTX 50 上运行；此路径会连带升级 onnx/protobuf）
+        // ------------------------------------------------------------------
+        static string DetectGpuName()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("nvidia-smi", "--query-gpu=name --format=csv,noheader")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                };
+                var p = Process.Start(psi);
+                string s = p.StandardOutput.ReadToEnd();
+                p.WaitForExit(8000);
+                return s.Trim();
+            }
+            catch { return ""; }
+        }
+
+        static bool IsBlackwell(string gpu)
+        {
+            // RTX 50xx（Blackwell）：CUDA 11.8/12.1 均不含 sm_120，需 CUDA 12.4+
+            return Regex.IsMatch(gpu ?? "", @"RTX\s*50\d{2}", RegexOptions.IgnoreCase);
+        }
+
+        static (string torchVer, string indexUrl, string label, bool blackwell) SelectTorchForGpu()
+        {
+            string gpu = DetectGpuName();
+            if (IsBlackwell(gpu))
+                return ("torch==2.6.0+cu124", "https://download.pytorch.org/whl/cu124",
+                        string.IsNullOrEmpty(gpu) ? "Blackwell (RTX 50)" : gpu.Trim(), true);
+            return ("torch==2.0.1+cu118", "https://download.pytorch.org/whl/cu118",
+                    string.IsNullOrEmpty(gpu) ? "未检测到 GPU（默认 CUDA 11.8）" : gpu.Trim(), false);
+        }
+
         void StartSetup(bool createVenv)
         {
             if (s_setupProc != null) { ShowNotification(new GUIContent("环境准备进行中")); return; }
@@ -441,12 +507,28 @@ namespace MiniChicken.EditorTools
                 FileName = VenvPython,
                 Args = "-m pip install --no-deps mlagents==1.0.0 mlagents-envs==1.0.0",
             });
+
+            // 根据实际显卡选择 torch / CUDA 版本
+            var torch = SelectTorchForGpu();
+            Log($"[Setup] 检测到 GPU: {torch.label} → 选用 {torch.torchVer}（源 {torch.indexUrl}）");
+            if (torch.blackwell)
+                Log("[Setup] ⚠ RTX 50 系需 CUDA 12.4+，已切换到 torch 2.6+cu124；此路径会连带升级 onnx/protobuf，" +
+                    "若训练时 Unity↔Python 握手异常，可能需同步更新 ML-Agents 包的 protobuf 版本。");
+
             // cloudpickle 为 mlagents 训练链必需；gym/pettingzoo 仅 gym 兼容层需要，Unity 训练可不装
-            string deps = "grpcio \"h5py>=2.9.0\" Pillow \"protobuf<3.20,>=3.6\" pyyaml \"cloudpickle==2.2.1\" " +
-                          "\"tensorboard>=2.14\" \"torch==2.0.1\" six \"attrs>=19.3.0\" " +
-                          "\"huggingface-hub>=0.14\" \"onnx==1.12.0\" \"cattrs<1.7,>=1.1.0\"";
+            // RTX 50（Blackwell）路径下 torch 2.6 依赖 onnxscript，需相应放开 onnx/protobuf 版本
+            string onnxSpec = torch.blackwell ? "\"onnx==1.17.0\"" : "\"onnx==1.12.0\"";
+            string protobufSpec = torch.blackwell ? "\"protobuf>=3.20.2,<4\"" : "\"protobuf<3.20,>=3.6\"";
+            string deps = "grpcio \"h5py>=2.9.0\" Pillow " + protobufSpec + " pyyaml \"cloudpickle==2.2.1\" " +
+                          "\"tensorboard>=2.14\" \"" + torch.torchVer + "\" six \"attrs>=19.3.0\" " +
+                          "\"huggingface-hub>=0.14\" " + onnxSpec + " \"cattrs<1.7,>=1.1.0\"";
             if (IsWin) deps += " \"pypiwin32==223\"";
-            q.Enqueue(new Cmd { Title = "安装其余依赖", FileName = VenvPython, Args = "-m pip install " + deps });
+            q.Enqueue(new Cmd
+            {
+                Title = "安装其余依赖（" + (torch.blackwell ? "torch cu124 / RTX 50" : "torch cu118 / GPU") + "）",
+                FileName = VenvPython,
+                Args = "-m pip install --extra-index-url " + torch.indexUrl + " " + deps,
+            });
 
             s_setupQueue = q;
             Log("[Setup] 开始准备 Python 环境…（约需几分钟，实时显示 pip 输出）");
@@ -467,6 +549,28 @@ namespace MiniChicken.EditorTools
             s_setupFailHint = c.FailHint;
             Log($"[Setup] ▶ {c.Title}");
             s_setupProc = StartPipe(c.FileName, c.Args);
+        }
+
+        // ------------------------------------------------------------------
+        // 1.5 测试当前 venv 的 CUDA / GPU 环境
+        // ------------------------------------------------------------------
+        void TestCudaEnv()
+        {
+            if (s_cudaProc != null) { ShowNotification(new GUIContent("CUDA 测试进行中")); return; }
+            if (!File.Exists(VenvPython)) { Log("[CUDA] ✗ 未找到 venv，请先准备 Python 环境。"); return; }
+
+            const string script =
+                "import torch,sys; " +
+                "print('PyTorch:', torch.__version__); " +
+                "print('CUDA available:', torch.cuda.is_available()); " +
+                "print('CUDA build:', torch.version.cuda); " +
+                "print('cuDNN:', torch.backends.cudnn.version()); " +
+                "n=torch.cuda.device_count(); " +
+                "print('GPU count:', n); " +
+                "[print('GPU %d: %s' % (i, torch.cuda.get_device_name(i))) for i in range(n)]; " +
+                "sys.exit(0 if torch.cuda.is_available() else 2)";
+            Log("[CUDA] ▶ 测试当前 venv 的 CUDA / GPU 可用性…（基于 torch）");
+            s_cudaProc = StartPipe(VenvPython, "-c \"" + script + "\"");
         }
 
         // ------------------------------------------------------------------
@@ -512,6 +616,8 @@ namespace MiniChicken.EditorTools
 
             s_maxSteps = ParseMaxSteps(Path.Combine(ProjectRoot, configPath));
             s_etaStep = 0;
+            s_etaLastStep = 0f;
+            s_etaLastElapsed = 0f;
 
             if (autoEnterPlay)
             {
@@ -574,7 +680,12 @@ namespace MiniChicken.EditorTools
             if (!Directory.Exists(ResultsDir)) return list;
             foreach (var d in Directory.GetDirectories(ResultsDir))
             {
-                if (Directory.GetFiles(d, "*.pt").Length > 0 || Directory.GetFiles(d, "*.onnx").Length > 0)
+                // mlagents 1.0.0 将检查点放在 results/<run-id>/<behavior-name>/ 子目录下，
+                // 需递归搜索 *.pt / *.onnx（含 checkpoint.pt）。
+                bool hasCkpt =
+                    Directory.GetFiles(d, "*.pt", SearchOption.AllDirectories).Length > 0 ||
+                    Directory.GetFiles(d, "*.onnx", SearchOption.AllDirectories).Length > 0;
+                if (hasCkpt)
                     list.Add(Path.GetFileName(d));
             }
             list.Sort((a, b) => string.CompareOrdinal(b, a));
@@ -626,6 +737,9 @@ namespace MiniChicken.EditorTools
                     }
                     StartSetup(true);
                 }
+                if (GUILayout.Button(new GUIContent("测试 CUDA 环境（GPU / CPU）",
+                    "用 torch 检测当前 venv 是否可用 CUDA：输出 PyTorch 版本、CUDA 是否可用、GPU 型号等")))
+                    TestCudaEnv();
             }
 
             // ---------------- 2. 启动训练 ----------------
@@ -682,10 +796,20 @@ namespace MiniChicken.EditorTools
             // ---------------- 日志 ----------------
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("日志", EditorStyles.boldLabel);
-            if (GUILayout.Button("清空显示", GUILayout.Width(80)))
+            using (new EditorGUILayout.HorizontalScope())
             {
-                lock (s_log) s_log.Clear();
-                Repaint();
+                if (GUILayout.Button("复制日志", GUILayout.Width(80)))
+                {
+                    string clip;
+                    lock (s_log) clip = s_log.ToString();
+                    EditorGUIUtility.systemCopyBuffer = clip;
+                    Log("[UI] 已复制全部日志到剪贴板。");
+                }
+                if (GUILayout.Button("清空显示", GUILayout.Width(80)))
+                {
+                    lock (s_log) s_log.Clear();
+                    Repaint();
+                }
             }
 
             logScroll = EditorGUILayout.BeginScrollView(logScroll, GUILayout.ExpandHeight(true));
