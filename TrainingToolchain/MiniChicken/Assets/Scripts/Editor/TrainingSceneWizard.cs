@@ -26,6 +26,9 @@ namespace MiniChicken.EditorTools
         [MenuItem("MiniChicken/Setup Training Scene (8x8, 64 envs)")]
         public static void CreateScene64() => CreateScene(8);
 
+        [MenuItem("MiniChicken/Setup Training Scene (16x16, 256 envs)")]
+        public static void CreateScene256() => CreateScene(16);
+
         static void CreateScene(int grid)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -50,8 +53,6 @@ namespace MiniChicken.EditorTools
             var camGO = new GameObject("Main Camera");
             var cam = camGO.AddComponent<Camera>();
             camGO.AddComponent<AudioListener>();
-            camGO.transform.position = new Vector3(0f, 2.5f, -6f);
-            camGO.transform.rotation = Quaternion.Euler(15f, 0f, 0f);
 
             // ---- 训练环境网格 ----
             for (int x = 0; x < grid; x++)
@@ -81,6 +82,9 @@ namespace MiniChicken.EditorTools
                 }
             }
 
+            // ---- 相机取景：尽量覆盖场景中的所有模型（排除地面） ----
+            FrameCameraOnModels(cam, ground.transform);
+
             // ---- 保存场景 ----
             if (!Directory.Exists("Assets/Scenes"))
                 Directory.CreateDirectory("Assets/Scenes");
@@ -94,6 +98,39 @@ namespace MiniChicken.EditorTools
                 "训练：先启动 mlagents-learn，再进入 Play 模式。", "OK");
 
             Debug.Log($"[MiniChicken] Training scene created: {grid * grid} environments.");
+        }
+
+        /// <summary>
+        /// 调整相机位姿，使其尽量覆盖场景中的所有模型。
+        /// 以所有渲染器（可排除地面等参考物）的包围球为基准，按相机视场角反推取景距离，
+        /// 相机从模型群体正前上方俯视整个包围球。
+        /// </summary>
+        public static void FrameCameraOnModels(Camera cam, Transform excludeRoot = null)
+        {
+            if (cam == null) return;
+            var renderers = Object.FindObjectsByType<MeshRenderer>(
+                FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            var bounds = new Bounds();
+            bool any = false;
+            foreach (var r in renderers)
+            {
+                if (excludeRoot != null && r.transform.root == excludeRoot) continue;
+                if (any) bounds.Encapsulate(r.bounds);
+                else { bounds = r.bounds; any = true; }
+            }
+            if (!any) return;
+
+            Vector3 center = bounds.center;
+            float radius = bounds.extents.magnitude;   // 包围球半径
+            float tanHalfV = Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad);
+            // Game 视图宽高比未知时按 16:9 保守估计（水平视野要求更远）
+            float aspect = cam.aspect > 0.01f ? cam.aspect : 16f / 9f;
+            float dist = Mathf.Max(
+                radius / tanHalfV,
+                radius / (tanHalfV * aspect)) * 1.1f;
+
+            cam.transform.position = center + new Vector3(0f, dist * 0.45f + 0.5f, -dist * 0.9f);
+            cam.transform.LookAt(center);
         }
 
         /// <summary>向 TagManager 注册 Ground 层（若不存在）。</summary>

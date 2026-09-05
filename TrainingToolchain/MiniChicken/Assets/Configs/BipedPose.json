@@ -1,5 +1,5 @@
 {
-    "standHeight": 1.134530782699585,
+    "standHeight": 0.8915810585021973,
     "joints": [
         {
             "name": "L_HipYaw",
@@ -8,43 +8,48 @@
                 "x": 0.0,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "L_HipRoll",
             "restDeg": 0.0,
             "linkOffset": {
-                "x": 0.0,
+                "x": -0.11999999731779099,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "L_HipPitch",
-            "restDeg": 0.0,
+            "restDeg": 80.0,
             "linkOffset": {
                 "x": 0.0,
-                "y": 0.0,
+                "y": -0.0430000014603138,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "L_Knee",
-            "restDeg": 10.0,
+            "restDeg": -120.0,
             "linkOffset": {
                 "x": 0.0,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.17399996519088746
         },
         {
             "name": "L_AnklePitch",
-            "restDeg": -10.0,
+            "restDeg": 40.599998474121097,
             "linkOffset": {
-                "x": 0.0,
-                "y": 0.0,
+                "x": -0.006000000052154064,
+                "y": -0.013999998569488526,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": -0.006999999284744263
         },
         {
             "name": "R_HipYaw",
@@ -53,43 +58,48 @@
                 "x": 0.0,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "R_HipRoll",
             "restDeg": 0.0,
             "linkOffset": {
-                "x": 0.0,
+                "x": 0.11999999731779099,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "R_HipPitch",
-            "restDeg": 0.0,
+            "restDeg": 80.0,
             "linkOffset": {
                 "x": 0.0,
-                "y": 0.0,
+                "y": -0.0430000014603138,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.0
         },
         {
             "name": "R_Knee",
-            "restDeg": 5.0,
+            "restDeg": -120.0,
             "linkOffset": {
                 "x": 0.0,
                 "y": 0.0,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": 0.17399996519088746
         },
         {
             "name": "R_AnklePitch",
-            "restDeg": -10.0,
+            "restDeg": 40.599998474121097,
             "linkOffset": {
-                "x": 0.0,
-                "y": 0.0,
+                "x": 0.006000000052154064,
+                "y": -0.013999998569488526,
                 "z": 0.0
-            }
+            },
+            "lengthOffset": -0.006999999284744263
         }
     ]
 }

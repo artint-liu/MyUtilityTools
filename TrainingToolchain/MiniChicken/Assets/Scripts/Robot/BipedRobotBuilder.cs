@@ -22,10 +22,20 @@ namespace MiniChicken.Robot
         public float Kd;
         public float TorqueLimit;
         public float ActionScale = 0.5f;
-        /// <summary>段中心相对默认位置的附加偏移（米）。例如脚掌可在脚跟↔中间之间平移。</summary>
+        /// <summary>关节骨骼锚点相对设计位置的附加偏移（米）。
+        /// 作用于关节 transform 本身：其模型（碰撞体/可视）与下游所有骨骼随之平移。</summary>
         public Vector3 LinkOffset = Vector3.zero;
-        /// <summary>构建时记录的碰撞体默认中心（不含 LinkOffset），用于叠加计算最终中心。</summary>
+        /// <summary>段长度增量（米）：本关节到下游关节的骨骼段延伸量，
+        /// 碰撞体/可视同步变长，下游关节锚点沿骨轴（-Y）平移。脚掌段沿 Z（脚长）延伸。</summary>
+        public float LengthOffset = 0f;
+        /// <summary>构建时记录的碰撞体设计中心（不含 LinkOffset）。</summary>
         public Vector3 BaseCenter;
+        /// <summary>构建时记录的关节锚点设计位置（父骨骼局部空间，不含 LinkOffset）。</summary>
+        public Vector3 BaseAnchor;
+        /// <summary>构建时记录的碰撞体设计尺寸：胶囊体为 (半径, 高度, 0)，盒体为三轴尺寸。</summary>
+        public Vector3 BaseSize;
+        /// <summary>碰撞体是否为胶囊体（决定 BaseSize 的解释方式与可视缩放）。</summary>
+        public bool CapsuleShape;
 
         public JointSpec(string name, float minDeg, float maxDeg, float restDeg,
                          float kp, float kd, float torqueLimit, Vector3 linkOffset = default)
@@ -80,6 +90,7 @@ namespace MiniChicken.Robot
         public string name;
         public float restDeg;
         public Vector3 linkOffset;
+        public float lengthOffset;
     }
 
     /// <summary>
@@ -142,6 +153,7 @@ namespace MiniChicken.Robot
         static Material LegMaterial => GetVisualMaterial("Leg", new Color(1.00f, 0.55f, 0.10f));    // 橙
         static Material FootVisualMaterial => GetVisualMaterial("Foot", new Color(0.80f, 0.36f, 0.05f));
         static Material DarkMaterial => GetVisualMaterial("Dark", new Color(0.08f, 0.08f, 0.08f));
+        static Material AxisMaterial => GetVisualMaterial("Axis", new Color(0.55f, 0.55f, 0.55f));  // 灰色，显示旋转轴
 
         static Material GetVisualMaterial(string key, Color color)
         {
@@ -234,7 +246,7 @@ namespace MiniChicken.Robot
         /// <summary>内置默认关节规格（prefab 缺失时的回退）。</summary>
         public static JointSpec[] GetBuiltinSpecs()
         {
-            return new JointSpec[]
+            var specs = new JointSpec[]
             {
                 // 左腿 0..5
                 // 范围放宽：膝关节允许负角（反关节/鸟形后曲），髋/踝留出反向余量
@@ -250,6 +262,8 @@ namespace MiniChicken.Robot
                 new JointSpec("R_Knee",      -120f, 120f,  10f, 180f, 8.0f, 120f),
                 new JointSpec("R_AnklePitch", -90f,  90f, -10f,  60f, 2.0f,  40f),
             };
+            foreach (var s in specs) s.BaseAnchor = GetJointBaseAnchor(s.Name);
+            return specs;
         }
 
         /// <summary>从 Prefab 资产读取关节规格（限位、PD 增益、力矩、目标角、默认段中心）。</summary>
@@ -270,6 +284,16 @@ namespace MiniChicken.Robot
                 var spec = new JointSpec(JointOrder[i], d.lowerLimit, d.upperLimit, d.target,
                                          d.stiffness, d.damping, d.forceLimit);
                 spec.BaseCenter = ColliderCenter(ab);
+                spec.BaseAnchor = t.localPosition;  // Prefab 偏移恒为零，localPosition 即设计锚点
+                if (ab.GetComponent<Collider>() is CapsuleCollider pcc)
+                {
+                    spec.CapsuleShape = true;
+                    spec.BaseSize = new Vector3(pcc.radius, pcc.height, 0f);
+                }
+                else if (ab.GetComponent<Collider>() is BoxCollider pbc)
+                {
+                    spec.BaseSize = pbc.size;
+                }
                 spec.LinkOffset = Vector3.zero;
                 specs[i] = spec;
             }
@@ -333,6 +357,7 @@ namespace MiniChicken.Robot
                     {
                         s.RestDeg = s.Clamp(entry.restDeg);
                         s.LinkOffset = entry.linkOffset;
+                        s.LengthOffset = entry.lengthOffset;
                         break;
                     }
                 }
@@ -347,12 +372,14 @@ namespace MiniChicken.Robot
 
         /// <summary>
         /// 从机器人 Transform（场景实例或 Prefab 资产）反推当前姿态：
-        /// 关节静息角由 localRotation 相对旋转轴解算；段偏移 = 当前碰撞体中心 − 设计中心（取自 Prefab）。
+        /// 关节静息角由 localRotation 相对旋转轴解算；
+        /// 段长度增量 = 当前碰撞体尺寸 − 设计尺寸；
+        /// 段偏移 = 当前关节锚点位置 − 设计锚点位置 − 父段长度增量（偏移作用在骨骼 transform 上）。
         /// </summary>
         public static PoseData CapturePose(Transform root)
         {
             if (root == null) return null;
-            var specs = GetSpecs();  // 提供各关节的 Prefab 设计中心 BaseCenter
+            var specs = GetSpecs();  // 提供各关节的 Prefab 设计锚点/尺寸
             var entries = new List<PoseEntry>(JointOrder.Length);
             for (int i = 0; i < JointOrder.Length; i++)
             {
@@ -360,13 +387,21 @@ namespace MiniChicken.Robot
                 var t = FindDeep(root, name);
                 if (t == null) continue;
                 float angle = SignedAngle(t.localRotation, GetJointAxis(name));
-                var ab = t.GetComponent<ArticulationBody>();
-                Vector3 baseC = (i < specs.Length) ? specs[i].BaseCenter : Vector3.zero;
+                Vector3 baseAnchor = (i < specs.Length) ? specs[i].BaseAnchor : Vector3.zero;
+                float dLen = (i < specs.Length) ? ReadLengthDelta(t, specs[i]) : 0f;
+
+                // 父段长度变化会带动本关节锚点沿骨轴（-Y）平移，反推 LinkOffset 时需扣除
+                Vector3 parentShift = Vector3.zero;
+                int parent = ParentJointIndex(i);
+                if (parent >= 0)
+                    parentShift = new Vector3(0f, -ReadLengthDelta(FindDeep(root, JointOrder[parent]), specs[parent]), 0f);
+
                 entries.Add(new PoseEntry
                 {
                     name = name,
                     restDeg = Mathf.Round(angle * 100f) / 100f,
-                    linkOffset = ColliderCenter(ab) - baseC
+                    linkOffset = t.localPosition - baseAnchor - parentShift,
+                    lengthOffset = dLen
                 });
             }
             return new PoseData
@@ -374,6 +409,33 @@ namespace MiniChicken.Robot
                 standHeight = root.position.y - 0.01f,
                 joints = entries.ToArray()
             };
+        }
+
+        /// <summary>关节在腿链中的父关节索引；腿根（HipYaw，i%5==0）的父为躯干，返回 -1。</summary>
+        static int ParentJointIndex(int i)
+        {
+            if (i <= 0 || i >= JointOrder.Length || i % 5 == 0) return -1;
+            return i - 1;
+        }
+
+        /// <summary>从关节碰撞体当前尺寸反推段长度增量（腿段沿 Y，脚掌沿 Z）。</summary>
+        static float ReadLengthDelta(Transform jointT, JointSpec spec)
+        {
+            if (jointT == null || spec.BaseSize == Vector3.zero) return 0f;
+            var col = jointT.GetComponent<Collider>();
+            if (col is CapsuleCollider cc) return cc.height - spec.BaseSize.y;
+            if (col is BoxCollider bc)
+                return spec.Name.Contains("AnklePitch")
+                    ? bc.size.z - spec.BaseSize.z
+                    : bc.size.y - spec.BaseSize.y;
+            return 0f;
+        }
+
+        /// <summary>段长度增量的有效值（限制碰撞体尺寸不低于最小值，防止负尺寸）。</summary>
+        static float ClampedLengthDelta(JointSpec spec)
+        {
+            float baseLen = spec.Name.Contains("AnklePitch") ? spec.BaseSize.z : spec.BaseSize.y;
+            return Mathf.Max(spec.LengthOffset, 0.03f - baseLen);
         }
 
         /// <summary>解算绕指定轴的有符号旋转角（度）。</summary>
@@ -386,16 +448,20 @@ namespace MiniChicken.Robot
             return ang;
         }
 
-        /// <summary>按矢状面近似计算给定静息角下的站立高度（用于自动贴地）。</summary>
-        public static float ComputePoseStandHeight(float[] restDeg)
+        /// <summary>按矢状面近似计算给定静息角与段长度下的站立高度（用于自动贴地）。lengths 可为 null（视为零增量）。</summary>
+        public static float ComputePoseStandHeight(float[] restDeg, float[] lengths = null)
         {
             const float d2r = Mathf.PI / 180f;
             float hipPitch = restDeg[2] * d2r;
             float knee = restDeg[3] * d2r;
             float hipRoll = restDeg[1] * d2r;
-            float leg = LinkYawToRoll + LinkRollToPitch
-                      + ThighLength * Mathf.Cos(hipPitch)
-                      + ShinLength * Mathf.Cos(hipPitch + knee);
+            float yawLen = lengths != null && lengths.Length > 0 ? lengths[0] : 0f;   // 髋偏航段增量
+            float rollLen = lengths != null && lengths.Length > 1 ? lengths[1] : 0f;  // 髋侧摆段增量
+            float thigh = ThighLength + (lengths != null && lengths.Length > 2 ? lengths[2] : 0f);
+            float shin = ShinLength + (lengths != null && lengths.Length > 3 ? lengths[3] : 0f);
+            float leg = LinkYawToRoll + yawLen + LinkRollToPitch + rollLen
+                      + thigh * Mathf.Cos(hipPitch)
+                      + shin * Mathf.Cos(hipPitch + knee);
             return HipDrop + leg * Mathf.Cos(hipRoll) + FootThickness;
         }
 
@@ -408,7 +474,22 @@ namespace MiniChicken.Robot
             return MirrorAxis(axis, jointName.StartsWith("R_"));
         }
 
-        /// <summary>把 specs 中的静息角 + 段偏移应用到机器人（关节角度、段中心、贴地高度）。</summary>
+        /// <summary>返回关节锚点的设计位置（父骨骼局部空间，与 BuildLeg/AddRevolute 一致）。</summary>
+        public static Vector3 GetJointBaseAnchor(string jointName)
+        {
+            if (jointName.Contains("HipYaw"))
+            {
+                float sideX = jointName.StartsWith("R_") ? 1f : -1f;
+                return new Vector3(sideX * HipHalfWidth, -HipDrop, 0f);
+            }
+            if (jointName.Contains("HipRoll")) return new Vector3(0f, -LinkYawToRoll, 0f);
+            if (jointName.Contains("HipPitch")) return new Vector3(0f, -LinkRollToPitch, 0f);
+            if (jointName.Contains("Knee")) return new Vector3(0f, -ThighLength, 0f);
+            if (jointName.Contains("AnklePitch")) return new Vector3(0f, -ShinLength, 0f);
+            return Vector3.zero;
+        }
+
+        /// <summary>把 specs 中的静息角 + 段偏移/长度应用到机器人（锚点、角度、段几何、贴地高度）。</summary>
         public static void ApplyStaticPose(RobotRig rig)
         {
             if (rig == null || rig.Root == null) return;
@@ -416,18 +497,82 @@ namespace MiniChicken.Robot
             {
                 var ab = rig.Joints[i];
                 if (ab == null) continue;
-                ab.transform.localRotation =
-                    Quaternion.AngleAxis(rig.Specs[i].RestDeg, GetJointAxis(rig.Specs[i].Name));
+                var spec = rig.Specs[i];
 
-                // 段中心 = 默认中心 + 可调偏移（碰撞体与可视一致）
-                var segCenter = rig.Specs[i].BaseCenter + rig.Specs[i].LinkOffset;
+                // 锚点 = 设计锚点 + 本关节偏移 + 父段长度增量（父段变长时本关节沿骨轴 -Y 平移）
+                Vector3 parentShift = Vector3.zero;
+                int parent = ParentJointIndex(i);
+                if (parent >= 0)
+                    parentShift = new Vector3(0f, -ClampedLengthDelta(rig.Specs[parent]), 0f);
+                ab.transform.localPosition = spec.BaseAnchor + spec.LinkOffset + parentShift;
+                ab.transform.localRotation =
+                    Quaternion.AngleAxis(spec.RestDeg, GetJointAxis(spec.Name));
+
+                // 段长度：碰撞体与可视沿骨轴延伸（腿段沿 Y，脚掌沿 Z），中心随之平移
+                bool stretchZ = spec.Name.Contains("AnklePitch");
+                float dLen = ClampedLengthDelta(spec);
+                Vector3 size = spec.BaseSize;
+                Vector3 center = spec.BaseCenter;
+                if (stretchZ) { size.z += dLen; center.z += dLen * 0.5f; }
+                else { size.y += dLen; center.y -= dLen * 0.5f; }
+
                 var col = ab.GetComponent<Collider>();
-                if (col is BoxCollider bc) bc.center = segCenter;
-                else if (col is CapsuleCollider cc) cc.center = segCenter;
+                if (col is BoxCollider bc) { bc.center = center; bc.size = size; }
+                else if (col is CapsuleCollider cc) { cc.center = center; cc.height = size.y; }
                 var vis = ab.transform.Find(ab.name + "_Visual");
-                if (vis != null) vis.localPosition = segCenter;
+                if (vis != null)
+                {
+                    vis.localPosition = center;
+                    vis.localScale = spec.CapsuleShape
+                        ? new Vector3(size.x * 2f, size.y, size.x * 2f)
+                        : size;
+                }
+
+                // 电机参考圆柱位于关节转轴锚点（关节局部原点），沿转轴方向摆放；
+                // 不随段中心平移，否则会跑到骨骼中间而非转轴处。
+                var axis = ab.transform.Find(ab.name + "_Axis");
+                if (axis != null)
+                {
+                    axis.localPosition = Vector3.zero;
+                    axis.localRotation = Quaternion.FromToRotation(Vector3.up, GetJointAxis(spec.Name));
+                }
             }
+            // 自动贴地校正：脚底实际位置受段长度/偏置等影响，与近似公式有偏差。
+            // 按脚掌碰撞体实测最低角点设置根高度，使脚底位于地面上方 1 cm，避免陷入地面。
+            float footBottomLocalY = GetFootBottomLocalY(rig);
+            rig.StandHeight = Mathf.Max(0.1f, -footBottomLocalY);
             rig.Root.transform.localPosition = new Vector3(0f, rig.StandHeight + 0.01f, 0f);
+        }
+
+        /// <summary>
+        /// 计算脚底最低点相对根物体局部空间的 Y 值。
+        /// 遍历双脚碰撞体（盒体 8 个角点）换算到根局部空间取最小 Y；
+        /// 根物体无旋转，其平移不影响该值。无可用脚数据时返回 -StandHeight（保持原高度）。
+        /// </summary>
+        static float GetFootBottomLocalY(RobotRig rig)
+        {
+            if (rig?.Root == null || rig.Feet == null) return -(rig?.StandHeight ?? 0f);
+            float minY = float.MaxValue;
+            bool any = false;
+            var rootInv = rig.Root.transform.worldToLocalMatrix;
+            foreach (var foot in rig.Feet)
+            {
+                if (foot == null) continue;
+                var bc = foot.GetComponent<BoxCollider>();
+                if (bc == null) continue;
+                var footMat = foot.localToWorldMatrix;
+                Vector3 half = bc.size * 0.5f;
+                for (int ix = -1; ix <= 1; ix += 2)
+                for (int iy = -1; iy <= 1; iy += 2)
+                for (int iz = -1; iz <= 1; iz += 2)
+                {
+                    Vector3 cornerLocal = bc.center + new Vector3(ix * half.x, iy * half.y, iz * half.z);
+                    Vector3 rootLocal = rootInv.MultiplyPoint3x4(footMat.MultiplyPoint3x4(cornerLocal));
+                    minY = Mathf.Min(minY, rootLocal.y);
+                    any = true;
+                }
+            }
+            return any ? minY : -rig.StandHeight;
         }
 
         /// <summary>
@@ -494,6 +639,7 @@ namespace MiniChicken.Robot
             BuildLeg(rootGO.transform, rootBody, specs, 5, rig, footIndex: 1, isRight: true);
 
             ApplyStaticPose(rig);
+            EnsureAxisVisuals(rig); // 补上灰色轴指示圆柱（纯视觉）
             return rig;
         }
 
@@ -534,7 +680,8 @@ namespace MiniChicken.Robot
             if (lFoot == null || rFoot == null) { DestroyObj(inst); return BuildProcedural(parent); }
             rig.Feet[0] = lFoot; rig.Feet[1] = rFoot;
 
-            ApplyStaticPose(rig);   // 烘焙：collider.center = BaseCenter + LinkOffset，并设角度与贴地
+            ApplyStaticPose(rig);   // 烘焙：锚点 = BaseAnchor + LinkOffset，模型保持设计中心，并设角度与贴地
+            EnsureAxisVisuals(rig); // 补上灰色轴指示圆柱（纯视觉）
             return rig;
         }
 
@@ -564,6 +711,7 @@ namespace MiniChicken.Robot
             for (int i = 0; i < rig.Specs.Length && i < builtin.Length; i++)
             {
                 rig.Specs[i].LinkOffset = Vector3.zero;
+                rig.Specs[i].LengthOffset = 0f;
                 rig.Specs[i].RestDeg = builtin[i].RestDeg;
                 var ab = rig.Joints[i];
                 if (ab != null)
@@ -644,12 +792,31 @@ namespace MiniChicken.Robot
                 if (t == null) return null;
                 rig.Joints[i] = t.GetComponent<ArticulationBody>();
                 if (rig.Joints[i] == null) return null;
-                // 反推默认中心：当前碰撞体中心 − 已加载偏移
+                // 反推默认中心：优先使用 Prefab 设计中心（单一真相源）。
+                // 仅当 Prefab 未提供设计中心（内置规格回退，BaseCenter 为零）时，
+                // 才用当前碰撞体中心反推（新语义下模型局部中心恒等于设计中心）；
+                // 否则场景实例与 BipedPose.json 不一致时，会把残差烤进 BaseCenter，
+                // 导致后续 ApplyStaticPose 将关节段吸附到错误位置。
                 var col = rig.Joints[i].GetComponent<Collider>();
-                Vector3 cur = Vector3.zero;
-                if (col is BoxCollider box) cur = box.center;
-                else if (col is CapsuleCollider cap) cur = cap.center;
-                specs[i].BaseCenter = cur - specs[i].LinkOffset;
+                if (specs[i].BaseCenter == Vector3.zero)
+                {
+                    Vector3 cur = Vector3.zero;
+                    if (col is BoxCollider box) cur = box.center;
+                    else if (col is CapsuleCollider cap) cur = cap.center;
+                    specs[i].BaseCenter = cur;
+                }
+                if (specs[i].BaseSize == Vector3.zero)
+                {
+                    if (col is CapsuleCollider cc0)
+                    {
+                        specs[i].CapsuleShape = true;
+                        specs[i].BaseSize = new Vector3(cc0.radius, cc0.height, 0f);
+                    }
+                    else if (col is BoxCollider bc0)
+                    {
+                        specs[i].BaseSize = bc0.size;
+                    }
+                }
             }
 
             Transform lFoot = FindDeep(root, "L_AnklePitch");
@@ -769,9 +936,12 @@ namespace MiniChicken.Robot
             drive.targetVelocity = 0f;
             ab.xDrive = drive;
 
-            // 段中心 = 默认中心 + 可调偏移（碰撞体与可视一致）
+            // 段模型中心保持设计值；锚点偏移与长度增量由 ApplyStaticPose 应用
             spec.BaseCenter = colCenter;
-            var segCenter = colCenter + spec.LinkOffset;
+            spec.BaseAnchor = anchorLocal;
+            spec.CapsuleShape = useCapsule;
+            spec.BaseSize = useCapsule ? new Vector3(capRadius, capHeight, 0f) : colSize;
+            var segCenter = colCenter;
 
             Collider col;
             Material visMat = VisualMaterialFor(spec);
@@ -802,6 +972,40 @@ namespace MiniChicken.Robot
 
             outT = go.transform;
             return ab;
+        }
+
+        /// <summary>
+        /// 在关节处添加一根灰色细圆柱体，沿该关节的局部旋转轴方向，方便查看轴向。
+        /// 圆柱体为纯视觉（仅 MeshFilter + MeshRenderer，无碰撞体），随关节一起旋转且始终与轴对齐。
+        /// </summary>
+        static void AddAxisVisual(GameObject parent, Vector3 axisLocal)
+        {
+            if (axisLocal == Vector3.zero) return;
+            var axis = new GameObject(parent.name + "_Axis");
+            axis.transform.SetParent(parent.transform, false);
+            axis.transform.localRotation = Quaternion.FromToRotation(Vector3.up, axisLocal.normalized);
+            const float len = 0.09f;   // 圆柱长度（米）
+            const float rad = 0.03f;   // 圆柱半径（米）
+            axis.AddComponent<MeshFilter>().sharedMesh = GetPrimitiveMesh(PrimitiveType.Cylinder);
+            axis.AddComponent<MeshRenderer>().sharedMaterial = AxisMaterial;
+            // Unity 圆柱默认沿 Y 轴、高 1、半径 0.5；按目标尺寸缩放
+            axis.transform.localScale = new Vector3(rad * 2f, len, rad * 2f);
+        }
+
+        /// <summary>
+        /// 为每个关节补上灰色轴指示圆柱（若已存在则跳过，避免重复）。
+        /// 放在构建后的统一入口，确保无论 Prefab 新旧都能显示轴向。
+        /// </summary>
+        static void EnsureAxisVisuals(RobotRig rig)
+        {
+            if (rig == null) return;
+            for (int i = 0; i < rig.Specs.Length && i < rig.Joints.Length; i++)
+            {
+                var ab = rig.Joints[i];
+                if (ab == null) continue;
+                if (ab.transform.Find(ab.name + "_Axis") != null) continue;
+                AddAxisVisual(ab.gameObject, GetJointAxis(rig.Specs[i].Name));
+            }
         }
 
         static Transform FindDeep(Transform t, string name)
