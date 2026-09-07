@@ -803,12 +803,20 @@ namespace MiniChicken.EditorTools
                     string clip;
                     lock (s_log) clip = s_log.ToString();
                     EditorGUIUtility.systemCopyBuffer = clip;
-                    Log("[UI] 已复制全部日志到剪贴板。");
+                    Log("[UI] 已复制日志到剪贴板。（注意：内存日志超过上限后较早内容会被丢弃；完整输出请查看 Logs/ 下的日志文件）");
                 }
                 if (GUILayout.Button("清空显示", GUILayout.Width(80)))
                 {
                     lock (s_log) s_log.Clear();
                     Repaint();
+                }
+                if (GUILayout.Button(new GUIContent("打开日志文件夹",
+                    "直接打开 Logs/ 目录（含完整训练/TensorBoard 日志，不受内存日志上限影响）"),
+                    GUILayout.Width(110)))
+                {
+                    Directory.CreateDirectory(LogsDir);
+                    // RevealInFinder 只会在父窗口中选中 Logs 文件夹，这里用系统 Shell 直接打开 Logs 本身
+                    Process.Start(new ProcessStartInfo(LogsDir) { UseShellExecute = true });
                 }
             }
 
