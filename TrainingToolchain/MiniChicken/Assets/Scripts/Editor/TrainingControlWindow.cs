@@ -70,6 +70,9 @@ namespace MiniChicken.EditorTools
         static string s_setupTitle;
         static string s_setupFailHint;
         static Process s_cudaProc;    // CUDA 环境测试：一次性管道读取（不阻塞后台训练）
+        static Process s_trainerProc; // 训练进程：仅用于读取 ExitCode（Domain Reload 后可能为 null，退化为按 PID 检测）
+        static bool s_trainWatch;     // 是否监控训练进程意外退出（启动训练后置 true，停止/结束后 false）
+        static double s_trainExitAt;  // 首次检测到训练进程退出的时刻（>0 表示等日志落盘后再收尾）
 
         // ------------------------------------------------------------------
         // Inspector 字段
@@ -94,10 +97,15 @@ namespace MiniChicken.EditorTools
         void OnEnable()
         {
             EditorApplication.update += Tick;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
             SeedLog();
         }
 
-        void OnDisable() => EditorApplication.update -= Tick;   // 进程与日志仍在后台继续
+        void OnDisable()
+        {
+            EditorApplication.update -= Tick;                       // 进程与日志仍在后台继续
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+        }
 
         // ------------------------------------------------------------------
         // 日志
@@ -197,29 +205,40 @@ namespace MiniChicken.EditorTools
             try { File.Delete(logFile); } catch { }
             SessionState.SetFloat(pidKey == TrainerPidKey ? TrainOffKey : TbOffKey, 0f);
 
-            if (IsWin)
+            try
             {
-                // cmd /c ""python" args > "log" 2>&1"  —— cmd 会剥掉首尾引号，还原出内部命令
-                string inner = $"\"{VenvPython}\" {pythonArgs} > \"{logFile}\" 2>&1";
-                var psi = new ProcessStartInfo
+                Process p;
+                if (IsWin)
                 {
-                    FileName = "cmd.exe",
-                    Arguments = "/c \"" + inner + "\"",
-                    WorkingDirectory = ProjectRoot,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
-                psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-                var p = Process.Start(psi);
+                    // cmd /c ""python" args > "log" 2>&1"  —— cmd 会剥掉首尾引号，还原出内部命令
+                    string inner = $"\"{VenvPython}\" {pythonArgs} > \"{logFile}\" 2>&1";
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = "/c \"" + inner + "\"",
+                        WorkingDirectory = ProjectRoot,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                    };
+                    psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+                    psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+                    p = Process.Start(psi);
+                }
+                else
+                {
+                    p = StartPipe(VenvPython, pythonArgs);
+                }
+                if (pidKey == TrainerPidKey) s_trainerProc = p;
                 SessionState.SetInt(pidKey, p.Id);
+                Log($"{tag} ▶ 已启动 (PID {p.Id})，输出写入 {Path.GetFileName(logFile)}");
             }
-            else
+            catch (Exception e)
             {
-                var p = StartPipe(VenvPython, pythonArgs);
-                SessionState.SetInt(pidKey, p.Id);
+                SessionState.SetInt(pidKey, 0);
+                if (pidKey == TrainerPidKey) { s_trainerProc = null; s_trainWatch = false; s_trainExitAt = 0; s_autoPlayPending = false; }
+                Log($"{tag} ✗ 启动失败: {e.Message}");
+                Log($"{tag} 提示：检查 venv 是否可用、配置路径是否正确（完整输出见 {Path.GetFileName(logFile)}）。");
             }
-            Log($"{tag} ▶ 已启动 (PID {SessionState.GetInt(pidKey, 0)})，输出写入 {Path.GetFileName(logFile)}");
         }
 
         static Process GetTracked(string pidKey)
@@ -253,6 +272,7 @@ namespace MiniChicken.EditorTools
             {
                 try { GetTracked(pidKey)?.Kill(); } catch { }
             }
+            if (pidKey == TrainerPidKey) { s_trainerProc = null; s_trainWatch = false; s_trainExitAt = 0; }
             SessionState.SetInt(pidKey, 0);
             Log($"{tag} ■ 已停止。");
         }
@@ -294,6 +314,9 @@ namespace MiniChicken.EditorTools
         // ------------------------------------------------------------------
         void Tick()
         {
+            // 训练进程存活监控：Python 端一旦退出（报错/崩溃/跑完），立刻停掉 Unity，避免空跑
+            WatchTrainerExit();
+
             // 推进安装队列
             if (s_setupProc != null && s_setupProc.HasExited)
             {
@@ -386,6 +409,151 @@ namespace MiniChicken.EditorTools
         }
 
         // ------------------------------------------------------------------
+        // 训练进程存活监控
+        // ------------------------------------------------------------------
+        // Python 侧（mlagents-learn）可能因环境/依赖/端口等问题直接退出，若 Unity 已进入 Play，
+        // 编辑器侧会一直等待而空跑。这里持续监控训练进程：
+        // - 进程退出且 Unity 在 Play → 自动退出 Play（正常结束 exit=0 也退出，属预期行为）；
+        // - 进程退出且未就绪 → 取消「自动进入 Play」，避免后续误触发；
+        // - 退出后从日志尾部提取错误摘要，直接显示在面板上。
+        // 退出后延迟 0.5s 再收尾，确保日志已完全落盘（traceback 能读到）。
+        void WatchTrainerExit()
+        {
+            // Domain Reload 会丢掉 static 状态：只要 PID 还在且进程存活，就重新接管监控
+            if (!s_trainWatch && SessionState.GetInt(TrainerPidKey, 0) != 0 && IsTrackedAlive(TrainerPidKey))
+            {
+                s_trainWatch = true;
+                s_trainExitAt = 0;
+            }
+            if (!s_trainWatch) return;
+
+            int pid = SessionState.GetInt(TrainerPidKey, 0);
+            if (pid == 0)   // 已被停止
+            {
+                s_trainWatch = false;
+                s_trainExitAt = 0;
+                s_autoPlayPending = false;
+                return;
+            }
+
+            bool exited;
+            int code = -1;
+            try
+            {
+                var p = s_trainerProc != null && s_trainerProc.Id == pid ? s_trainerProc : Process.GetProcessById(pid);
+                exited = p.HasExited;
+                if (exited) { try { code = p.ExitCode; } catch { } }
+            }
+            catch (ArgumentException) { exited = true; }        // 进程已不存在（PID 失效）
+            catch (InvalidOperationException) { exited = true; }
+            catch { return; }
+
+            if (!exited) { s_trainExitAt = 0; return; }
+
+            double now = EditorApplication.timeSinceStartup;
+            if (s_trainExitAt <= 0)
+            {
+                s_trainExitAt = now;
+                LogRaw(Tail(TrainerLog, TrainOffKey));   // 先冲刷一次日志
+                return;
+            }
+            if (now - s_trainExitAt < 0.5) return;       // 等日志落盘
+
+            LogRaw(Tail(TrainerLog, TrainOffKey));       // 再冲刷一次，确保拿到完整 traceback
+            ReportTrainerExit(code);
+        }
+
+        void ReportTrainerExit(int code)
+        {
+            s_trainWatch = false;
+            s_trainExitAt = 0;
+            s_autoPlayPending = false;
+            s_trainerProc = null;
+            SessionState.SetInt(TrainerPidKey, 0);
+
+            bool ok = code == 0;
+            Log(ok
+                ? "[Train] ✓ 训练进程已结束（exit=0）：训练完成，退出 Play。"
+                : $"[Train] ✗ 训练进程异常退出（exit={code}）：已自动退出 Play，避免空跑。");
+            if (!ok)
+            {
+                var errs = ExtractErrorLines(TrainerLog, 30);
+                if (errs.Count == 0)
+                    Log("[Train] 未能从日志中定位错误行，请点击「打开日志文件夹」查看 Logs/mlagents_train.log。");
+                else
+                {
+                    Log("[Train] —— 错误摘要（完整内容见 Logs/mlagents_train.log）——");
+                    foreach (var l in errs) Log("[Train] " + l);
+                }
+            }
+
+            if (EditorApplication.isPlaying)
+            {
+                Log("[Train] 正在退出 Play 模式…");
+                EditorApplication.delayCall += () =>
+                {
+                    if (EditorApplication.isPlaying) EditorApplication.isPlaying = false;
+                };
+            }
+            ShowNotification(new GUIContent(ok ? "训练完成，已退出 Play" : "训练进程异常退出，已停止 Play"));
+        }
+
+        /// <summary>从日志尾部提取错误信息：优先整段 Traceback，否则取最近的错误关键字行。</summary>
+        static List<string> ExtractErrorLines(string path, int maxLines)
+        {
+            var res = new List<string>();
+            try
+            {
+                if (!File.Exists(path)) return res;
+                string tail;
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    long n = Math.Min(65536, fs.Length);
+                    fs.Seek(-n, SeekOrigin.End);
+                    var buf = new byte[n];
+                    int read = fs.Read(buf, 0, buf.Length);
+                    tail = Encoding.UTF8.GetString(buf, 0, read);
+                }
+                var lines = tail.Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+
+                int tb = lines.FindLastIndex(l => l.IndexOf("Traceback (most recent call last)", StringComparison.Ordinal) >= 0);
+                if (tb >= 0)   // 有 traceback：整段输出，最有用
+                {
+                    for (int i = tb; i < lines.Count && res.Count < maxLines; i++)
+                    {
+                        res.Add(lines[i]);
+                        // traceback 块结束：出现非空且非缩进的行（且已输出若干行）
+                        if (i > tb + 1 && lines[i].Length > 0 && !char.IsWhiteSpace(lines[i][0])) break;
+                    }
+                    return res;
+                }
+
+                var keys = new[] { "Error", "error", "Exception", "Fatal", "FATAL", "failed", "Traceback" };
+                for (int i = lines.Count - 1; i >= 0 && res.Count < maxLines; i--)
+                {
+                    var l = lines[i];
+                    if (string.IsNullOrWhiteSpace(l)) continue;
+                    if (keys.Any(k => l.IndexOf(k, StringComparison.Ordinal) >= 0)) res.Add(l);
+                }
+                res.Reverse();
+            }
+            catch { }
+            return res;
+        }
+
+        /// <summary>进入 Play 前确认训练进程仍在运行，否则立即退出，防止手动 Play 时训练已死。</summary>
+        void OnPlayModeChanged(PlayModeStateChange st)
+        {
+            if (st != PlayModeStateChange.EnteredPlayMode) return;
+            if (!s_trainWatch || IsTrackedAlive(TrainerPidKey)) return;
+            Log("[Train] ✗ 训练进程未在运行，已退出 Play 模式（避免空跑）。");
+            EditorApplication.delayCall += () =>
+            {
+                if (EditorApplication.isPlaying) EditorApplication.isPlaying = false;
+            };
+        }
+
+        // ------------------------------------------------------------------
         // 1. 准备 Python 环境
         // ------------------------------------------------------------------
         /// <summary>把「python 解释器」字段解析为 可执行文件 + 前置参数（支持 py -3.10 与带引号的路径）。</summary>
@@ -411,7 +579,7 @@ namespace MiniChicken.EditorTools
         // GPU 检测：根据显卡型号选择对应的 torch / CUDA 版本
         // - RTX 40/30/20 及更早（Ampere/Turing 及以前，CUDA 11.x 即可）→ torch 2.0.1+cu118
         //   （本项目验证过的组合，onnx/protobuf 等其余依赖维持原锁版本）
-        // - RTX 50 系（Blackwell，计算能力 12.x，需 CUDA 12.4+）→ torch 2.6.0+cu124
+        // - RTX 50 系（Blackwell，计算能力 12.x，需 CUDA 12.4+）→ torch 2.11.0+cu128
         //   （cu118 不含 sm_120 目标，无法在 RTX 50 上运行；此路径会连带升级 onnx/protobuf）
         // ------------------------------------------------------------------
         static string DetectGpuName()
@@ -443,7 +611,7 @@ namespace MiniChicken.EditorTools
         {
             string gpu = DetectGpuName();
             if (IsBlackwell(gpu))
-                return ("torch==2.6.0+cu124", "https://download.pytorch.org/whl/cu124",
+                return ("torch==2.11.0+cu128", "https://download.pytorch.org/whl/cu128",
                         string.IsNullOrEmpty(gpu) ? "Blackwell (RTX 50)" : gpu.Trim(), true);
             return ("torch==2.0.1+cu118", "https://download.pytorch.org/whl/cu118",
                     string.IsNullOrEmpty(gpu) ? "未检测到 GPU（默认 CUDA 11.8）" : gpu.Trim(), false);
@@ -512,11 +680,11 @@ namespace MiniChicken.EditorTools
             var torch = SelectTorchForGpu();
             Log($"[Setup] 检测到 GPU: {torch.label} → 选用 {torch.torchVer}（源 {torch.indexUrl}）");
             if (torch.blackwell)
-                Log("[Setup] ⚠ RTX 50 系需 CUDA 12.4+，已切换到 torch 2.6+cu124；此路径会连带升级 onnx/protobuf，" +
+                Log("[Setup] ⚠ RTX 50 系需 CUDA 12.4+，已切换到 torch 2.11+cu128；此路径会连带升级 onnx/protobuf，" +
                     "若训练时 Unity↔Python 握手异常，可能需同步更新 ML-Agents 包的 protobuf 版本。");
 
             // cloudpickle 为 mlagents 训练链必需；gym/pettingzoo 仅 gym 兼容层需要，Unity 训练可不装
-            // RTX 50（Blackwell）路径下 torch 2.6 依赖 onnxscript，需相应放开 onnx/protobuf 版本
+            // RTX 50（Blackwell）路径下 torch 2.11 依赖 onnxscript，需相应放开 onnx/protobuf 版本
             string onnxSpec = torch.blackwell ? "\"onnx==1.17.0\"" : "\"onnx==1.12.0\"";
             string protobufSpec = torch.blackwell ? "\"protobuf>=3.20.2,<4\"" : "\"protobuf<3.20,>=3.6\"";
             string deps = "grpcio \"h5py>=2.9.0\" Pillow " + protobufSpec + " pyyaml \"cloudpickle==2.2.1\" " +
@@ -525,7 +693,7 @@ namespace MiniChicken.EditorTools
             if (IsWin) deps += " \"pypiwin32==223\"";
             q.Enqueue(new Cmd
             {
-                Title = "安装其余依赖（" + (torch.blackwell ? "torch cu124 / RTX 50" : "torch cu118 / GPU") + "）",
+                Title = "安装其余依赖（" + (torch.blackwell ? "torch cu128 / RTX 50" : "torch cu118 / GPU") + "）",
                 FileName = VenvPython,
                 Args = "-m pip install --extra-index-url " + torch.indexUrl + " " + deps,
             });
@@ -612,7 +780,12 @@ namespace MiniChicken.EditorTools
             else if (force) args += " --force";
 
             Log($"[Train] ▶ 启动训练{(resume ? "（继续）" : "")}: run-id={id} | 配置={configPath} | 端口={basePort}");
+            s_trainWatch = false;
+            s_trainExitAt = 0;
+            s_trainerProc = null;
             StartLongRunning(TrainerPidKey, TrainerLog, args, "[Train]");
+            if (SessionState.GetInt(TrainerPidKey, 0) == 0) return;   // 启动失败，已记录原因
+            s_trainWatch = true;   // 开始监控：Python 端退出即停止 Unity，避免空跑
 
             s_maxSteps = ParseMaxSteps(Path.Combine(ProjectRoot, configPath));
             s_etaStep = 0;
@@ -655,6 +828,8 @@ namespace MiniChicken.EditorTools
         void StopTraining()
         {
             s_autoPlayPending = false;
+            s_trainWatch = false;      // 主动停止，不触发「异常退出」告警
+            s_trainExitAt = 0;
             StopTracked(TrainerPidKey, "[Train]");
             if (EditorApplication.isPlaying) EditorApplication.isPlaying = false;
         }
@@ -831,7 +1006,8 @@ namespace MiniChicken.EditorTools
 
             EditorGUILayout.HelpBox(
                 "训练器输出写入 Logs/mlagents_train.log，跨 Play / Domain Reload 不中断、不阻塞；" +
-                "停止训练用 taskkill 终止整棵进程树。关闭本窗口不影响后台训练，重开窗口自动恢复状态与日志。",
+                "停止训练用 taskkill 终止整棵进程树。关闭本窗口不影响后台训练，重开窗口自动恢复状态与日志。\n" +
+                "训练进程一旦退出（报错/崩溃/跑完），会自动退出 Play 并在面板打印错误摘要，避免 Unity 空跑。",
                 MessageType.None);
         }
     }

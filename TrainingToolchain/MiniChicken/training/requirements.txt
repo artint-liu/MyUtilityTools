@@ -15,6 +15,18 @@
 #    onnxscript，而 onnxscript 又要求 protobuf>=4.25 / onnx>=1.17，会顶掉上面的
 #    3.19.6/1.12.0 并把 numpy 顶到 2.x，破坏整个环境）。torch 2.0.1 用旧导出器，无需 onnxscript。
 #    ⚠️ 切勿 `pip install onnxscript`。
+# 5) 如果因显卡（RTX 50 系等）必须用 cu128 而装了 torch >= 2.9（本环境为
+#    2.11.0+cu128）：torch 2.9 起 `torch.onnx.export` 默认走新的 dynamo 导出器，
+#    会 `import onnxscript` 并在保存 checkpoint 时抛
+#       ModuleNotFoundError: No module named 'onnxscript'
+#    该异常发生在 trainer 线程里，主线程仍在等 Unity —— 表现为训练「卡死」。
+#    新导出器还不支持 Barracuda 需要的 opset 9。
+#    修复（改的是 venv 里的 mlagents，不是靠装 onnxscript）：
+#       python training/patch_mlagents_onnx.py      # 幂等，可反复执行
+#       python training/patch_mlagents_onnx.py --check
+#    它做两件事：导出时强制 `dynamo=False`（走旧 TorchScript 导出器），
+#    以及把 ONNX 导出失败降级为日志错误，避免再次静默卡死。
+#    重建 venv 或重装 mlagents 后需重新执行。
 #
 # 方案 A（推荐，最干净）: 用 Python 3.9 建虚拟环境
 #       python -m venv venv
