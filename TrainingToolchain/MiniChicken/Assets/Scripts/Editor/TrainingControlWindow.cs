@@ -698,6 +698,20 @@ namespace MiniChicken.EditorTools
                 Args = "-m pip install --extra-index-url " + torch.indexUrl + " " + deps,
             });
 
+            // 装完依赖必须重打 mlagents 补丁：pip 重装会覆盖 site-packages 里的修改。
+            // torch>=2.9 默认走 dynamo 导出器，会在存 checkpoint 时抛
+            //   ModuleNotFoundError: No module named 'onnxscript'
+            // 且异常发生在 trainer 线程，主线程仍等 Unity —— 表现为训练卡死。
+            // 脚本幂等，torch 2.0.1（无 dynamo 参数）下自动跳过。
+            q.Enqueue(new Cmd
+            {
+                Title = "应用 mlagents ONNX 导出补丁",
+                FileName = VenvPython,
+                Args = "-u training/patch_mlagents_onnx.py",
+                FailHint = "补丁失败：确认 training/patch_mlagents_onnx.py 存在，或手动运行 " +
+                           "venv\\Scripts\\python.exe training\\patch_mlagents_onnx.py 查看输出。",
+            });
+
             s_setupQueue = q;
             Log("[Setup] 开始准备 Python 环境…（约需几分钟，实时显示 pip 输出）");
             RunNextSetup();

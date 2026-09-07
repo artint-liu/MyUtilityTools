@@ -15,7 +15,8 @@ hangs forever with no error on the console.
 
 Fix
 ---
-1. Force the legacy TorchScript exporter (``dynamo=False``).
+1. Force the legacy TorchScript exporter (``dynamo=False``) - skipped on torch
+   versions that have no ``dynamo`` parameter (e.g. 2.0.1, already legacy-only).
 2. Make ONNX export failures non-fatal, so a serialization problem can never
    silently freeze a long run again (the .pt checkpoint is already on disk).
 
@@ -57,10 +58,35 @@ def _find(pkg: str, rel_path: str) -> Path:
     raise FileNotFoundError(f"Could not find {pkg}/{rel_path} in {sys.path}")
 
 
+def _torch_needs_dynamo_patch() -> bool:
+    """True only when the installed torch accepts ``dynamo=`` (2.6+).
+
+    torch 2.0.1 (the non-Blackwell cu118 path) has no ``dynamo`` parameter, so
+    adding it would raise ``TypeError`` at export time.
+    """
+    try:
+        import inspect
+
+        from mlagents.torch_utils import torch
+    except Exception:
+        return False
+    try:
+        return "dynamo" in inspect.signature(torch.onnx.export).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def patch_model_serialization(apply: bool) -> List[str]:
     path = _find("mlagents", "trainers/torch_entities/model_serialization.py")
     src = _read(path)
     actions: List[str] = []
+
+    if "dynamo=False" in src:
+        return [f"{path}: already patched"]
+
+    if not _torch_needs_dynamo_patch():
+        # Legacy exporter is the only one available -> nothing to force.
+        return [f"{path}: torch exporter needs no patch"]
 
     if "import warnings" not in src:
         if not apply:
@@ -103,9 +129,7 @@ def patch_model_serialization(apply: bool) -> List[str]:
         "            )\n"
     )
 
-    if "dynamo=False" in src:
-        pass
-    elif old_call in src:
+    if old_call in src:
         if not apply:
             return [f"{path}: torch.onnx.export not patched"]
         src = src.replace(old_call, new_call, 1)
