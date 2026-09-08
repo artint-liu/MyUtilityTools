@@ -60,6 +60,19 @@ namespace MiniChicken.Training
 
         public RobotRig Rig => rig;
         public Vector3 Command => cmdVel;
+        public int EpisodeCount => episodeCount;
+
+        /// <summary>
+        /// 手动指令模式（验证场景用）：开启后不再随机采样速度指令，
+        /// 由外部（如键盘控制器）通过 SetCommand 持续设置。
+        /// </summary>
+        public bool manualCommand;
+
+        /// <summary>手动模式下设置速度指令：vx/vz 线速度 (m/s)，yawRate 偏航角速度 (rad/s)。</summary>
+        public void SetCommand(float vx, float vz, float yawRate)
+        {
+            if (manualCommand) cmdVel = new Vector3(vx, yawRate, vz);
+        }
 
         public override void Initialize()
         {
@@ -111,7 +124,8 @@ namespace MiniChicken.Training
             if (rigGO != null) Destroy(rigGO);
             BuildRig();
 
-            SampleCommands();
+            // 手动模式保留外部设置的指令；否则按课程随机采样
+            if (!manualCommand) SampleCommands();
 
             if (debugLog && (logEveryEpisodes <= 0 || episodeCount % logEveryEpisodes == 0))
                 Debug.Log($"[LocomotionAgent] Episode #{episodeCount} 开始 | cmd=(vx={cmdVel.x:F2},vz={cmdVel.z:F2},yaw={cmdVel.y:F2}) | Step={StepCount}");
@@ -192,7 +206,9 @@ namespace MiniChicken.Training
             for (int i = 0; i < NumJoints; i++)
             {
                 var spec = rig.Specs[i];
-                float target = spec.Clamp(spec.RestDeg + a[i] * spec.ActionScale);
+                // ActionScale 单位为弧度（0.5 rad ≈ ±28.6°），驱动目标为度需换算；
+                // 若按度直接相乘，动作幅度只有 ±0.5°，策略无法驱动关节（训练将永不收敛）
+                float target = spec.Clamp(spec.RestDeg + a[i] * spec.ActionScale * Mathf.Rad2Deg);
                 curAction[i] = a[i];
 
                 var ab = rig.Joints[i];

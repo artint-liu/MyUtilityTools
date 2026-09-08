@@ -855,7 +855,7 @@ namespace MiniChicken.EditorTools
         {
             if (IsTrackedAlive(TbPidKey)) { ShowNotification(new GUIContent("TensorBoard 已在运行")); return; }
             if (!File.Exists(VenvPython)) { Log("[TB] ✗ 未找到 venv，请先准备 Python 环境。"); return; }
-            const string entry = "import sys; from tensorboard.main import main; sys.argv[0]='tensorboard'; main()";
+            const string entry = "import sys; from tensorboard.main import run_main; sys.argv[0]='tensorboard'; run_main()";
             Log("[TB] ▶ 启动 TensorBoard: http://localhost:6006");
             StartLongRunning(TbPidKey, TbLog, $"-u -c \"{entry}\" --logdir results", "[TB]");
         }

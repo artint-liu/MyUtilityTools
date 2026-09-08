@@ -47,6 +47,8 @@ namespace MiniChicken.EditorTools
             light.type = LightType.Directional;
             light.intensity = 1.0f;
             light.shadows = LightShadows.Soft;
+            // 位置不影响平行光照明，放远避免图标干扰场景内物体选择
+            lightGO.transform.position = new Vector3(0f, 80f, -60f);
             lightGO.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
 
             // ---- 主相机 ----
@@ -134,7 +136,7 @@ namespace MiniChicken.EditorTools
         }
 
         /// <summary>向 TagManager 注册 Ground 层（若不存在）。</summary>
-        static void EnsureGroundLayer()
+        public static void EnsureGroundLayer()
         {
             if (LayerMask.NameToLayer(GroundLayer) >= 0) return;
 

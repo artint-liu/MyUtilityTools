@@ -32,6 +32,8 @@ __pycache__/
 results/
 summaries/
 *.onnx
+# 推理验证场景引用的模型需入库（负排除上面的全局 *.onnx）
+!Assets/Models/*.onnx
 .vsconfig
 
 # ML-Agents runtime generated (per-scene timer stats)
@@ -48,3 +50,9 @@ Assets/Resources/BillingMode.json.meta
 # OS
 .DS_Store
 Thumbs.db
+
+# IDE
+.vs/
+
+# MCP 验证截图（临时产物）
+Screenshots/

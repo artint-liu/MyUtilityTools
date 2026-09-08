@@ -508,6 +508,25 @@ namespace MiniChicken.Robot
                 ab.transform.localRotation =
                     Quaternion.AngleAxis(spec.RestDeg, GetJointAxis(spec.Name));
 
+                // 关键：ArticulationBody 的关节坐标（jointPosition）与 PD 驱动目标
+                // 都必须与摆好的姿态角一致。仅写 transform 在运行时不会更新关节坐标
+                // （实测出生时 jointPosition 恒为 0），若目标角又是姿态角，PD 会以
+                // 巨大误差力矩把关节从 0° 拽到姿态角 —— 机器人每次生成/每回合开始
+                // 都被甩飞，训练因此永远无法起步（回合恒在 ~2 个决策内摔倒）。
+                var drive = ab.xDrive;
+                drive.target = spec.RestDeg;
+                drive.targetVelocity = 0f;
+                ab.xDrive = drive;
+                if (Application.isPlaying && ab.dofCount > 0)
+                {
+                    var jp = ab.jointPosition;
+                    jp[0] = spec.RestDeg * Mathf.Deg2Rad;
+                    ab.jointPosition = jp;
+                    var jv = ab.jointVelocity;
+                    jv[0] = 0f;
+                    ab.jointVelocity = jv;
+                }
+
                 // 段长度：碰撞体与可视沿骨轴延伸（腿段沿 Y，脚掌沿 Z），中心随之平移
                 bool stretchZ = spec.Name.Contains("AnklePitch");
                 float dLen = ClampedLengthDelta(spec);
