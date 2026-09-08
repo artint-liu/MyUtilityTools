@@ -1,5 +1,8 @@
 # ML-Agents PPO config - MiniChicken biped velocity command following
 # Usage: mlagents-learn training/biped_locomotion.yaml --run-id=biped_v1
+# NOTE: keep this file ASCII-only (English comments). mlagents opens it with the
+# system default encoding (GBK on zh-CN Windows), so UTF-8 Chinese comments
+# break training startup with UnicodeDecodeError.
 
 behaviors:
   BipedLocomotion:
@@ -18,9 +21,10 @@ behaviors:
       hidden_units: 512
       num_layers: 3
       vis_encode_type: simple
-      # 循环网络（RMA 近似）：域随机化的参数（质量/重心/摩擦/增益）不进入观测
-      # （部署时不可知），LSTM 从观测历史中在线隐式估计真实动力学并自适应。
-      # 注意：sequence_length 必须 <= time_horizon。
+      # Recurrent policy (RMA approximation): domain-randomized parameters
+      # (mass / COM offset / friction / PD gains) are NOT observed (unknown at
+      # deployment); the LSTM implicitly estimates real dynamics online from
+      # observation history. sequence_length must be <= time_horizon.
       use_recurrent: true
       memory_size: 256
       sequence_length: 64
