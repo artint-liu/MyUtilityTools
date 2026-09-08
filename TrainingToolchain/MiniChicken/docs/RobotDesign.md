@@ -84,6 +84,7 @@
 |---|---|---|
 | 线速度跟踪 | 1.2 | `exp(-1.5·‖v_xy − v_cmd‖²)` |
 | 偏航跟踪 | 0.25 | `exp(-1.0·(ωy − ω_cmd)²)` |
+| 朝向对齐 | 0.2 | `0.5·(1 + forward·v̂_cmd)`，指令近零时不算 |
 | 直立 | 0.3 | `max(0, up·up_world)` |
 | 身高维持 | 0.2 | `exp(-8·(h − 1.14)²)` |
 | 存活 | 0.1 | 常数 |
@@ -95,8 +96,22 @@
 ### 课程学习（内置）
 前 2000 个 episode 内速度指令范围从 ±0.5 m/s 线性扩大到 ±2.0 m/s，偏航指令从 0 扩大到 ±1 rad/s。
 
+### 域随机化（sim-to-real，`LocomotionAgent.domainRandomization`）
+
+实物装配存在质量/重心/摩擦/驱动参数误差（如 ≤500 g 电池的前后安装偏移），训练时每回合随机化这些参数，让真实偏差成为策略"见过的样本"：
+
+| 项 | 默认范围 | 实现方式 |
+|---|---|---|
+| 整机质量 | ±15% | 各 ArticulationBody.mass 缩放 |
+| 电池配重 | 0~0.5 kg，前后 ±4 cm | 安装点持续施加等效重力 m·g（复现重心偏移的重力矩） |
+| 脚底摩擦 | 0.5~1.2 | 实例化 PhysicMaterial |
+| PD 增益 | ±10% | xDrive 刚度/阻尼缩放 |
+| 推力扰动 | 5~15 N·s，0.2 次/s | 随机水平冲量 AddForceAtPosition |
+
+随机参数**不进入观测**（部署时不可知）；配合循环网络（LSTM，`use_recurrent: true`）从观测历史在线隐式估计真实动力学（RMA 近似），实现自适应。验证场景可用 `BatteryOffsetTester`（按键 `[ / ]`、`- / =`）实测策略可容忍的电池偏移范围，指导结构件的电池安装位公差设计。
+
 ### 训练超参
-ML-Agents PPO：网络 512×3，normalize=true，batch 4096，lr 3e-4，详见 `training/biped_locomotion.yaml`。
+ML-Agents PPO：网络 512×3 + LSTM 256（循环），normalize=true，batch 4096，lr 3e-4，详见 `training/biped_locomotion.yaml`。
 
 ## 5. 物理设置
 

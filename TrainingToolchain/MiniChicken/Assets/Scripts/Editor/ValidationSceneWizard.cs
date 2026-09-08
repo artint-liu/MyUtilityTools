@@ -86,6 +86,7 @@ namespace MiniChicken.EditorTools
             agent.debugLog = false;         // 验证场景关闭控制台刷屏
             agent.curriculumEpisodes = 1;   // 跳过课程，直接使用全范围速度指令
             agent.manualCommand = true;     // 速度指令改由键盘控制
+            agent.domainRandomization = false;  // 固定参数便于复现测试；电池配重由测试器手动控制
 
             var requester = env.AddComponent<DecisionRequester>();
             requester.DecisionPeriod = 5;
@@ -93,6 +94,9 @@ namespace MiniChicken.EditorTools
 
             var kb = env.AddComponent<KeyboardCommandController>();
             kb.agent = agent;
+
+            var battery = env.AddComponent<BatteryOffsetTester>();
+            battery.agent = agent;
 
             // 预构建机器人（运行时 Agent 自动复用该层级），并让相机对准它
             var rig = BipedRobotBuilder.Build(env.transform);

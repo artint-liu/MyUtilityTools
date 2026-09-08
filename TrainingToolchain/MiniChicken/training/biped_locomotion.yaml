@@ -18,6 +18,12 @@ behaviors:
       hidden_units: 512
       num_layers: 3
       vis_encode_type: simple
+      # 循环网络（RMA 近似）：域随机化的参数（质量/重心/摩擦/增益）不进入观测
+      # （部署时不可知），LSTM 从观测历史中在线隐式估计真实动力学并自适应。
+      # 注意：sequence_length 必须 <= time_horizon。
+      use_recurrent: true
+      memory_size: 256
+      sequence_length: 64
     reward_signals:
       extrinsic:
         gamma: 0.99

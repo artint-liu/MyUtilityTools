@@ -42,6 +42,41 @@ namespace MiniChicken.Training
         public float wActionMagnitude = 0.005f;
         public float fallPenalty = 1.0f;
 
+        [Tooltip("朝向对齐权重：喙（机体+Z）指向指令速度方向时奖励。" +
+                 "用于消除『倒退步态』这一速度跟踪的等价解，让小鸡喙朝前行走")]
+        public float wFacing = 0.2f;
+
+        [Header("Domain Randomization (sim-to-real)")]
+        [Tooltip("域随机化总开关：训练时开启，让策略对参数不确定性鲁棒；验证/测试时可关闭")]
+        public bool domainRandomization = true;
+
+        [Tooltip("整机质量相对漂移幅度（±比例）：覆盖称重误差、结构公差、线缆等")]
+        [Range(0f, 0.5f)]
+        public float massDrift = 0.15f;
+
+        [Tooltip("电池质量随机范围 (kg)：实测电池 500g 以内")]
+        public Vector2 batteryMassRange = new Vector2(0f, 0.5f);
+
+        [Tooltip("电池前后安装偏移随机范围 (m)：覆盖装配公差与不同安装位（左右由结构保证居中，不随机）")]
+        public Vector2 batteryOffsetZRange = new Vector2(-0.04f, 0.04f);
+
+        [Tooltip("电池安装高度（躯干局部 Y，固定值，用于计算偏心扭矩臂）")]
+        public float batteryMountY = 0.1f;
+
+        [Tooltip("脚底摩擦随机范围（静/动摩擦同取）")]
+        public Vector2 footFrictionRange = new Vector2(0.5f, 1.2f);
+
+        [Tooltip("PD 刚度/阻尼相对漂移幅度（±比例）：覆盖电机与驱动参数误差")]
+        [Range(0f, 0.5f)]
+        public float gainDrift = 0.1f;
+
+        [Tooltip("随机推力扰动冲量范围 (N·s)，y<=x 关闭")]
+        public Vector2 pushImpulseRange = new Vector2(5f, 15f);
+
+        [Tooltip("每秒发生一次推力扰动的概率 (0~1)")]
+        [Range(0f, 1f)]
+        public float pushProbabilityPerSecond = 0.2f;
+
         [Header("Debug")]
         [Tooltip("开启后在控制台输出回合起止、模型更新、决策心跳等日志，用于确认训练/卡顿状态")]
         public bool debugLog = true;
@@ -58,9 +93,29 @@ namespace MiniChicken.Training
         bool episodeEndLogged;   // 防止 FixedUpdate 多次触发时重复打印回合结束
         float lastDecisionTime = -1f;   // 上一决策时刻，用于检测主线程卡顿（如模型重载）
 
+        // 电池配重仿真：在安装点持续施加等效重力（质量×g），精确复现重心偏移的静态
+        // 重力矩效应（0.5kg 级电池对整机 ~30kg 的转动惯量贡献可忽略，不修改惯量张量）。
+        // 相比修改碰撞体/质量属性，该方式不依赖 PhysX 质心推导语义，且运行时可实时调节
+        // （验证场景的 BatteryOffsetTester 用它做装配公差鲁棒性测试）。
+        Transform batteryAnchor;
+        float batteryMass;
+        float batteryOffsetZ;
+        PhysicMaterial randomizedFootMat;
+
         public RobotRig Rig => rig;
         public Vector3 Command => cmdVel;
         public int EpisodeCount => episodeCount;
+        public float BatteryMass => batteryMass;
+        public float BatteryOffsetZ => batteryOffsetZ;
+
+        /// <summary>设置电池配重：质量 (kg) 与前后偏移 (m，+Z 为喙方向)。验证场景测试也用此接口。</summary>
+        public void SetBattery(float mass, float zOffset)
+        {
+            batteryMass = Mathf.Max(0f, mass);
+            batteryOffsetZ = zOffset;
+            if (batteryAnchor != null)
+                batteryAnchor.localPosition = new Vector3(0f, batteryMountY, batteryOffsetZ);
+        }
 
         /// <summary>
         /// 手动指令模式（验证场景用）：开启后不再随机采样速度指令，
@@ -123,6 +178,10 @@ namespace MiniChicken.Training
             }
             if (rigGO != null) Destroy(rigGO);
             BuildRig();
+            EnsureBatteryAnchor();   // 电池锚点随机器人重建，需重新挂载（质量/偏移保留当前值）
+
+            // 域随机化：每回合重抽质量漂移 / 电池 / 摩擦 / PD 增益
+            if (domainRandomization) ApplyDomainRandomization();
 
             // 手动模式保留外部设置的指令；否则按课程随机采样
             if (!manualCommand) SampleCommands();
@@ -145,6 +204,73 @@ namespace MiniChicken.Training
                 Random.Range(-0.6f * vMax, 0.6f * vMax),
                 Random.Range(-yawMax, yawMax),
                 Random.Range(-vMax, vMax));
+        }
+
+        // ------------------------------------------------------------------
+        // 域随机化（sim-to-real）
+        // ------------------------------------------------------------------
+
+        /// <summary>在当前机器人根节点下挂电池安装点锚（每回合机器人重建后需重新挂载）。</summary>
+        void EnsureBatteryAnchor()
+        {
+            if (rig == null || rig.Root == null) return;
+            if (batteryAnchor != null) return;
+            var go = new GameObject("BatteryAnchor");
+            go.transform.SetParent(rig.Root.transform, false);
+            go.transform.localPosition = new Vector3(0f, batteryMountY, batteryOffsetZ);
+            batteryAnchor = go.transform;
+        }
+
+        /// <summary>
+        /// 每回合随机化整机质量、电池配重（质量+前后偏移）、脚底摩擦与 PD 增益，
+        /// 让策略在训练分布内见过装配误差，部署时真实偏差成为"已见过的样本"。
+        /// 注意：随机参数不进入观测（部署时不可知），靠闭环反馈 + 循环网络在线吸收。
+        /// </summary>
+        void ApplyDomainRandomization()
+        {
+            var specs = rig.Specs;
+
+            // 1) 整机质量漂移（根体 + 各关节体；机器人每回合从 Prefab 重建，不会累积）
+            float massScale = Random.Range(1f - massDrift, 1f + massDrift);
+            rig.RootBody.mass *= massScale;
+            for (int i = 0; i < NumJoints; i++)
+                rig.Joints[i].mass *= massScale;
+
+            // 2) 电池配重：质量 + 前后偏移（等效重力建模，见 FixedUpdate）
+            SetBattery(
+                Random.Range(batteryMassRange.x, batteryMassRange.y),
+                Random.Range(batteryOffsetZRange.x, batteryOffsetZRange.y));
+
+            // 3) 脚底摩擦（实例化材质，避免修改共享静态资产）
+            float friction = Random.Range(footFrictionRange.x, footFrictionRange.y);
+            if (randomizedFootMat == null)
+            {
+                randomizedFootMat = new PhysicMaterial("RandomizedFoot")
+                {
+                    frictionCombine = PhysicMaterialCombine.Maximum,
+                    bounceCombine = PhysicMaterialCombine.Minimum,
+                    bounciness = 0f
+                };
+            }
+            randomizedFootMat.staticFriction = friction;
+            randomizedFootMat.dynamicFriction = friction;
+            for (int i = 0; i < 2; i++)
+            {
+                var col = rig.Feet[i].GetComponent<Collider>();
+                if (col != null) col.sharedMaterial = randomizedFootMat;
+            }
+
+            // 4) PD 增益漂移（OnActionReceived 只覆写 target，刚度/阻尼保留本回合随机值）
+            float kpScale = Random.Range(1f - gainDrift, 1f + gainDrift);
+            float kdScale = Random.Range(1f - gainDrift, 1f + gainDrift);
+            for (int i = 0; i < NumJoints; i++)
+            {
+                var ab = rig.Joints[i];
+                var d = ab.xDrive;
+                d.stiffness = specs[i].Kp * kpScale;
+                d.damping = specs[i].Kd * kdScale;
+                ab.xDrive = d;
+            }
         }
 
         // ------------------------------------------------------------------
@@ -232,6 +358,25 @@ namespace MiniChicken.Training
             if (rig == null) return;
 
             float dt = Time.fixedDeltaTime;
+
+            // 电池配重等效重力：在安装点持续施加 m·g，复现重心前移/后移的重力矩
+            if (batteryMass > 0f && batteryAnchor != null)
+                rig.RootBody.AddForceAtPosition(
+                    Vector3.down * (batteryMass * 9.81f), batteryAnchor.position);
+
+            // 随机推力扰动：练抗扰动鲁棒性（水平方向随机冲量，作用点带随机偏心）
+            if (pushImpulseRange.y > pushImpulseRange.x &&
+                Random.value < pushProbabilityPerSecond * dt)
+            {
+                Vector3 dir = Random.onUnitSphere;
+                dir.y = 0f;
+                if (dir.sqrMagnitude < 0.01f) dir = Vector3.forward;
+                Vector3 point = rig.Root.transform.position + Random.insideUnitSphere * 0.2f;
+                rig.RootBody.AddForceAtPosition(
+                    dir.normalized * Random.Range(pushImpulseRange.x, pushImpulseRange.y),
+                    point, ForceMode.Impulse);
+            }
+
             AddReward(ComputeReward() * dt);
 
             // 终止判定
@@ -266,6 +411,14 @@ namespace MiniChicken.Training
             // 偏航角速度跟踪
             float yawErr = rb.angularVelocity.y - cmdVel.y;
             r += wYawTracking * Mathf.Exp(-1.0f * yawErr * yawErr);
+
+            // 朝向对齐：喙（机体 +Z）指向指令速度方向。
+            // 速度跟踪只约束世界系速度，机体朝向在观测中不可见，导致"倒退步态"
+            // 与"前进步态"奖励等价；此项打破对称，使喙朝前成为更优解。
+            // 指令近零（原地站立）时不计入，避免诱导无意义原地转向。
+            Vector3 cmdDir = new Vector3(cmdVel.x, 0f, cmdVel.z);
+            if (cmdDir.sqrMagnitude > 0.01f)
+                r += wFacing * 0.5f * (1f + Vector3.Dot(rootT.forward, cmdDir.normalized));
 
             // 直立
             float up = Vector3.Dot(rootT.up, Vector3.up);
