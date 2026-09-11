@@ -500,11 +500,9 @@ namespace MiniChicken.Robot
                 var spec = rig.Specs[i];
 
                 // 锚点 = 设计锚点 + 本关节偏移 + 父段长度增量（父段变长时本关节沿骨轴 -Y 平移）
-                Vector3 parentShift = Vector3.zero;
-                int parent = ParentJointIndex(i);
-                if (parent >= 0)
-                    parentShift = new Vector3(0f, -ClampedLengthDelta(rig.Specs[parent]), 0f);
-                ab.transform.localPosition = spec.BaseAnchor + spec.LinkOffset + parentShift;
+                // 注意：运行时该写入仅在 RebuildArticulationBodies 重建物理体之前有效；
+                // 物理体创建后子刚体 Transform 由物理引擎驱动，此处写入只为编辑态生效。
+                ab.transform.localPosition = GetJointAnchorPosition(rig.Specs, i);
                 ab.transform.localRotation =
                     Quaternion.AngleAxis(spec.RestDeg, GetJointAxis(spec.Name));
 
@@ -561,6 +559,9 @@ namespace MiniChicken.Robot
             float footBottomLocalY = GetFootBottomLocalY(rig);
             rig.StandHeight = Mathf.Max(0.1f, -footBottomLocalY);
             rig.Root.transform.localPosition = new Vector3(0f, rig.StandHeight + 0.01f, 0f);
+            // 运行时根刚体位姿同样由物理引擎驱动，需用官方瞬移接口写入出生高度
+            if (Application.isPlaying && rig.RootBody != null)
+                rig.RootBody.TeleportRoot(rig.Root.transform.position, rig.Root.transform.rotation);
         }
 
         /// <summary>
@@ -592,6 +593,119 @@ namespace MiniChicken.Robot
                 }
             }
             return any ? minY : -rig.StandHeight;
+        }
+
+        /// <summary>关节锚点应处的位置：设计锚点 + 本关节偏移 + 父段长度增量（父段变长时沿骨轴 -Y 平移）。</summary>
+        static Vector3 GetJointAnchorPosition(JointSpec[] specs, int i)
+        {
+            Vector3 parentShift = Vector3.zero;
+            int parent = ParentJointIndex(i);
+            if (parent >= 0)
+                parentShift = new Vector3(0f, -ClampedLengthDelta(specs[parent]), 0f);
+            return specs[i].BaseAnchor + specs[i].LinkOffset + parentShift;
+        }
+
+        // ------------------------------------------------------------------
+        // 运行时物理拓扑重建
+        // ------------------------------------------------------------------
+
+        /// <summary>ArticulationBody 关键参数快照（用于移除后原样重建）。</summary>
+        struct BodySnapshot
+        {
+            public GameObject GO;
+            public bool IsRoot;
+            public ArticulationJointType JointType;
+            public Vector3 AnchorPosition;
+            public Quaternion AnchorRotation;
+            public Quaternion ParentAnchorRotation;
+            public float Mass;
+            public float LinearDamping;
+            public float AngularDamping;
+            public ArticulationDrive Drive;
+        }
+
+        /// <summary>
+        /// 运行时重建 ArticulationBody 物理拓扑（方案 2：先摆位后建链）。
+        /// ArticulationBody 创建时按当时的 Transform 固化各关节锚点（parentAnchor），
+        /// 之后子刚体位姿由物理引擎驱动，写入 localPosition/localRotation 会被覆盖，
+        /// 因此 LinkOffset / LengthOffset 的锚点平移必须在建链前写入 Transform。
+        /// 本方法记录并移除全部 ArticulationBody，应用锚点后按根→叶顺序重建。
+        /// 关节零位约定保持与 Prefab 一致（localRotation=identity 对应零位），
+        /// 随后的 ApplyStaticPose 写 jointPosition = RestDeg 语义不变。
+        /// </summary>
+        public static void RebuildArticulationBodies(RobotRig rig)
+        {
+            if (rig?.Root == null || !Application.isPlaying) return;
+            var rootT = rig.Root.transform;
+
+            // 0) 先取好 Transform 引用（组件销毁后原 ArticulationBody 引用即失效）
+            var jointT = new Transform[rig.Joints.Length];
+            for (int i = 0; i < rig.Joints.Length; i++)
+                jointT[i] = rig.Joints[i] != null ? rig.Joints[i].transform : null;
+
+            // 1) 快照全部 ArticulationBody 参数（GetComponentsInChildren 保证父在前）
+            var bodies = rig.Root.GetComponentsInChildren<ArticulationBody>(true);
+            if (bodies.Length == 0) return;
+            var snaps = new BodySnapshot[bodies.Length];
+            for (int i = 0; i < bodies.Length; i++)
+            {
+                var ab = bodies[i];
+                bool driveable = ab.jointType == ArticulationJointType.RevoluteJoint ||
+                                 ab.jointType == ArticulationJointType.PrismaticJoint;
+                snaps[i] = new BodySnapshot
+                {
+                    GO = ab.gameObject,
+                    IsRoot = ab.transform == rootT,
+                    JointType = ab.jointType,
+                    AnchorPosition = ab.anchorPosition,
+                    AnchorRotation = ab.anchorRotation,
+                    ParentAnchorRotation = ab.parentAnchorRotation,
+                    Mass = ab.mass,
+                    LinearDamping = ab.linearDamping,
+                    AngularDamping = ab.angularDamping,
+                    Drive = driveable ? ab.xDrive : default
+                };
+            }
+
+            // 2) 叶→根移除全部 ArticulationBody（销毁即销毁 PhysX 固化了锚点的 articulation）
+            for (int i = bodies.Length - 1; i >= 0; i--)
+                Object.DestroyImmediate(bodies[i]);
+
+            // 3) 此时 Transform 归脚本所有，写入姿态锚点与零位旋转
+            for (int i = 0; i < rig.Specs.Length && i < jointT.Length; i++)
+            {
+                var t = jointT[i];
+                if (t == null) continue;
+                t.localPosition = GetJointAnchorPosition(rig.Specs, i);
+                t.localRotation = Quaternion.identity;
+            }
+
+            // 4) 根→叶重建（父 ArticulationBody 必须先于子存在）
+            foreach (var s in snaps)
+            {
+                var ab = s.GO.GetComponent<ArticulationBody>();
+                if (ab == null) ab = s.GO.AddComponent<ArticulationBody>();
+                ab.mass = s.Mass;
+                ab.linearDamping = s.LinearDamping;
+                ab.angularDamping = s.AngularDamping;
+                if (s.IsRoot) continue;
+                ab.jointType = s.JointType;
+                ab.anchorPosition = s.AnchorPosition;
+                ab.anchorRotation = s.AnchorRotation;
+                ab.parentAnchorRotation = s.ParentAnchorRotation;
+                // 父锚点必须指向新锚点，否则物理会按旧锚点把子刚体拽回去；
+                // localRotation=identity 时即 localPosition + anchorPosition（本 rig 中恒为零向量）
+                ab.parentAnchorPosition =
+                    s.GO.transform.localPosition + s.GO.transform.localRotation * s.AnchorPosition;
+                if (s.JointType == ArticulationJointType.RevoluteJoint ||
+                    s.JointType == ArticulationJointType.PrismaticJoint)
+                    ab.xDrive = s.Drive;
+            }
+
+            // 5) 刷新 rig 中的组件引用（原引用已随销毁失效）
+            rig.RootBody = rig.Root.GetComponent<ArticulationBody>();
+            for (int i = 0; i < jointT.Length; i++)
+                rig.Joints[i] = jointT[i] != null ? jointT[i].GetComponent<ArticulationBody>() : null;
         }
 
         /// <summary>
@@ -657,6 +771,8 @@ namespace MiniChicken.Robot
             BuildLeg(rootGO.transform, rootBody, specs, 0, rig, footIndex: 0, isRight: false);
             BuildLeg(rootGO.transform, rootBody, specs, 5, rig, footIndex: 1, isRight: true);
 
+            // 运行时：物理链已按设计锚点建好，先重建物理体（把姿态锚点写进物理拓扑）再应用姿态
+            if (Application.isPlaying) RebuildArticulationBodies(rig);
             ApplyStaticPose(rig);
             EnsureAxisVisuals(rig); // 补上灰色轴指示圆柱（纯视觉）
             return rig;
@@ -699,6 +815,10 @@ namespace MiniChicken.Robot
             if (lFoot == null || rFoot == null) { DestroyObj(inst); return BuildProcedural(parent); }
             rig.Feet[0] = lFoot; rig.Feet[1] = rFoot;
 
+            // 运行时：先重建物理体（把姿态锚点写进物理拓扑），否则 Prefab 实例化时已按
+            // 设计锚点固化物理链，ApplyStaticPose 的 Transform 写入会被物理引擎覆盖，
+            // 导致段长度/偏移只在编辑态生效、脚模型插入小腿（AnklePitch 问题根因）。
+            if (Application.isPlaying) RebuildArticulationBodies(rig);
             ApplyStaticPose(rig);   // 烘焙：锚点 = BaseAnchor + LinkOffset，模型保持设计中心，并设角度与贴地
             EnsureAxisVisuals(rig); // 补上灰色轴指示圆柱（纯视觉）
             return rig;
@@ -843,6 +963,15 @@ namespace MiniChicken.Robot
             if (lFoot == null || rFoot == null) return null;
             rig.Feet[0] = lFoot;
             rig.Feet[1] = rFoot;
+
+            // 运行时复用场景机器人：物理链在场景加载时已按场景中的 Transform 固化锚点。
+            // 重建后再按 BipedPose.json 应用姿态，保证场景机器人（验证场景）与
+            // 训练构建路径行为一致，且场景保存的姿态过期时也能被 json 修正。
+            if (Application.isPlaying)
+            {
+                RebuildArticulationBodies(rig);
+                ApplyStaticPose(rig);
+            }
             return rig;
         }
 

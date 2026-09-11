@@ -12,7 +12,7 @@ using UnityEngine;
 namespace MiniChicken.EditorTools
 {
     /// <summary>
-    /// 一键生成并行训练场景：地面 + 光照 + N×N 个训练环境（每个含一台预构建机器人）。
+    /// 一键生成并行训练场景：地面 + 光照 + cols×rows 个训练环境（每个含一台预构建机器人）。
     /// 菜单：MiniChicken → Setup Training Scene
     /// </summary>
     public static class TrainingSceneWizard
@@ -21,15 +21,19 @@ namespace MiniChicken.EditorTools
         const float EnvSpacing = 2.5f;
 
         [MenuItem("MiniChicken/Setup Training Scene (4x4, 16 envs)")]
-        public static void CreateScene16() => CreateScene(4);
+        public static void CreateScene4x4() => CreateScene(4, 4);
 
         [MenuItem("MiniChicken/Setup Training Scene (8x8, 64 envs)")]
-        public static void CreateScene64() => CreateScene(8);
+        public static void CreateScene8x8() => CreateScene(8, 8);
+
+        [MenuItem("MiniChicken/Setup Training Scene (8x16, 128 envs)")]
+        public static void CreateScene8x16() => CreateScene(8, 16);
 
         [MenuItem("MiniChicken/Setup Training Scene (16x16, 256 envs)")]
-        public static void CreateScene256() => CreateScene(16);
+        public static void CreateScene16x16() => CreateScene(16, 16);
 
-        static void CreateScene(int grid)
+        /// <summary>生成 cols×rows 的矩形训练网格。</summary>
+        static void CreateScene(int cols, int rows)
         {
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             EnsureGroundLayer();
@@ -37,7 +41,7 @@ namespace MiniChicken.EditorTools
             // ---- 地面 ----
             var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ground.name = "Ground";
-            ground.transform.localScale = new Vector3(grid * 4f, 1f, grid * 4f);
+            ground.transform.localScale = new Vector3(Mathf.Max(cols, rows) * 4f, 1f, Mathf.Max(cols, rows) * 4f);
             ground.layer = LayerMask.NameToLayer(GroundLayer);
             ground.isStatic = true;
 
@@ -57,14 +61,14 @@ namespace MiniChicken.EditorTools
             camGO.AddComponent<AudioListener>();
 
             // ---- 训练环境网格 ----
-            for (int x = 0; x < grid; x++)
+            for (int x = 0; x < cols; x++)
             {
-                for (int z = 0; z < grid; z++)
+                for (int z = 0; z < rows; z++)
                 {
                     var env = new GameObject($"Env_{x}_{z}");
                     env.transform.position = new Vector3(
-                        (x - (grid - 1) * 0.5f) * EnvSpacing, 0f,
-                        (z - (grid - 1) * 0.5f) * EnvSpacing);
+                        (x - (cols - 1) * 0.5f) * EnvSpacing, 0f,
+                        (z - (rows - 1) * 0.5f) * EnvSpacing);
 
                     // 注意组件顺序：BehaviorParameters 必须先于 Agent
                     var bp = env.AddComponent<BehaviorParameters>();
@@ -95,11 +99,11 @@ namespace MiniChicken.EditorTools
             AssetDatabase.Refresh();
 
             EditorUtility.DisplayDialog("MiniChicken",
-                $"训练场景已创建：{grid}x{grid} = {grid * grid} 个并行环境\n" +
+                $"训练场景已创建：{cols}x{rows} = {cols * rows} 个并行环境\n" +
                 "已保存到 Assets/Scenes/TrainingScene.unity\n\n" +
                 "训练：先启动 mlagents-learn，再进入 Play 模式。", "OK");
 
-            Debug.Log($"[MiniChicken] Training scene created: {grid * grid} environments.");
+            Debug.Log($"[MiniChicken] Training scene created: {cols}x{rows} = {cols * rows} environments.");
         }
 
         /// <summary>

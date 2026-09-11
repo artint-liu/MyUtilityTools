@@ -83,6 +83,11 @@ namespace MiniChicken.Training
         [Tooltip("每隔多少回合打印一次回合日志（0 = 每回合都打印）")]
         public int logEveryEpisodes = 50;
         static int s_totalDecisions;   // 跨所有 Agent 累计的决策次数（含并行环境）
+        // 并行环境众多时 Console 输出按全局真实时间限频，避免日志本身拖慢主线程
+        const float HeartbeatLogInterval = 30f;   // 心跳日志最小间隔（秒，真实时间）
+        const float StallWarnInterval = 30f;      // 卡顿警告最小间隔（秒，真实时间）
+        static float s_lastHeartbeatLogTime = -999f;
+        static float s_lastStallWarnTime = -999f;
 
         RobotRig rig;
         GameObject rigGO;
@@ -317,13 +322,20 @@ namespace MiniChicken.Training
             if (lastDecisionTime >= 0f)
             {
                 float gap = Time.time - lastDecisionTime;
-                if (gap > 1f)
+                // 全局限频：模型重载会让所有并行 Agent 同时报警，只保留一条
+                if (gap > 1f && Time.realtimeSinceStartup - s_lastStallWarnTime >= StallWarnInterval)
+                {
+                    s_lastStallWarnTime = Time.realtimeSinceStartup;
                     Debug.LogWarning($"[LocomotionAgent] 决策间隔异常 {gap:F1}s @ Step={StepCount}（主线程疑似卡顿，可能为训练器推送并加载模型）");
+                }
             }
             lastDecisionTime = Time.time;
 
-            if (debugLog && s_totalDecisions % 5000 == 0)
+            if (debugLog && Time.realtimeSinceStartup - s_lastHeartbeatLogTime >= HeartbeatLogInterval)
+            {
+                s_lastHeartbeatLogTime = Time.realtimeSinceStartup;
                 Debug.Log($"[LocomotionAgent] 决策心跳: 累计决策={s_totalDecisions} | Step={StepCount} | t={Time.time:F1}s");
+            }
 
             var a = actionBuffers.ContinuousActions;
 
