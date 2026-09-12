@@ -113,6 +113,49 @@ namespace MiniChicken.Training
         public float BatteryMass => batteryMass;
         public float BatteryOffsetZ => batteryOffsetZ;
 
+        // ------------------------------------------------------------------
+        // 关节驱动遥测（sim-to-real 数据对齐）
+        // 设计上 10 个关节均为舵机驱动：真机控制板下发 10 路舵机角度指令、
+        // 回读 10 路舵机角度，并从躯干 IMU 读取陀螺仪（角速度）数据。
+        // 以下接口给出与真机同语义的仿真读数，供验证场景 HUD / 数据对比使用。
+        // ------------------------------------------------------------------
+
+        /// <summary>舵机（驱动关节）数量，与动作维数一致。</summary>
+        public const int NumServos = NumJoints;
+
+        /// <summary>第 i 个舵机的角度指令（度）：位置目标，等价真机下发的舵机角度指令。</summary>
+        public float GetServoTargetDeg(int i)
+        {
+            if (rig?.Joints == null || i < 0 || i >= NumJoints) return 0f;
+            var ab = rig.Joints[i];
+            return ab != null ? ab.xDrive.target : 0f;
+        }
+
+        /// <summary>第 i 个舵机的角度反馈（度）：关节实际位置回读，等价真机舵机的角度回传。</summary>
+        public float GetServoFeedbackDeg(int i)
+        {
+            if (rig?.Joints == null || i < 0 || i >= NumJoints) return 0f;
+            var ab = rig.Joints[i];
+            if (ab == null || ab.dofCount <= 0) return 0f;
+            return ab.jointPosition[0] * Mathf.Rad2Deg;
+        }
+
+        /// <summary>舵机跟随误差（度）：指令 − 反馈，正值表示尚未转到指令角。</summary>
+        public float GetServoErrorDeg(int i) => GetServoTargetDeg(i) - GetServoFeedbackDeg(i);
+
+        /// <summary>躯干陀螺仪读数（机体坐标系角速度，rad/s），与观测中的角速度同源同坐标。</summary>
+        public Vector3 TorsoGyro
+        {
+            get
+            {
+                if (rig?.Root == null || rig.RootBody == null) return Vector3.zero;
+                return Quaternion.Inverse(rig.Root.transform.rotation) * rig.RootBody.angularVelocity;
+            }
+        }
+
+        /// <summary>躯干陀螺仪读数（°/s）：真机 IMU 常用的角速度单位。</summary>
+        public Vector3 TorsoGyroDegPerSec => TorsoGyro * Mathf.Rad2Deg;
+
         /// <summary>设置电池配重：质量 (kg) 与前后偏移 (m，+Z 为喙方向)。验证场景测试也用此接口。</summary>
         public void SetBattery(float mass, float zOffset)
         {
