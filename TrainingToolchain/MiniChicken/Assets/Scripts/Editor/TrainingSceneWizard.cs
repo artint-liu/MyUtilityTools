@@ -88,6 +88,10 @@ namespace MiniChicken.EditorTools
                 }
             }
 
+            // ---- 训练超参配置对象（总控台启动训练时自动导出为 yaml） ----
+            var cfgGO = new GameObject("TrainingConfig");
+            cfgGO.AddComponent<TrainingConfig>().behaviorName = "BipedLocomotion";
+
             // ---- 相机取景：尽量覆盖场景中的所有模型（排除地面） ----
             FrameCameraOnModels(cam, ground.transform);
 

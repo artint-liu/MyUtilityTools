@@ -10,6 +10,7 @@ using System.Globalization;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using MiniChicken.Training;
 
 namespace MiniChicken.EditorTools
 {
@@ -80,7 +81,7 @@ namespace MiniChicken.EditorTools
         string pythonPath = Application.platform == RuntimePlatform.WindowsEditor ? "py -3.10" : "python3.10";
         string runId = "biped_v1";
         string configPath = "training/biped_locomotion.yaml";
-        int basePort = 5005;
+        int basePort = 5004;
         bool force;
         bool autoEnterPlay = true;
         Vector2 logScroll;
@@ -758,6 +759,33 @@ namespace MiniChicken.EditorTools
         // ------------------------------------------------------------------
         // 2/3. 训练 / 继续训练
         // ------------------------------------------------------------------
+        /// <summary>
+        /// 解析训练配置：
+        /// 1) 优先取当前场景中的 TrainingConfig 对象，导出为 Assets/Configs/MLAgentsConfig.yaml；
+        /// 2) 回退到手动填写的 configPath（相对工程根目录）。
+        /// 返回相对工程根的配置路径；找不到任何配置时返回 null，sourceDesc 描述来源。
+        /// </summary>
+        string ResolveConfigPath(out string sourceDesc)
+        {
+            var sceneCfg = TrainingConfig.FindInScene();
+            if (sceneCfg != null && sceneCfg.ExportToFile() != null)
+            {
+                sourceDesc = $"场景配置对象 {sceneCfg.gameObject.name}（behavior: {sceneCfg.behaviorName}）";
+                return TrainingConfig.ConfigProjectPath;
+            }
+            if (sceneCfg != null)
+            {
+                Log("[Train] ⚠ 场景 TrainingConfig 导出 yaml 失败，回退手动配置路径。");
+            }
+            if (File.Exists(Path.Combine(ProjectRoot, configPath)))
+            {
+                sourceDesc = "手动配置路径（场景中无 TrainingConfig 对象）";
+                return configPath;
+            }
+            sourceDesc = null;
+            return null;
+        }
+
         void StartTraining(bool resume, string resumeId)
         {
             if (IsTrackedAlive(TrainerPidKey)) { ShowNotification(new GUIContent("训练已在运行")); return; }
@@ -770,11 +798,17 @@ namespace MiniChicken.EditorTools
 
             string id = (resume ? resumeId : runId).Trim();
             if (string.IsNullOrEmpty(id)) { Log("[Train] ✗ run-id 不能为空。"); return; }
-            if (!File.Exists(Path.Combine(ProjectRoot, configPath)))
+
+            // 配置来源：优先场景中的 TrainingConfig 对象（启动时自动导出 yaml），
+            // 场景无配置对象时回退到手动填写的 yaml 路径
+            string effectiveConfig = ResolveConfigPath(out string sourceDesc);
+            if (effectiveConfig == null)
             {
-                Log($"[Train] ✗ 训练配置不存在: {configPath}");
+                Log("[Train] ✗ 未找到训练配置：场景中无 TrainingConfig 对象，且手动配置路径不存在。");
                 return;
             }
+            Log($"[Train] 训练配置来源: {sourceDesc} → {effectiveConfig}");
+
             string runDir = Path.Combine(ResultsDir, id);
             if (!resume && Directory.Exists(runDir) && !force)
             {
@@ -789,11 +823,11 @@ namespace MiniChicken.EditorTools
 
             // 用 -c 直接调用 main()（不经过 mlagents-learn.exe 壳），便于整树终止
             const string entry = "import sys; from mlagents.trainers.learn import main; sys.argv[0]='mlagents-learn'; main()";
-            string args = $"-u -c \"{entry}\" \"{configPath}\" --run-id={id} --base-port={basePort}";
+            string args = $"-u -c \"{entry}\" \"{effectiveConfig}\" --run-id={id} --base-port={basePort}";
             if (resume) args += " --resume";
             else if (force) args += " --force";
 
-            Log($"[Train] ▶ 启动训练{(resume ? "（继续）" : "")}: run-id={id} | 配置={configPath} | 端口={basePort}");
+            Log($"[Train] ▶ 启动训练{(resume ? "（继续）" : "")}: run-id={id} | 配置={effectiveConfig} | 端口={basePort}");
             s_trainWatch = false;
             s_trainExitAt = 0;
             s_trainerProc = null;
@@ -801,7 +835,7 @@ namespace MiniChicken.EditorTools
             if (SessionState.GetInt(TrainerPidKey, 0) == 0) return;   // 启动失败，已记录原因
             s_trainWatch = true;   // 开始监控：Python 端退出即停止 Unity，避免空跑
 
-            s_maxSteps = ParseMaxSteps(Path.Combine(ProjectRoot, configPath));
+            s_maxSteps = ParseMaxSteps(Path.Combine(ProjectRoot, effectiveConfig));
             s_etaStep = 0;
             s_etaLastStep = 0f;
             s_etaLastElapsed = 0f;
@@ -825,17 +859,34 @@ namespace MiniChicken.EditorTools
             {
                 if (scene.isDirty)
                 {
-                    Log("[Train] ⚠ 当前场景有未保存修改，未能自动进入 Play：请手动保存并打开 TrainingScene 后按 Play。");
+                    Log("[Train] ⚠ 当前场景有未保存修改，未能自动进入 Play：请手动保存并打开训练场景后按 Play。");
                     return;
                 }
                 if (!File.Exists(ScenePath))
                 {
-                    Log("[Train] ⚠ 未找到 TrainingScene，请先运行 MiniChicken → Setup Training Scene。");
+                    Log("[Train] ⚠ 未找到 TrainingScene，请先运行场景向导生成。");
                     return;
                 }
                 EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
             }
-            EditorApplication.delayCall += () => { if (!EditorApplication.isPlaying) EditorApplication.isPlaying = true; };
+            EditorApplication.delayCall += () =>
+            {
+                if (EditorApplication.isPlaying)
+                {
+                    // 已在 Play（通常是上次失败训练残留的会话）：Academy 只在进入 Play 的
+                    // 瞬间尝试连接训练器，必须退出再重进 Play 才能重建握手，否则训练器会一直等超时
+                    Log("[Train] 检测到 Play 已在运行（疑似上次训练残留会话），重启 Play 以重建与训练器的连接…");
+                    EditorApplication.isPlaying = false;
+                    EditorApplication.delayCall += () =>
+                    {
+                        if (!EditorApplication.isPlaying) EditorApplication.isPlaying = true;
+                    };
+                }
+                else
+                {
+                    EditorApplication.isPlaying = true;
+                }
+            };
             Log("[Train] ✓ 训练器就绪，自动进入 Play 模式。");
         }
 
@@ -863,21 +914,32 @@ namespace MiniChicken.EditorTools
         // ------------------------------------------------------------------
         // 已有 run
         // ------------------------------------------------------------------
+        static List<string> s_runsCache;       // 缓存结果（OnGUI 每次重绘都会调用，递归枚举 results/ 开销不可忽视）
+        static double s_runsCacheTime = -999;
+        const double RunsCacheTtl = 30.0;      // 缓存有效期（秒）
+
         static List<string> GetRuns()
         {
+            if (s_runsCache != null && EditorApplication.timeSinceStartup - s_runsCacheTime < RunsCacheTtl)
+                return s_runsCache;
+
             var list = new List<string>();
-            if (!Directory.Exists(ResultsDir)) return list;
-            foreach (var d in Directory.GetDirectories(ResultsDir))
+            if (Directory.Exists(ResultsDir))
             {
-                // mlagents 1.0.0 将检查点放在 results/<run-id>/<behavior-name>/ 子目录下，
-                // 需递归搜索 *.pt / *.onnx（含 checkpoint.pt）。
-                bool hasCkpt =
-                    Directory.GetFiles(d, "*.pt", SearchOption.AllDirectories).Length > 0 ||
-                    Directory.GetFiles(d, "*.onnx", SearchOption.AllDirectories).Length > 0;
-                if (hasCkpt)
-                    list.Add(Path.GetFileName(d));
+                foreach (var d in Directory.GetDirectories(ResultsDir))
+                {
+                    // mlagents 1.0.0 将检查点放在 results/<run-id>/<behavior-name>/ 子目录下，
+                    // 需递归搜索 *.pt / *.onnx（含 checkpoint.pt）。
+                    bool hasCkpt =
+                        Directory.GetFiles(d, "*.pt", SearchOption.AllDirectories).Length > 0 ||
+                        Directory.GetFiles(d, "*.onnx", SearchOption.AllDirectories).Length > 0;
+                    if (hasCkpt)
+                        list.Add(Path.GetFileName(d));
+                }
+                list.Sort((a, b) => string.CompareOrdinal(b, a));
             }
-            list.Sort((a, b) => string.CompareOrdinal(b, a));
+            s_runsCache = list;
+            s_runsCacheTime = EditorApplication.timeSinceStartup;
             return list;
         }
 
@@ -935,9 +997,29 @@ namespace MiniChicken.EditorTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("2. 启动训练", EditorStyles.boldLabel);
             runId = EditorGUILayout.TextField("run-id", runId);
-            configPath = EditorGUILayout.TextField("训练配置", configPath);
+            var sceneCfg = TrainingConfig.FindInScene();
+            if (sceneCfg != null)
+            {
+                // 场景中有配置对象：超参在 Inspector 上修改，启动训练时自动导出 yaml
+                EditorGUILayout.HelpBox(
+                    $"训练配置来源：场景对象 {sceneCfg.gameObject.name}（behavior: {sceneCfg.behaviorName}）\n" +
+                    "启动训练时自动导出到 Assets/Configs/MLAgentsConfig.yaml，无需手动编辑 yaml。", MessageType.Info);
+                if (GUILayout.Button("选中配置对象（在 Inspector 中修改超参）"))
+                {
+                    Selection.activeGameObject = sceneCfg.gameObject;
+                    EditorGUIUtility.PingObject(sceneCfg.gameObject);
+                }
+            }
+            else
+            {
+                configPath = EditorGUILayout.TextField(
+                    new GUIContent("训练配置",
+                        "当前场景中无 TrainingConfig 对象（重跑场景向导可生成），使用手动 yaml 路径（相对工程根目录）"),
+                    configPath);
+            }
             basePort = EditorGUILayout.IntField(
-                new GUIContent("base-port", "Unity 编辑器端固定使用 5005，一般无需修改"), basePort);
+                new GUIContent("base-port",
+                    "编辑器训练时 Unity 侧固定连接 5004（Academy 内置端口），勿改为其他值；被占用时在 Academy 源码常量处调整"), basePort);
             force = EditorGUILayout.Toggle("覆盖已有 run (--force)", force);
             autoEnterPlay = EditorGUILayout.Toggle(
                 new GUIContent("训练器就绪后自动进入 Play",

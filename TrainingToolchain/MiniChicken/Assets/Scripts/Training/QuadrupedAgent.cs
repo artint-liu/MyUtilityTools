@@ -8,15 +8,16 @@ using MiniChicken.Robot;
 namespace MiniChicken.Training
 {
     /// <summary>
-    /// 双足机器人速度指令跟随任务：
-    /// 观测 40 维 / 动作 10 维连续 / PD 关节位置目标控制。
-    /// 奖励与终止条件详见 docs/RobotDesign.md。
+    /// 四足机器人速度指令跟随任务（与双足 LocomotionAgent 同一套任务/奖励/域随机化设计）：
+    /// 观测 49 维 / 动作 12 维连续 / PD 关节位置目标控制。
+    /// 关节顺序（每腿 3 关节 × 4 腿）：Abduct / HipPitch / Knee。
     /// </summary>
     [RequireComponent(typeof(BehaviorParameters))]
-    public class LocomotionAgent : Agent
+    public class QuadrupedAgent : Agent
     {
-        public const int NumJoints = 10;
-        public const int ObsSize = 3 + 3 + NumJoints * 3 + 2 + 3; // 40
+        public const int NumJoints = 12;
+        public const int NumFeet = 4;
+        public const int ObsSize = 3 + 3 + NumJoints * 3 + NumFeet + 3; // 49
         public const int ActSize = NumJoints;
 
         [Header("Environment")]
@@ -42,8 +43,8 @@ namespace MiniChicken.Training
         public float wActionMagnitude = 0.005f;
         public float fallPenalty = 1.0f;
 
-        [Tooltip("朝向对齐权重：喙（机体+Z）指向指令速度方向时奖励。" +
-                 "用于消除『倒退步态』这一速度跟踪的等价解，让小鸡喙朝前行走")]
+        [Tooltip("朝向对齐权重：头部（机体+Z）指向指令速度方向时奖励。" +
+                 "用于消除『倒退步态』这一速度跟踪的等价解")]
         public float wFacing = 0.2f;
 
         [Header("Domain Randomization (sim-to-real)")]
@@ -54,14 +55,14 @@ namespace MiniChicken.Training
         [Range(0f, 0.5f)]
         public float massDrift = 0.15f;
 
-        [Tooltip("电池质量随机范围 (kg)：实测电池 500g 以内")]
+        [Tooltip("电池质量随机范围 (kg)")]
         public Vector2 batteryMassRange = new Vector2(0f, 0.5f);
 
-        [Tooltip("电池前后安装偏移随机范围 (m)：覆盖装配公差与不同安装位（左右由结构保证居中，不随机）")]
+        [Tooltip("电池前后安装偏移随机范围 (m)：覆盖装配公差与不同安装位")]
         public Vector2 batteryOffsetZRange = new Vector2(-0.04f, 0.04f);
 
         [Tooltip("电池安装高度（躯干局部 Y，固定值，用于计算偏心扭矩臂）")]
-        public float batteryMountY = 0.1f;
+        public float batteryMountY = 0.05f;
 
         [Tooltip("脚底摩擦随机范围（静/动摩擦同取）")]
         public Vector2 footFrictionRange = new Vector2(0.5f, 1.2f);
@@ -83,43 +84,36 @@ namespace MiniChicken.Training
         [Tooltip("每隔多少回合打印一次回合日志（0 = 每回合都打印）")]
         public int logEveryEpisodes = 50;
         static int s_totalDecisions;   // 跨所有 Agent 累计的决策次数（含并行环境）
-        // 并行环境众多时 Console 输出按全局真实时间限频，避免日志本身拖慢主线程
-        const float HeartbeatLogInterval = 30f;   // 心跳日志最小间隔（秒，真实时间）
-        const float StallWarnInterval = 30f;      // 卡顿警告最小间隔（秒，真实时间）
-        const float HeartbeatFileInterval = 30f;  // 心跳落盘最小间隔（秒，真实时间）
+        const float HeartbeatLogInterval = 30f;
+        const float StallWarnInterval = 30f;
+        const float HeartbeatFileInterval = 30f;
         static float s_lastHeartbeatLogTime = -999f;
         static float s_lastStallWarnTime = -999f;
         static float s_lastHeartbeatFileTime = -999f;
 
-        RobotRig rig;
+        QuadrupedRig rig;
         GameObject rigGO;
         readonly float[] curAction = new float[NumJoints];
         readonly float[] prevAction = new float[NumJoints];
         Vector3 cmdVel;   // x: vx, y: yawRate, z: vz
         int episodeCount;
-        bool episodeEndLogged;   // 防止 FixedUpdate 多次触发时重复打印回合结束
-        float lastDecisionTime = -1f;   // 上一决策时刻，用于检测主线程卡顿（如模型重载）
+        bool episodeEndLogged;
+        float lastDecisionTime = -1f;
 
-        // 电池配重仿真：在安装点持续施加等效重力（质量×g），精确复现重心偏移的静态
-        // 重力矩效应（0.5kg 级电池对整机 ~30kg 的转动惯量贡献可忽略，不修改惯量张量）。
-        // 相比修改碰撞体/质量属性，该方式不依赖 PhysX 质心推导语义，且运行时可实时调节
-        // （验证场景的 BatteryOffsetTester 用它做装配公差鲁棒性测试）。
+        // 电池配重仿真：在安装点持续施加等效重力（质量×g），复现重心偏移的重力矩
         Transform batteryAnchor;
         float batteryMass;
         float batteryOffsetZ;
         PhysicMaterial randomizedFootMat;
 
-        public RobotRig Rig => rig;
+        public QuadrupedRig Rig => rig;
         public Vector3 Command => cmdVel;
         public int EpisodeCount => episodeCount;
         public float BatteryMass => batteryMass;
         public float BatteryOffsetZ => batteryOffsetZ;
 
         // ------------------------------------------------------------------
-        // 关节驱动遥测（sim-to-real 数据对齐）
-        // 设计上 10 个关节均为舵机驱动：真机控制板下发 10 路舵机角度指令、
-        // 回读 10 路舵机角度，并从躯干 IMU 读取陀螺仪（角速度）数据。
-        // 以下接口给出与真机同语义的仿真读数，供验证场景 HUD / 数据对比使用。
+        // 关节驱动遥测（sim-to-real 数据对齐，与 LocomotionAgent 同语义）
         // ------------------------------------------------------------------
 
         /// <summary>舵机（驱动关节）数量，与动作维数一致。</summary>
@@ -133,7 +127,7 @@ namespace MiniChicken.Training
             return ab != null ? ab.xDrive.target : 0f;
         }
 
-        /// <summary>第 i 个舵机的角度反馈（度）：关节实际位置回读，等价真机舵机的角度回传。</summary>
+        /// <summary>第 i 个舵机的角度反馈（度）：关节实际位置回读。</summary>
         public float GetServoFeedbackDeg(int i)
         {
             if (rig?.Joints == null || i < 0 || i >= NumJoints) return 0f;
@@ -142,10 +136,10 @@ namespace MiniChicken.Training
             return ab.jointPosition[0] * Mathf.Rad2Deg;
         }
 
-        /// <summary>舵机跟随误差（度）：指令 − 反馈，正值表示尚未转到指令角。</summary>
+        /// <summary>舵机跟随误差（度）：指令 − 反馈。</summary>
         public float GetServoErrorDeg(int i) => GetServoTargetDeg(i) - GetServoFeedbackDeg(i);
 
-        /// <summary>躯干陀螺仪读数（机体坐标系角速度，rad/s），与观测中的角速度同源同坐标。</summary>
+        /// <summary>躯干陀螺仪读数（机体坐标系角速度，rad/s）。</summary>
         public Vector3 TorsoGyro
         {
             get
@@ -155,10 +149,10 @@ namespace MiniChicken.Training
             }
         }
 
-        /// <summary>躯干陀螺仪读数（°/s）：真机 IMU 常用的角速度单位。</summary>
+        /// <summary>躯干陀螺仪读数（°/s）。</summary>
         public Vector3 TorsoGyroDegPerSec => TorsoGyro * Mathf.Rad2Deg;
 
-        /// <summary>设置电池配重：质量 (kg) 与前后偏移 (m，+Z 为喙方向)。验证场景测试也用此接口。</summary>
+        /// <summary>设置电池配重：质量 (kg) 与前后偏移 (m，+Z 为头部方向)。验证场景测试也用此接口。</summary>
         public void SetBattery(float mass, float zOffset)
         {
             batteryMass = Mathf.Max(0f, mass);
@@ -188,7 +182,7 @@ namespace MiniChicken.Training
 
             var bp = GetComponent<BehaviorParameters>();
             if (debugLog)
-                Debug.Log($"[LocomotionAgent] Initialize: maxEpisodeSteps={maxEpisodeSteps}, behavior={bp.BehaviorType}");
+                Debug.Log($"[QuadrupedAgent] Initialize: maxEpisodeSteps={maxEpisodeSteps}, behavior={bp.BehaviorType}");
         }
 
         void Start()
@@ -199,10 +193,10 @@ namespace MiniChicken.Training
         void EnsureRig()
         {
             // 复用场景中已构建好的机器人（由向导生成），否则运行时构建
-            var existing = transform.Find("BipedRobot");
+            var existing = transform.Find("QuadrupedRobot");
             if (existing != null)
             {
-                rig = BipedRobotBuilder.Collect(existing);
+                rig = QuadrupedRobotBuilder.Collect(existing);
                 rigGO = existing.gameObject;
             }
             if (rig == null) BuildRig();
@@ -210,10 +204,10 @@ namespace MiniChicken.Training
 
         void BuildRig()
         {
-            rigGO = new GameObject("BipedRobot");
+            rigGO = new GameObject("QuadrupedRobot");
             rigGO.transform.SetParent(transform, false);
             rigGO.transform.localPosition = Vector3.zero;
-            rig = BipedRobotBuilder.Build(rigGO.transform);
+            rig = QuadrupedRobotBuilder.Build(rigGO.transform);
         }
 
         public override void OnEpisodeBegin()
@@ -223,7 +217,7 @@ namespace MiniChicken.Training
             // 每回合重建机器人，保证干净的初始状态
             if (rigGO == null)
             {
-                var existing = transform.Find("BipedRobot");
+                var existing = transform.Find("QuadrupedRobot");
                 if (existing != null) rigGO = existing.gameObject;
             }
             if (rigGO != null) Destroy(rigGO);
@@ -237,11 +231,11 @@ namespace MiniChicken.Training
             if (!manualCommand) SampleCommands();
 
             if (debugLog && (logEveryEpisodes <= 0 || episodeCount % logEveryEpisodes == 0))
-                Debug.Log($"[LocomotionAgent] Episode #{episodeCount} 开始 | cmd=(vx={cmdVel.x:F2},vz={cmdVel.z:F2},yaw={cmdVel.y:F2}) | Step={StepCount}");
+                Debug.Log($"[QuadrupedAgent] Episode #{episodeCount} 开始 | cmd=(vx={cmdVel.x:F2},vz={cmdVel.z:F2},yaw={cmdVel.y:F2}) | Step={StepCount}");
 
             for (int i = 0; i < NumJoints; i++) { curAction[i] = 0f; prevAction[i] = 0f; }
             episodeEndLogged = false;
-            lastDecisionTime = -1f;   // 新回合开始，避免把回合间隔误报为卡顿
+            lastDecisionTime = -1f;
         }
 
         /// <summary>内置课程：前 N 个回合内指令范围从 ±minCmdSpeed 扩大到 ±maxCmdSpeed。</summary>
@@ -272,8 +266,7 @@ namespace MiniChicken.Training
         }
 
         /// <summary>
-        /// 每回合随机化整机质量、电池配重（质量+前后偏移）、脚底摩擦与 PD 增益，
-        /// 让策略在训练分布内见过装配误差，部署时真实偏差成为"已见过的样本"。
+        /// 每回合随机化整机质量、电池配重（质量+前后偏移）、脚底摩擦与 PD 增益。
         /// 注意：随机参数不进入观测（部署时不可知），靠闭环反馈 + 循环网络在线吸收。
         /// </summary>
         void ApplyDomainRandomization()
@@ -295,7 +288,7 @@ namespace MiniChicken.Training
             float friction = Random.Range(footFrictionRange.x, footFrictionRange.y);
             if (randomizedFootMat == null)
             {
-                randomizedFootMat = new PhysicMaterial("RandomizedFoot")
+                randomizedFootMat = new PhysicMaterial("QuadrupedRandomizedFoot")
                 {
                     frictionCombine = PhysicMaterialCombine.Maximum,
                     bounceCombine = PhysicMaterialCombine.Minimum,
@@ -304,8 +297,9 @@ namespace MiniChicken.Training
             }
             randomizedFootMat.staticFriction = friction;
             randomizedFootMat.dynamicFriction = friction;
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < NumFeet; i++)
             {
+                if (rig.Feet[i] == null) continue;
                 var col = rig.Feet[i].GetComponent<Collider>();
                 if (col != null) col.sharedMaterial = randomizedFootMat;
             }
@@ -346,9 +340,9 @@ namespace MiniChicken.Training
             for (int i = 0; i < NumJoints; i++)
                 sensor.AddObservation(rig.Joints[i].jointVelocity[0] / 720f);
 
-            // 双脚触地 (2)
-            sensor.AddObservation(FootGrounded(0) ? 1f : 0f);
-            sensor.AddObservation(FootGrounded(1) ? 1f : 0f);
+            // 四脚触地 (4)
+            for (int i = 0; i < NumFeet; i++)
+                sensor.AddObservation(FootGrounded(i) ? 1f : 0f);
 
             // 速度指令 (3)
             sensor.AddObservation(new Vector3(cmdVel.x, cmdVel.z, cmdVel.y) / 2f);
@@ -363,15 +357,13 @@ namespace MiniChicken.Training
             s_totalDecisions++;
 
             // 卡顿检测：正常 10 Hz 决策间隔约 0.1s，若间隔 > 1s 说明主线程被阻塞
-            // （最可能是训练器推送并同步加载新模型）。把报警时刻与训练器日志的 saved model 对齐即可确认。
             if (lastDecisionTime >= 0f)
             {
                 float gap = Time.time - lastDecisionTime;
-                // 全局限频：模型重载会让所有并行 Agent 同时报警，只保留一条
                 if (gap > 1f && Time.realtimeSinceStartup - s_lastStallWarnTime >= StallWarnInterval)
                 {
                     s_lastStallWarnTime = Time.realtimeSinceStartup;
-                    Debug.LogWarning($"[LocomotionAgent] 决策间隔异常 {gap:F1}s @ Step={StepCount}（主线程疑似卡顿，可能为训练器推送并加载模型）");
+                    Debug.LogWarning($"[QuadrupedAgent] 决策间隔异常 {gap:F1}s @ Step={StepCount}（主线程疑似卡顿，可能为训练器推送并加载模型）");
                 }
             }
             lastDecisionTime = Time.time;
@@ -379,10 +371,11 @@ namespace MiniChicken.Training
             if (debugLog && Time.realtimeSinceStartup - s_lastHeartbeatLogTime >= HeartbeatLogInterval)
             {
                 s_lastHeartbeatLogTime = Time.realtimeSinceStartup;
-                Debug.Log($"[LocomotionAgent] 决策心跳: 累计决策={s_totalDecisions} | Step={StepCount} | t={Time.time:F1}s");
+                Debug.Log($"[QuadrupedAgent] 决策心跳: 累计决策={s_totalDecisions} | Step={StepCount} | t={Time.time:F1}s");
             }
 
             // 心跳落盘：Unity 卡死后 Console 内容不可恢复，该文件用于事后定位卡死时刻
+            // （文件停止追加的时间 = 卡死时刻；最后一行 = 卡死时的环境/步数/奖励状态）
             if (Time.realtimeSinceStartup - s_lastHeartbeatFileTime >= HeartbeatFileInterval)
             {
                 s_lastHeartbeatFileTime = Time.realtimeSinceStartup;
@@ -396,8 +389,7 @@ namespace MiniChicken.Training
             for (int i = 0; i < NumJoints; i++)
             {
                 var spec = rig.Specs[i];
-                // ActionScale 单位为弧度（0.5 rad ≈ ±28.6°），驱动目标为度需换算；
-                // 若按度直接相乘，动作幅度只有 ±0.5°，策略无法驱动关节（训练将永不收敛）
+                // ActionScale 单位为弧度（0.5 rad ≈ ±28.6°），驱动目标为度需换算
                 float target = spec.Clamp(spec.RestDeg + a[i] * spec.ActionScale * Mathf.Rad2Deg);
                 curAction[i] = a[i];
 
@@ -470,7 +462,7 @@ namespace MiniChicken.Training
             {
                 if (reason == "fall") AddReward(-fallPenalty);
                 if (debugLog && !episodeEndLogged && (logEveryEpisodes <= 0 || episodeCount % logEveryEpisodes == 0))
-                    Debug.Log($"[LocomotionAgent] Episode #{episodeCount} 结束 reason={reason} | cumReward={GetCumulativeReward():F2} | Step={StepCount}");
+                    Debug.Log($"[QuadrupedAgent] Episode #{episodeCount} 结束 reason={reason} | cumReward={GetCumulativeReward():F2} | Step={StepCount}");
                 episodeEndLogged = true;
                 if (reason == "fall") EndEpisode();   // timeout 由引擎在 MaxStep 时自动结束
             }
@@ -492,10 +484,7 @@ namespace MiniChicken.Training
             float yawErr = rb.angularVelocity.y - cmdVel.y;
             r += wYawTracking * Mathf.Exp(-1.0f * yawErr * yawErr);
 
-            // 朝向对齐：喙（机体 +Z）指向指令速度方向。
-            // 速度跟踪只约束世界系速度，机体朝向在观测中不可见，导致"倒退步态"
-            // 与"前进步态"奖励等价；此项打破对称，使喙朝前成为更优解。
-            // 指令近零（原地站立）时不计入，避免诱导无意义原地转向。
+            // 朝向对齐：头部（机体 +Z）指向指令速度方向，打破“倒退步态”等价解
             Vector3 cmdDir = new Vector3(cmdVel.x, 0f, cmdVel.z);
             if (cmdDir.sqrMagnitude > 0.01f)
                 r += wFacing * 0.5f * (1f + Vector3.Dot(rootT.forward, cmdDir.normalized));
@@ -529,19 +518,20 @@ namespace MiniChicken.Training
         bool FootGrounded(int footIndex)
         {
             Transform foot = rig.Feet[footIndex];
-            Vector3 origin = foot.position + Vector3.up * 0.08f;
-            return Physics.Raycast(origin, Vector3.down, 0.16f, groundMask, QueryTriggerInteraction.Ignore);
+            if (foot == null) return false;
+            Vector3 origin = foot.position + Vector3.up * 0.06f;
+            return Physics.Raycast(origin, Vector3.down, 0.14f, groundMask, QueryTriggerInteraction.Ignore);
         }
 
         // Editor 调试可视化
         void OnDrawGizmosSelected()
         {
-            if (rig == null || rig.Feet[0] == null) return;
-            for (int i = 0; i < 2; i++)
+            if (rig == null || rig.Feet == null || rig.Feet[0] == null) return;
+            for (int i = 0; i < NumFeet; i++)
             {
                 if (rig.Feet[i] == null) continue;
                 Gizmos.color = FootGrounded(i) ? Color.green : Color.red;
-                Gizmos.DrawLine(rig.Feet[i].position, rig.Feet[i].position + Vector3.down * 0.16f);
+                Gizmos.DrawLine(rig.Feet[i].position, rig.Feet[i].position + Vector3.down * 0.14f);
             }
         }
     }

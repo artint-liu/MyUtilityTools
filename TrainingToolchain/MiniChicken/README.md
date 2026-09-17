@@ -10,6 +10,18 @@
 
 完整关节规格、观测/动作空间、奖励函数设计见 [`docs/RobotDesign.md`](docs/RobotDesign.md)。
 
+## 四足机器人（Quadruped）
+
+工程同时内置一台 **12 自由度四足机器人**（4 腿 × 3 关节：髋回转 Abduct（竖直轴，舵机竖置）+ 髋俯仰 HipPitch + 膝 Knee），约 20 kg / 0.55 m，具备与双足完全相同的三大功能：
+
+| 功能 | 入口（菜单 Quadruped/...，与 MiniChicken 并列） | 产物 |
+|---|---|---|
+| 训练 | Setup Training Scene → 覆盖保存到 `Assets/Scenes/TrainingScene.unity`（与双足共用同一场景文件，切换机器人类型时重跑对应向导）；超参在场景 `TrainingConfig` 对象上修改，总控台自动导出 yaml（behavior: `QuadrupedLocomotion`） | `results/<run-id>/QuadrupedLocomotion.onnx` |
+| 可编辑骨骼 | Pose Editor Scene → "Quadruped Pose Editor" 窗口（4 腿 × 3 关节滑条 + 左右/前后同步） | `Assets/Configs/QuadrupedPose.json` |
+| 验证 | Setup Validation Scene（需先把 ONNX 模型复制到 `Assets/Models/QuadrupedLocomotion.onnx`） | `Assets/Scenes/QuadrupedValidationScene.unity` |
+
+观测 49 维 / 动作 12 维；奖励、课程、域随机化（质量/电池/摩擦/PD 增益/推力扰动）与双足任务同构。也可用命令行直接训练：`mlagents-learn training/quadruped_locomotion.yaml --run-id=quad_v1`。
+
 ## 工程结构
 
 ```
@@ -56,6 +68,9 @@ Unity 编辑器打开工程后，菜单：**MiniChicken → Setup Training Scene
 
 1. 「准备 Python 环境」：创建 `venv` 并按 `training/requirements.txt` 方案B锁版本安装依赖（首次需几分钟，实时显示 pip 日志）。
 2. 「启动训练」：填 run-id 后一键后台启动 `mlagents-learn`，训练器就绪后可自动进入 Play；「停止训练」会终止整棵进程树并退出 Play。
+   训练超参**不需要手动编辑 yaml**：场景向导会在训练场景里创建 `TrainingConfig` 配置对象，
+   在其 Inspector 上直接修改（PPO 超参 / 网络 / 奖励 / 引擎设置），
+   总控台启动训练时自动导出到 `Assets/Configs/MLAgentsConfig.yaml` 交给训练器。
 3. 「继续训练」：从 `results/` 已有 run（如 `biped_v1`）以 `--resume` 继续。
 4. 「监控」：一键启动 TensorBoard（http://localhost:6006）。
 
