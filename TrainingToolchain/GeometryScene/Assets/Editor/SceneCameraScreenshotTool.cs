@@ -7,37 +7,54 @@ using System.Text;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// 编辑器工具：扫描所有场景中的透视相机并截图（256x256 灰度 PNG，符合 ImageToScene 训练框架格式），
 /// 同时为每张截图生成同名 JSON 文件：
 /// {"camera": {"eye": [...], "target": [...], "fov_y_deg": ...}, "objects": [...]}
-/// objects 仅记录视锥裁剪内的几何体，参数格式与 ImageToScene README 一致
+/// objects 仅记录截图像素中实际可见的几何体（逐像素 ID 渲染通道做遮挡剔除），参数格式与 ImageToScene README 一致
 /// （type: box/sphere/cylinder/ellipsoid/cone/capsule，四元数归一化且 w>=0）。
 /// </summary>
 public static class SceneCameraScreenshotTool
 {
     private const int CaptureSize = 256;
     private const string OutputFolderName = "Screenshots";
-    private const int FramesToWait = 3;
+    private const int FramesToWait = 3;      // 每次读取前要求真实渲染帧（Time.frameCount）推进的数量
+    private const int WarmUpFrames = 5;      // 开始截图前要求真实渲染帧推进的数量（管线热身）
+    private const int MaxWaitTicks = 600;    // 编辑器 tick 兜底上限（防止真实帧长时间不推进导致卡死）
 
-    private enum State { OpenScene, PrepCamera, ReadPixels }
+    private enum State { WarmUp, OpenScene, PrepCamera, ReadPixels, PrepIdPass, ReadIdPixels }
 
     private static readonly Queue<string> SceneQueue = new Queue<string>();
     private static readonly Queue<Camera> CameraQueue = new Queue<Camera>();
 
     private static State state;
+    private static State stateAfterWarmUp;
     private static string originalScenePath;
     private static string outputDir;
     private static int totalSceneCount;
     private static int doneSceneCount;
     private static int capturedCount;
     private static int framesWaited;
+    private static int frameBaseline; // 开始等待时的 Time.frameCount，用于确认真实渲染帧已推进
     private static RenderTexture renderTexture;
     private static Camera currentCamera;
     private static bool currentCameraWasEnabled;
     private static bool running;
     private static bool restoreSceneOnFinish;
+
+    // 像素级遮挡剔除（ID 渲染通道）状态
+    private const string UnlitShaderName = "Universal Render Pipeline/Unlit";
+    private const string IdDebugFolderName = "Screenshots_id_debug"; // 调试图独立目录，与数据集目录 Screenshots 平级
+    /// <summary>调试开关：额外保存 ID 通道图像到独立调试目录（默认关闭，不会混入 Screenshots 数据集）。</summary>
+    public static bool DebugSaveIdPassImage = false;
+    private static readonly List<IdMappedRenderer> idMappedRenderers = new List<IdMappedRenderer>();
+    private static readonly HashSet<int> visibleIds = new HashSet<int>();
+    private static string currentBaseName;
+    private static CameraClearFlags idPassSavedClearFlags;
+    private static Color idPassSavedBgColor;
+    private static bool? idPassSavedPostFx;
 
     [MenuItem("Tools/场景相机截图/扫描所有场景透视相机并截图")]
     public static void CaptureAllPerspectiveCameras()
@@ -130,16 +147,26 @@ public static class SceneCameraScreenshotTool
         }
     }
 
-    /// <summary>初始化状态并启动截图状态机。</summary>
+    /// <summary>初始化状态并启动截图状态机（先进入热身，让 URP 渲染管线就绪）。</summary>
     private static void StartCapture(State initialState, int totalScenes, int doneScenes, bool restoreScene)
     {
         totalSceneCount = totalScenes;
         doneSceneCount = doneScenes;
         capturedCount = 0;
         restoreSceneOnFinish = restoreScene;
-        state = initialState;
+        stateAfterWarmUp = initialState;
+        framesWaited = 0;
+        state = State.WarmUp;
         running = true;
         EditorApplication.update += Tick;
+
+        // 在热身阶段提前创建 RenderTexture：新 RT 绑定到相机的最初几帧 URP 不会真正出图，
+        // 提前创建并空转数帧可避免第一个相机的截图读到黑屏
+        if (renderTexture == null)
+        {
+            renderTexture = new RenderTexture(CaptureSize, CaptureSize, 24, RenderTextureFormat.ARGB32);
+            renderTexture.Create();
+        }
     }
 
     private static void Tick()
@@ -148,6 +175,21 @@ public static class SceneCameraScreenshotTool
         {
             switch (state)
             {
+                case State.WarmUp:
+                    if (framesWaited == 0)
+                    {
+                        frameBaseline = Time.frameCount;
+                    }
+                    framesWaited++;
+                    EditorApplication.QueuePlayerLoopUpdate();
+                    // 菜单触发后编辑器可能吞掉数次队列请求（Time.frameCount 不动），
+                    // 必须等到真实渲染帧推进，而非简单计数 editor tick
+                    if (Time.frameCount - frameBaseline >= WarmUpFrames || framesWaited >= MaxWaitTicks)
+                    {
+                        framesWaited = 0;
+                        state = stateAfterWarmUp;
+                    }
+                    break;
                 case State.OpenScene:
                     TickOpenScene();
                     break;
@@ -156,6 +198,12 @@ public static class SceneCameraScreenshotTool
                     break;
                 case State.ReadPixels:
                     TickReadPixels();
+                    break;
+                case State.PrepIdPass:
+                    TickPrepIdPass();
+                    break;
+                case State.ReadIdPixels:
+                    TickReadIdPixels();
                     break;
             }
         }
@@ -204,24 +252,25 @@ public static class SceneCameraScreenshotTool
 
         currentCamera.targetTexture = renderTexture;
         framesWaited = 0;
+        frameBaseline = Time.frameCount;
         state = State.ReadPixels;
 
-        // URP 下 Camera.Render 不可用，通过队列化一次 Player Loop 让相机渲染到 RenderTexture
+        // URP 下 Camera.Render 不可用，通过队列化 Player Loop 让相机渲染到 RenderTexture
         EditorApplication.QueuePlayerLoopUpdate();
     }
 
     private static void TickReadPixels()
     {
         framesWaited++;
-        if (framesWaited < FramesToWait)
+        if (Time.frameCount - frameBaseline < FramesToWait && framesWaited < MaxWaitTicks)
         {
             EditorApplication.QueuePlayerLoopUpdate();
-            return;
+            return; // 真实渲染帧尚未推进足够数量
         }
 
         string sceneName = Path.GetFileNameWithoutExtension(EditorSceneManager.GetActiveScene().path);
-        string baseName = SanitizeFileName(sceneName + "_" + currentCamera.name);
-        EditorUtility.DisplayProgressBar("场景相机截图", $"截图: {baseName} ({doneSceneCount}/{totalSceneCount})",
+        currentBaseName = SanitizeFileName(sceneName + "_" + currentCamera.name);
+        EditorUtility.DisplayProgressBar("场景相机截图", $"截图: {currentBaseName} ({doneSceneCount}/{totalSceneCount})",
             (float)doneSceneCount / totalSceneCount);
 
         // 读取像素并保存灰度 PNG（256x256，符合 ImageToScene 输入格式）
@@ -242,13 +291,157 @@ public static class SceneCameraScreenshotTool
         tex.SetPixels32(colors);
         tex.Apply();
 
-        string pngPath = Path.Combine(outputDir, baseName + ".png");
+        string pngPath = Path.Combine(outputDir, currentBaseName + ".png");
         File.WriteAllBytes(pngPath, tex.EncodeToPNG());
         UnityEngine.Object.DestroyImmediate(tex);
 
-        // 生成同名 JSON（ImageToScene 格式：camera + 视锥内 objects）
-        File.WriteAllText(Path.Combine(outputDir, baseName + ".json"),
-            BuildSceneJson(currentCamera, CollectObjectsInFrustum(currentCamera)));
+        // PNG 已保存，进入像素级遮挡剔除：渲染 ID 通道后再生成 JSON
+        framesWaited = 0;
+        state = State.PrepIdPass;
+        EditorApplication.QueuePlayerLoopUpdate();
+    }
+
+    #region 像素级遮挡剔除（ID 渲染通道）
+
+    /// <summary>ID 通道中的渲染器与其原始材质。</summary>
+    private class IdMappedRenderer
+    {
+        public Renderer renderer;
+        public Material[] originalMaterials;
+        public Material idMaterial;
+        public int id;
+    }
+
+    /// <summary>
+    /// 进入 ID 渲染通道：把场景中所有网格渲染器临时替换为纯色 Unlit 材质（颜色即物体 ID），
+    /// 相机背景改为纯黑并关闭后处理，渲染一帧后逐像素解码 —— 图像中出现该物体像素即真正可见。
+    /// 被完全遮挡或超出视锥的物体不会有任何像素，从而实现像素级（而非采样近似）的遮挡剔除。
+    /// </summary>
+    private static void TickPrepIdPass()
+    {
+        idMappedRenderers.Clear();
+        visibleIds.Clear();
+
+        Shader shader = Shader.Find(UnlitShaderName);
+        if (shader == null)
+        {
+            Finish(false, "未找到着色器: " + UnlitShaderName);
+            return;
+        }
+
+        int nextId = 1; // 0 保留给纯黑背景
+        foreach (Renderer r in UnityEngine.Object.FindObjectsOfType<Renderer>())
+        {
+            if (!r.enabled || !r.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+            MeshFilter mf = r.GetComponent<MeshFilter>();
+            Mesh mesh = mf != null ? mf.sharedMesh : null;
+            if (mesh == null)
+            {
+                continue;
+            }
+
+            var mat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            Color idColor = IdToColor(nextId);
+            if (mat.HasProperty("_BaseColor"))
+            {
+                mat.SetColor("_BaseColor", idColor);
+            }
+            else if (mat.HasProperty("_Color"))
+            {
+                mat.SetColor("_Color", idColor);
+            }
+
+            idMappedRenderers.Add(new IdMappedRenderer
+            {
+                renderer = r,
+                originalMaterials = r.sharedMaterials,
+                idMaterial = mat,
+                id = nextId
+            });
+            r.sharedMaterials = new[] { mat };
+            nextId++;
+        }
+
+        // 相机临时设置：纯黑背景 + 关闭后处理，保证读回颜色即为物体 ID
+        idPassSavedClearFlags = currentCamera.clearFlags;
+        idPassSavedBgColor = currentCamera.backgroundColor;
+        currentCamera.clearFlags = CameraClearFlags.SolidColor;
+        currentCamera.backgroundColor = new Color(0f, 0f, 0f, 1f);
+        var camData = currentCamera.GetComponent<UniversalAdditionalCameraData>();
+        if (camData != null)
+        {
+            idPassSavedPostFx = camData.renderPostProcessing;
+            camData.renderPostProcessing = false;
+        }
+
+        framesWaited = 0;
+        frameBaseline = Time.frameCount;
+        state = State.ReadIdPixels;
+        EditorApplication.QueuePlayerLoopUpdate();
+    }
+
+    private static void TickReadIdPixels()
+    {
+        framesWaited++;
+        if (Time.frameCount - frameBaseline < FramesToWait && framesWaited < MaxWaitTicks)
+        {
+            EditorApplication.QueuePlayerLoopUpdate();
+            return; // 真实渲染帧尚未推进足够数量
+        }
+
+        // 逐像素解码 ID：任何像素中出现即视为可见
+        RenderTexture prevActive = RenderTexture.active;
+        RenderTexture.active = renderTexture;
+        var tex = new Texture2D(CaptureSize, CaptureSize, TextureFormat.RGBA32, false);
+        tex.ReadPixels(new Rect(0, 0, CaptureSize, CaptureSize), 0, 0);
+        tex.Apply();
+        RenderTexture.active = prevActive;
+
+        Color32[] pixels = tex.GetPixels32();
+        if (DebugSaveIdPassImage)
+        {
+            // 调试图写入独立目录，避免混入 Screenshots 数据集
+            string idDebugDir = Path.Combine(
+                Directory.GetParent(Application.dataPath).FullName, IdDebugFolderName);
+            Directory.CreateDirectory(idDebugDir);
+            File.WriteAllBytes(Path.Combine(idDebugDir, currentBaseName + "_id.png"), tex.EncodeToPNG());
+        }
+        UnityEngine.Object.DestroyImmediate(tex);
+        foreach (Color32 p in pixels)
+        {
+            int id = ColorToId(p);
+            if (id > 0)
+            {
+                visibleIds.Add(id);
+            }
+        }
+
+        // 先按可见 ID 收集渲染器，再恢复材质与相机设置，最后生成 JSON
+        var visibleRenderers = new List<Renderer>();
+        foreach (IdMappedRenderer m in idMappedRenderers)
+        {
+            if (visibleIds.Contains(m.id))
+            {
+                visibleRenderers.Add(m.renderer);
+            }
+        }
+        RestoreIdPassState();
+
+        var objects = new List<ObjectInfo>();
+        foreach (Renderer r in visibleRenderers)
+        {
+            if (TryBuildObjectInfo(r, out ObjectInfo info))
+            {
+                objects.Add(info);
+            }
+        }
+
+        // 生成同名 JSON（ImageToScene 格式：camera + 像素级可见 objects）
+        File.WriteAllText(Path.Combine(outputDir, currentBaseName + ".json"),
+            BuildSceneJson(currentCamera, objects));
 
         // 恢复相机状态
         currentCamera.targetTexture = null;
@@ -259,25 +452,71 @@ public static class SceneCameraScreenshotTool
         state = State.PrepCamera;
     }
 
-    private static List<ObjectInfo> CollectObjectsInFrustum(Camera cam)
+    /// <summary>恢复所有渲染器原始材质，并还原相机背景与后处理设置。</summary>
+    private static void RestoreIdPassState()
     {
-        Plane[] planes = GeometryUtility.CalculateFrustumPlanes(cam);
-        var result = new List<ObjectInfo>();
-        foreach (Renderer r in UnityEngine.Object.FindObjectsOfType<Renderer>())
+        foreach (IdMappedRenderer m in idMappedRenderers)
         {
-            if (!GeometryUtility.TestPlanesAABB(planes, r.bounds))
+            if (m.renderer != null)
             {
-                continue; // 不在视锥内
+                m.renderer.sharedMaterials = m.originalMaterials;
             }
-
-            if (!TryBuildObjectInfo(r, out ObjectInfo info))
+            if (m.idMaterial != null)
             {
-                continue; // 不属于 ImageToScene 支持的几何类型（如地面 Plane/Quad 等）
+                UnityEngine.Object.DestroyImmediate(m.idMaterial);
             }
-            result.Add(info);
         }
-        return result;
+        idMappedRenderers.Clear();
+
+        if (currentCamera != null)
+        {
+            currentCamera.clearFlags = idPassSavedClearFlags;
+            currentCamera.backgroundColor = idPassSavedBgColor;
+            var camData = currentCamera.GetComponent<UniversalAdditionalCameraData>();
+            if (camData != null && idPassSavedPostFx.HasValue)
+            {
+                camData.renderPostProcessing = idPassSavedPostFx.Value;
+            }
+            idPassSavedPostFx = null;
+        }
     }
+
+    /// <summary>
+    /// ID 与颜色的编解码采用步长 5 的稀疏编码（每通道 5~250，可编码 50^3 = 125000 个物体）。
+    /// 线性色彩空间下颜色值经 sRGB 往返会有 ±1 量化误差，连续小编号（如 1,2,3）极易被
+    /// 量化成背景色 0 导致漏检；步长 5 保证解码时按桶取整即可稳定还原。
+    /// </summary>
+    private const int IdStride = 5;      // 通道值步长
+    private const int IdsPerChannel = 50; // 单通道档位数
+
+    private static Color IdToColor(int id)
+    {
+        int i = id - 1;
+        return new Color32(
+            (byte)(((i % IdsPerChannel) + 1) * IdStride),
+            (byte)((((i / IdsPerChannel) % IdsPerChannel) + 1) * IdStride),
+            (byte)((((i / (IdsPerChannel * IdsPerChannel)) % IdsPerChannel) + 1) * IdStride),
+            255);
+    }
+
+    /// <summary>像素颜色解码为物体 ID，背景或无法识别的像素返回 0。</summary>
+    private static int ColorToId(Color32 p)
+    {
+        if (p.r < 3 && p.g < 3 && p.b < 3)
+        {
+            return 0; // 背景
+        }
+        int r = Mathf.RoundToInt(p.r / (float)IdStride);
+        int g = Mathf.RoundToInt(p.g / (float)IdStride);
+        int b = Mathf.RoundToInt(p.b / (float)IdStride);
+        if (r < 1 || r > IdsPerChannel || g < 1 || g > IdsPerChannel || b < 1 || b > IdsPerChannel)
+        {
+            return 0; // 不在合法编码范围内，忽略
+        }
+        return (r - 1) + IdsPerChannel * (g - 1) + IdsPerChannel * IdsPerChannel * (b - 1) + 1;
+    }
+
+    #endregion
 
     /// <summary>
     /// 将 Renderer 转换为 ImageToScene 格式的物体参数。
@@ -474,6 +713,9 @@ public static class SceneCameraScreenshotTool
         EditorApplication.update -= Tick;
         running = false;
         EditorUtility.ClearProgressBar();
+
+        // 若在 ID 通道中途出错，恢复被临时替换的材质与相机设置
+        RestoreIdPassState();
 
         if (currentCamera != null)
         {
