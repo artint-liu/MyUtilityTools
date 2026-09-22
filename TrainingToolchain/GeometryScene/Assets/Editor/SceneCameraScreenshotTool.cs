@@ -10,21 +10,41 @@ using UnityEngine;
 using UnityEngine.Rendering.Universal;
 
 /// <summary>
-/// 编辑器工具：扫描所有场景中的透视相机并截图（256x256 灰度 PNG，符合 ImageToScene 训练框架格式），
+/// 编辑器工具：扫描所有场景中的透视相机并截图（可选 256/512/1024/2048 尺寸的灰度 PNG，符合 ImageToScene 训练框架格式），
 /// 同时为每张截图生成同名 JSON 文件：
 /// {"camera": {"eye": [...], "target": [...], "fov_y_deg": ...}, "objects": [...]}
 /// objects 仅记录截图像素中实际可见的几何体（逐像素 ID 渲染通道做遮挡剔除），参数格式与 ImageToScene README 一致
 /// （type: box/sphere/cylinder/ellipsoid/cone/capsule，四元数归一化且 w>=0）。
+///
+/// 深度截图功能：以深度模式运行同一状态机，为每个透视相机输出 4 个文件到独立目录：
+/// 线性深度图（*_linear_depth.png）、线性深度 JSON、ZBuffer 深度图（*_zbuffer_depth.png）、ZBuffer 深度 JSON。
+/// 两份 JSON 内容完全相同（仅为与各自 PNG 建立文件映射关系），内容为 ImageToScene 格式的相机与可见物体参数。
+/// 亮度约定：背景填充（天空盒/纯黑清屏）= 0（无穷远）；几何像素按 min-max 归一化，
+/// 模型最近处 → 1.0，模型最远处 → 0.0，深度铺满整个灰度范围。
 /// </summary>
 public static class SceneCameraScreenshotTool
 {
-    private const int CaptureSize = 256;
+    private const int DefaultCaptureSize = 256; // 默认截图尺寸（不写配置文件）
+    private static readonly int[] SupportedCaptureSizes = { 256, 512, 1024, 2048 };
+    private const string ConfigFilePath = "ProjectSettings/SceneCameraScreenshotTool.json"; // 尺寸配置文件（用户手动修改尺寸后才写入）
+
+    /// <summary>当前截图尺寸：启动时优先读取配置文件，否则为默认 256；可通过菜单即时切换。</summary>
+    private static int captureSize = LoadConfiguredCaptureSize();
+
     private const string OutputFolderName = "Screenshots";
+    private const string DepthOutputFolderName = "Screenshots_depth"; // 深度截图独立输出目录
+    private const string DepthShaderName = "Hidden/SceneDepthCapture"; // 深度捕获着色器
+    private const string DepthModeProp = "_DepthMode";
     private const int FramesToWait = 3;      // 每次读取前要求真实渲染帧（Time.frameCount）推进的数量
     private const int WarmUpFrames = 5;      // 开始截图前要求真实渲染帧推进的数量（管线热身）
     private const int MaxWaitTicks = 600;    // 编辑器 tick 兜底上限（防止真实帧长时间不推进导致卡死）
 
-    private enum State { WarmUp, OpenScene, PrepCamera, ReadPixels, PrepIdPass, ReadIdPixels }
+    private enum State
+    {
+        WarmUp, OpenScene, PrepCamera, ReadPixels,
+        PrepDepthZ, ReadDepthZ, PrepDepthLinear, ReadDepthLinear, // 深度通道（深度模式专用）
+        PrepIdPass, ReadIdPixels
+    }
 
     private static readonly Queue<string> SceneQueue = new Queue<string>();
     private static readonly Queue<Camera> CameraQueue = new Queue<Camera>();
@@ -44,6 +64,12 @@ public static class SceneCameraScreenshotTool
     private static bool running;
     private static bool restoreSceneOnFinish;
 
+    // 深度截图模式状态
+    private static bool depthMode;         // true: 输出线性/ZBuffer 深度图而非颜色图
+    private static RenderTexture depthRT;  // 线性（非 sRGB）渲染目标，保证深度亮度值原样存储与读回
+    private static Material depthMaterial; // 深度输出材质（所有渲染器共享，通道间切换 _DepthMode）
+    private static int depthPassMode;      // 当前深度通道: 0=ZBuffer, 1=线性深度
+
     // 像素级遮挡剔除（ID 渲染通道）状态
     private const string UnlitShaderName = "Universal Render Pipeline/Unlit";
     private const string IdDebugFolderName = "Screenshots_id_debug"; // 调试图独立目录，与数据集目录 Screenshots 平级
@@ -56,10 +82,107 @@ public static class SceneCameraScreenshotTool
     private static Color idPassSavedBgColor;
     private static bool? idPassSavedPostFx;
 
-    [MenuItem("Tools/场景相机截图/扫描所有场景透视相机并截图")]
+    #region 截图尺寸菜单（256 / 512 / 1024 / 2048）
+
+    [MenuItem("截图/尺寸/256", false, 100)]
+    private static void SetCaptureSize256() { SetCaptureSize(256); }
+
+    [MenuItem("截图/尺寸/256", true)]
+    private static bool ValidateCaptureSize256() { Menu.SetChecked("截图/尺寸/256", captureSize == 256); return true; }
+
+    [MenuItem("截图/尺寸/512", false, 101)]
+    private static void SetCaptureSize512() { SetCaptureSize(512); }
+
+    [MenuItem("截图/尺寸/512", true)]
+    private static bool ValidateCaptureSize512() { Menu.SetChecked("截图/尺寸/512", captureSize == 512); return true; }
+
+    [MenuItem("截图/尺寸/1024", false, 102)]
+    private static void SetCaptureSize1024() { SetCaptureSize(1024); }
+
+    [MenuItem("截图/尺寸/1024", true)]
+    private static bool ValidateCaptureSize1024() { Menu.SetChecked("截图/尺寸/1024", captureSize == 1024); return true; }
+
+    [MenuItem("截图/尺寸/2048", false, 103)]
+    private static void SetCaptureSize2048() { SetCaptureSize(2048); }
+
+    [MenuItem("截图/尺寸/2048", true)]
+    private static bool ValidateCaptureSize2048() { Menu.SetChecked("截图/尺寸/2048", captureSize == 2048); return true; }
+
+    /// <summary>切换截图尺寸：仅在值变化时写入配置文件，保证默认 256 不产生配置。</summary>
+    private static void SetCaptureSize(int size)
+    {
+        if (running)
+        {
+            EditorUtility.DisplayDialog("场景相机截图", "任务正在执行中，无法修改截图尺寸。", "确定");
+            return;
+        }
+        if (size == captureSize)
+        {
+            return;
+        }
+        // 仅在用户手动修改尺寸时写入配置文件（默认 256 不产生配置）
+        captureSize = size;
+        WriteCaptureSizeConfig(size);
+    }
+
+    /// <summary>读取配置文件中的截图尺寸，文件不存在或值非法时返回默认 256（不生成配置文件）。</summary>
+    private static int LoadConfiguredCaptureSize()
+    {
+        try
+        {
+            string path = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ConfigFilePath);
+            if (!File.Exists(path))
+            {
+                return DefaultCaptureSize;
+            }
+            string json = File.ReadAllText(path);
+            int size = JsonUtility.FromJson<CaptureSizeConfig>(json)?.size ?? DefaultCaptureSize;
+            return SupportedCaptureSizes.Contains(size) ? size : DefaultCaptureSize;
+        }
+        catch
+        {
+            return DefaultCaptureSize;
+        }
+    }
+
+    private static void WriteCaptureSizeConfig(int size)
+    {
+        try
+        {
+            string path = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ConfigFilePath);
+            File.WriteAllText(path,
+                JsonUtility.ToJson(new CaptureSizeConfig { size = size }, prettyPrint: true));
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("保存截图尺寸配置失败: " + e.Message);
+        }
+    }
+
+    [Serializable]
+    private class CaptureSizeConfig
+    {
+        public int size;
+    }
+
+    #endregion
+
+    [MenuItem("截图/颜色/所有场景/所有透视相机")]
     public static void CaptureAllPerspectiveCameras()
     {
-        if (!TryBeginCapture())
+        BeginCaptureAllScenes(false);
+    }
+
+    [MenuItem("截图/深度/所有场景/所有透视相机")]
+    public static void CaptureAllScenesDepthMaps()
+    {
+        BeginCaptureAllScenes(true);
+    }
+
+    /// <summary>扫描所有场景并对每个透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图）。</summary>
+    private static void BeginCaptureAllScenes(bool isDepth)
+    {
+        if (!TryBeginCapture(isDepth))
         {
             return;
         }
@@ -99,10 +222,22 @@ public static class SceneCameraScreenshotTool
         StartCapture(State.OpenScene, SceneQueue.Count, 0, true);
     }
 
-    [MenuItem("Tools/场景相机截图/仅截图当前场景透视相机")]
+    [MenuItem("截图/颜色/当前场景/所有透视相机")]
     public static void CaptureCurrentSceneCameras()
     {
-        if (!TryBeginCapture())
+        BeginCaptureCurrentScene(false);
+    }
+
+    [MenuItem("截图/深度/当前场景/所有透视相机")]
+    public static void CaptureCurrentSceneDepthMaps()
+    {
+        BeginCaptureCurrentScene(true);
+    }
+
+    /// <summary>仅对当前打开场景中的透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图）。</summary>
+    private static void BeginCaptureCurrentScene(bool isDepth)
+    {
+        if (!TryBeginCapture(isDepth))
         {
             return;
         }
@@ -120,7 +255,7 @@ public static class SceneCameraScreenshotTool
     }
 
     /// <summary>公共前置检查与输出目录准备，返回 false 表示任务已存在不能开始。</summary>
-    private static bool TryBeginCapture()
+    private static bool TryBeginCapture(bool isDepth)
     {
         if (running)
         {
@@ -128,7 +263,9 @@ public static class SceneCameraScreenshotTool
             return false;
         }
 
-        outputDir = Path.Combine(Directory.GetParent(Application.dataPath).FullName, OutputFolderName);
+        depthMode = isDepth;
+        outputDir = Path.Combine(Directory.GetParent(Application.dataPath).FullName,
+            isDepth ? DepthOutputFolderName : OutputFolderName);
         Directory.CreateDirectory(outputDir);
         return true;
     }
@@ -162,9 +299,21 @@ public static class SceneCameraScreenshotTool
 
         // 在热身阶段提前创建 RenderTexture：新 RT 绑定到相机的最初几帧 URP 不会真正出图，
         // 提前创建并空转数帧可避免第一个相机的截图读到黑屏
-        if (renderTexture == null)
+        if (depthMode)
         {
-            renderTexture = new RenderTexture(CaptureSize, CaptureSize, 24, RenderTextureFormat.ARGB32);
+            // 深度模式使用线性浮点渲染目标：亮度值原样存储且保留高精度，供读回后做 min-max 归一化
+            if (depthRT == null || depthRT.width != captureSize)
+            {
+                ReleaseDepthRT();
+                depthRT = new RenderTexture(captureSize, captureSize, 24,
+                    RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
+                depthRT.Create();
+            }
+        }
+        else if (renderTexture == null || renderTexture.width != captureSize)
+        {
+            ReleaseRenderTexture();
+            renderTexture = new RenderTexture(captureSize, captureSize, 24, RenderTextureFormat.ARGB32);
             renderTexture.Create();
         }
     }
@@ -198,6 +347,13 @@ public static class SceneCameraScreenshotTool
                     break;
                 case State.ReadPixels:
                     TickReadPixels();
+                    break;
+                case State.PrepDepthZ:
+                    EnterDepthPass(0);
+                    break;
+                case State.ReadDepthZ:
+                case State.ReadDepthLinear:
+                    TickReadDepthPass();
                     break;
                 case State.PrepIdPass:
                     TickPrepIdPass();
@@ -245,15 +401,40 @@ public static class SceneCameraScreenshotTool
         currentCameraWasEnabled = currentCamera.enabled;
         currentCamera.enabled = true;
 
-        if (renderTexture == null)
+        if (depthMode)
         {
-            renderTexture = new RenderTexture(CaptureSize, CaptureSize, 24, RenderTextureFormat.ARGB32);
-        }
+            if (depthRT == null || depthRT.width != captureSize)
+            {
+                ReleaseDepthRT();
+                depthRT = new RenderTexture(captureSize, captureSize, 24,
+                    RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
+                depthRT.Create();
+            }
+            currentCamera.targetTexture = depthRT;
 
-        currentCamera.targetTexture = renderTexture;
-        framesWaited = 0;
-        frameBaseline = Time.frameCount;
-        state = State.ReadPixels;
+            string sceneName = Path.GetFileNameWithoutExtension(EditorSceneManager.GetActiveScene().path);
+            currentBaseName = SanitizeFileName(sceneName + "_" + currentCamera.name);
+            EditorUtility.DisplayProgressBar("场景相机深度截图",
+                $"深度截图: {currentBaseName} ({doneSceneCount}/{totalSceneCount})",
+                (float)doneSceneCount / totalSceneCount);
+
+            framesWaited = 0;
+            frameBaseline = Time.frameCount;
+            state = State.PrepDepthZ;
+        }
+        else
+        {
+            if (renderTexture == null || renderTexture.width != captureSize)
+            {
+                ReleaseRenderTexture();
+                renderTexture = new RenderTexture(captureSize, captureSize, 24, RenderTextureFormat.ARGB32);
+            }
+
+            currentCamera.targetTexture = renderTexture;
+            framesWaited = 0;
+            frameBaseline = Time.frameCount;
+            state = State.ReadPixels;
+        }
 
         // URP 下 Camera.Render 不可用，通过队列化 Player Loop 让相机渲染到 RenderTexture
         EditorApplication.QueuePlayerLoopUpdate();
@@ -273,11 +454,11 @@ public static class SceneCameraScreenshotTool
         EditorUtility.DisplayProgressBar("场景相机截图", $"截图: {currentBaseName} ({doneSceneCount}/{totalSceneCount})",
             (float)doneSceneCount / totalSceneCount);
 
-        // 读取像素并保存灰度 PNG（256x256，符合 ImageToScene 输入格式）
+        // 读取像素并保存灰度 PNG（符合 ImageToScene 输入格式）
         RenderTexture prevActive = RenderTexture.active;
         RenderTexture.active = renderTexture;
-        var tex = new Texture2D(CaptureSize, CaptureSize, TextureFormat.RGB24, false);
-        tex.ReadPixels(new Rect(0, 0, CaptureSize, CaptureSize), 0, 0);
+        var tex = new Texture2D(captureSize, captureSize, TextureFormat.RGB24, false);
+        tex.ReadPixels(new Rect(0, 0, captureSize, captureSize), 0, 0);
         tex.Apply();
         RenderTexture.active = prevActive;
 
@@ -301,6 +482,134 @@ public static class SceneCameraScreenshotTool
         EditorApplication.QueuePlayerLoopUpdate();
     }
 
+    #region 深度截图（ZBuffer 深度 / 线性深度）
+
+    /// <summary>
+    /// 进入一次深度渲染通道：把所有网格渲染器临时替换为深度输出材质并渲染一帧。
+    /// mode=0 输出 ZBuffer 原始深度，mode=1 输出按相机 near/far 归一化的线性深度。
+    /// 两者原始亮度均为近处大、远处小（纯黑背景为 0，即无穷远）；
+    /// 读回后再按几何像素 min-max 归一化（最近→1.0，最远→0.0）。
+    /// </summary>
+    private static void EnterDepthPass(int mode)
+    {
+        if (depthMaterial == null)
+        {
+            Shader shader = Shader.Find(DepthShaderName);
+            if (shader == null)
+            {
+                Finish(false, "未找到着色器: " + DepthShaderName);
+                return;
+            }
+            depthMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+        }
+
+        if (idMappedRenderers.Count == 0)
+        {
+            // 本相机的首次通道：收集渲染器并保存原始材质
+            foreach (Renderer r in UnityEngine.Object.FindObjectsOfType<Renderer>())
+            {
+                if (!r.enabled || !r.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+                MeshFilter mf = r.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null)
+                {
+                    continue;
+                }
+                idMappedRenderers.Add(new IdMappedRenderer
+                {
+                    renderer = r,
+                    originalMaterials = r.sharedMaterials,
+                    idMaterial = null,
+                    id = 0
+                });
+                r.sharedMaterials = new[] { depthMaterial };
+            }
+            SaveCameraPassSettings();
+        }
+
+        depthMaterial.SetFloat(DepthModeProp, mode);
+        depthPassMode = mode;
+        visibleIds.Clear();
+        framesWaited = 0;
+        frameBaseline = Time.frameCount;
+        state = mode == 0 ? State.ReadDepthZ : State.ReadDepthLinear;
+        EditorApplication.QueuePlayerLoopUpdate();
+    }
+
+    /// <summary>读取当前深度通道渲染结果并保存灰度 PNG，随后切换到同一相机的下一个通道。</summary>
+    private static void TickReadDepthPass()
+    {
+        framesWaited++;
+        if (Time.frameCount - frameBaseline < FramesToWait && framesWaited < MaxWaitTicks)
+        {
+            EditorApplication.QueuePlayerLoopUpdate();
+            return; // 真实渲染帧尚未推进足够数量
+        }
+
+        // 用线性浮点 Texture2D 读回，避免 sRGB 转换与提前 8 位量化破坏深度值
+        RenderTexture prevActive = RenderTexture.active;
+        RenderTexture.active = depthRT;
+        var tex = new Texture2D(captureSize, captureSize, TextureFormat.RGBAFloat, false, true);
+        tex.ReadPixels(new Rect(0, 0, captureSize, captureSize), 0, 0);
+        tex.Apply();
+        RenderTexture.active = prevActive;
+        Color[] pixels = tex.GetPixels();
+        UnityEngine.Object.DestroyImmediate(tex);
+
+        // 背景填充（天空盒/纯黑清屏）为精确 0（无穷远），几何像素亮度恒 > 0；
+        // 统计几何像素的亮度范围 [bMin, bMax]（最远处→bMin，最近处→bMax）
+        float bMin = 1f, bMax = 0f;
+        foreach (Color p in pixels)
+        {
+            float v = p.r;
+            if (v > 1e-6f)
+            {
+                if (v < bMin) bMin = v;
+                if (v > bMax) bMax = v;
+            }
+        }
+
+        // min-max 归一化：模型最近处 → 1.0，模型最远处 → 0.0，背景保持黑色，
+        // 使几何深度铺满整个灰度范围，避免数值集中在窄区间（如 0.9~0.7）
+        float range = bMax - bMin;
+        var colors = new Color32[pixels.Length];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            float v = pixels[i].r;
+            if (v <= 1e-6f)
+            {
+                colors[i] = new Color32(0, 0, 0, 255); // 背景（无穷远）
+                continue;
+            }
+            float n = range > 1e-6f ? (v - bMin) / range : 1f; // 场景深度单一时全取 1
+            byte g = (byte)Mathf.RoundToInt(Mathf.Clamp01(n) * 255f);
+            colors[i] = new Color32(g, g, g, 255);
+        }
+
+        var outTex = new Texture2D(captureSize, captureSize, TextureFormat.RGB24, false);
+        outTex.SetPixels32(colors);
+        outTex.Apply();
+        string suffix = depthPassMode == 0 ? "_zbuffer_depth" : "_linear_depth";
+        File.WriteAllBytes(Path.Combine(outputDir, currentBaseName + suffix + ".png"), outTex.EncodeToPNG());
+        UnityEngine.Object.DestroyImmediate(outTex);
+
+        framesWaited = 0;
+        if (depthPassMode == 0)
+        {
+            EnterDepthPass(1); // 同一相机接着渲染线性深度
+        }
+        else
+        {
+            // 两种深度图完成，进入 ID 通道生成 JSON（深度模式同样需要像素级可见性剔除）
+            state = State.PrepIdPass;
+            EditorApplication.QueuePlayerLoopUpdate();
+        }
+    }
+
+    #endregion
+
     #region 像素级遮挡剔除（ID 渲染通道）
 
     /// <summary>ID 通道中的渲染器与其原始材质。</summary>
@@ -319,7 +628,6 @@ public static class SceneCameraScreenshotTool
     /// </summary>
     private static void TickPrepIdPass()
     {
-        idMappedRenderers.Clear();
         visibleIds.Clear();
 
         Shader shader = Shader.Find(UnlitShaderName);
@@ -329,43 +637,90 @@ public static class SceneCameraScreenshotTool
             return;
         }
 
-        int nextId = 1; // 0 保留给纯黑背景
-        foreach (Renderer r in UnityEngine.Object.FindObjectsOfType<Renderer>())
+        if (idMappedRenderers.Count == 0)
         {
-            if (!r.enabled || !r.gameObject.activeInHierarchy)
+            // 首次进入（颜色模式）：收集渲染器并保存原始材质
+            int nextId = 1; // 0 保留给纯黑背景
+            foreach (Renderer r in UnityEngine.Object.FindObjectsOfType<Renderer>())
             {
-                continue;
-            }
-            MeshFilter mf = r.GetComponent<MeshFilter>();
-            Mesh mesh = mf != null ? mf.sharedMesh : null;
-            if (mesh == null)
-            {
-                continue;
-            }
+                if (!r.enabled || !r.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+                MeshFilter mf = r.GetComponent<MeshFilter>();
+                Mesh mesh = mf != null ? mf.sharedMesh : null;
+                if (mesh == null)
+                {
+                    continue;
+                }
 
-            var mat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-            Color idColor = IdToColor(nextId);
-            if (mat.HasProperty("_BaseColor"))
-            {
-                mat.SetColor("_BaseColor", idColor);
+                Material idMaterial = CreateIdMaterial(shader, nextId);
+                idMappedRenderers.Add(new IdMappedRenderer
+                {
+                    renderer = r,
+                    originalMaterials = r.sharedMaterials,
+                    idMaterial = idMaterial,
+                    id = nextId
+                });
+                r.sharedMaterials = new[] { idMaterial };
+                nextId++;
             }
-            else if (mat.HasProperty("_Color"))
+            SaveCameraPassSettings();
+        }
+        else
+        {
+            // 深度模式：渲染器已由深度通道收集（原始材质已保存），仅把深度材质替换为各物体 ID 材质
+            int nextId = 1;
+            foreach (IdMappedRenderer m in idMappedRenderers)
             {
-                mat.SetColor("_Color", idColor);
+                m.idMaterial = CreateIdMaterial(shader, nextId);
+                m.id = nextId;
+                if (m.renderer != null)
+                {
+                    m.renderer.sharedMaterials = new[] { m.idMaterial };
+                }
+                nextId++;
             }
-
-            idMappedRenderers.Add(new IdMappedRenderer
-            {
-                renderer = r,
-                originalMaterials = r.sharedMaterials,
-                idMaterial = mat,
-                id = nextId
-            });
-            r.sharedMaterials = new[] { mat };
-            nextId++;
         }
 
-        // 相机临时设置：纯黑背景 + 关闭后处理，保证读回颜色即为物体 ID
+        if (depthMode)
+        {
+            // 深度模式下 ID 通道必须切回彩色 RT：RFloat 目标只保留 R 通道，
+            // G/B 分量被丢弃会导致 ID 颜色解码失败（objects 全空）
+            if (renderTexture == null || renderTexture.width != captureSize)
+            {
+                ReleaseRenderTexture();
+                renderTexture = new RenderTexture(captureSize, captureSize, 24, RenderTextureFormat.ARGB32);
+                renderTexture.Create();
+            }
+            currentCamera.targetTexture = renderTexture;
+        }
+
+        framesWaited = 0;
+        frameBaseline = Time.frameCount;
+        state = State.ReadIdPixels;
+        EditorApplication.QueuePlayerLoopUpdate();
+    }
+
+    /// <summary>创建指定 ID 颜色的 Unlit 材质。</summary>
+    private static Material CreateIdMaterial(Shader shader, int id)
+    {
+        var mat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+        Color idColor = IdToColor(id);
+        if (mat.HasProperty("_BaseColor"))
+        {
+            mat.SetColor("_BaseColor", idColor);
+        }
+        else if (mat.HasProperty("_Color"))
+        {
+            mat.SetColor("_Color", idColor);
+        }
+        return mat;
+    }
+
+    /// <summary>保存相机当前的通道相关设置并切换为纯黑背景 + 关闭后处理（供深度/ID 通道共用，每相机仅保存一次）。</summary>
+    private static void SaveCameraPassSettings()
+    {
         idPassSavedClearFlags = currentCamera.clearFlags;
         idPassSavedBgColor = currentCamera.backgroundColor;
         currentCamera.clearFlags = CameraClearFlags.SolidColor;
@@ -376,11 +731,6 @@ public static class SceneCameraScreenshotTool
             idPassSavedPostFx = camData.renderPostProcessing;
             camData.renderPostProcessing = false;
         }
-
-        framesWaited = 0;
-        frameBaseline = Time.frameCount;
-        state = State.ReadIdPixels;
-        EditorApplication.QueuePlayerLoopUpdate();
     }
 
     private static void TickReadIdPixels()
@@ -395,8 +745,8 @@ public static class SceneCameraScreenshotTool
         // 逐像素解码 ID：任何像素中出现即视为可见
         RenderTexture prevActive = RenderTexture.active;
         RenderTexture.active = renderTexture;
-        var tex = new Texture2D(CaptureSize, CaptureSize, TextureFormat.RGBA32, false);
-        tex.ReadPixels(new Rect(0, 0, CaptureSize, CaptureSize), 0, 0);
+        var tex = new Texture2D(captureSize, captureSize, TextureFormat.RGBA32, false);
+        tex.ReadPixels(new Rect(0, 0, captureSize, captureSize), 0, 0);
         tex.Apply();
         RenderTexture.active = prevActive;
 
@@ -439,9 +789,18 @@ public static class SceneCameraScreenshotTool
             }
         }
 
-        // 生成同名 JSON（ImageToScene 格式：camera + 像素级可见 objects）
-        File.WriteAllText(Path.Combine(outputDir, currentBaseName + ".json"),
-            BuildSceneJson(currentCamera, objects));
+        // 生成 JSON（ImageToScene 格式：camera + 像素级可见 objects）
+        string sceneJson = BuildSceneJson(currentCamera, objects);
+        if (depthMode)
+        {
+            // 深度模式：线性深度与 ZBuffer 深度各配一份内容完全相同的 JSON（仅为文件映射关系）
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + "_linear_depth.json"), sceneJson);
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + "_zbuffer_depth.json"), sceneJson);
+        }
+        else
+        {
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + ".json"), sceneJson);
+        }
 
         // 恢复相机状态
         currentCamera.targetTexture = null;
@@ -708,6 +1067,26 @@ public static class SceneCameraScreenshotTool
         return f.ToString("0.####", CultureInfo.InvariantCulture);
     }
 
+    private static void ReleaseRenderTexture()
+    {
+        if (renderTexture != null)
+        {
+            renderTexture.Release();
+            UnityEngine.Object.DestroyImmediate(renderTexture);
+            renderTexture = null;
+        }
+    }
+
+    private static void ReleaseDepthRT()
+    {
+        if (depthRT != null)
+        {
+            depthRT.Release();
+            UnityEngine.Object.DestroyImmediate(depthRT);
+            depthRT = null;
+        }
+    }
+
     private static void Finish(bool success, string error)
     {
         EditorApplication.update -= Tick;
@@ -724,11 +1103,12 @@ public static class SceneCameraScreenshotTool
             currentCamera = null;
         }
 
-        if (renderTexture != null)
+        ReleaseRenderTexture();
+        ReleaseDepthRT();
+        if (depthMaterial != null)
         {
-            renderTexture.Release();
-            UnityEngine.Object.DestroyImmediate(renderTexture);
-            renderTexture = null;
+            UnityEngine.Object.DestroyImmediate(depthMaterial);
+            depthMaterial = null;
         }
 
         // 恢复最初打开的场景（仅"扫描所有场景"模式需要，当前场景模式不切换场景）
@@ -740,8 +1120,10 @@ public static class SceneCameraScreenshotTool
 
         if (success)
         {
-            EditorUtility.DisplayDialog("场景相机截图",
-                $"完成：共处理 {totalSceneCount} 个场景，保存 {capturedCount} 张截图及对应 JSON。\n输出目录: {outputDir}", "确定");
+            string summary = depthMode
+                ? $"完成：共处理 {totalSceneCount} 个场景，为 {capturedCount} 个相机保存线性/ZBuffer 深度图（各配一份 JSON，每相机 4 个文件）。\n输出目录: {outputDir}"
+                : $"完成：共处理 {totalSceneCount} 个场景，保存 {capturedCount} 张截图及对应 JSON。\n输出目录: {outputDir}";
+            EditorUtility.DisplayDialog("场景相机截图", summary, "确定");
         }
         else
         {
