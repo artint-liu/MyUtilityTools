@@ -108,6 +108,10 @@ def parse_args():
     p.add_argument("--resume", default=None, help="checkpoint 路径，如 outputs/last.pt")
     p.add_argument("--out-dir", default=None)
     p.add_argument("--device", default=None, help="cuda / cpu，默认自动")
+    p.add_argument("--train-parquet", default=None,
+                   help="覆盖配置中的 data.train_parquet")
+    p.add_argument("--val-parquet", default=None,
+                   help="覆盖配置中的 data.val_parquet")
     return p.parse_args()
 
 
@@ -124,6 +128,10 @@ def main():
         tc["resume"] = args.resume
     if args.out_dir:
         tc["out_dir"] = args.out_dir
+    if args.train_parquet:
+        cfg["data"]["train_parquet"] = args.train_parquet
+    if args.val_parquet:
+        cfg["data"]["val_parquet"] = args.val_parquet
 
     set_seed(tc.get("seed", 42))
     device = torch.device(

@@ -67,6 +67,11 @@ ImageToScene/
 - **图像编码器**：ViT-Large/16（patch 16 → 256 个 token，d=1024，24 层，16 头），约 304M
 - **解码器**：20 层 Transformer（d=1536，24 头），causal self-attention + 对图像 token 的 cross-attention，约 724M
 
+## 环境要求
+
+- **Python 3.10+**（代码使用 `X | Y` 类型标注语法，且依赖的 torch 2.x 新版本要求 3.9+，建议 3.10 或 3.11）
+- CUDA GPU（可选，无 GPU 时自动回退 CPU，但 1B 模型训练极慢）
+
 ## 快速开始
 
 ```bash
@@ -79,6 +84,10 @@ python data/generate_data.py --image-format jpeg --jpeg-quality 90   # JPEG 字�
 # 2. 训练（在项目根目录运行）
 python -m src.train --config configs/default.yaml
 python -m src.train --config configs/default.yaml --epochs 3 --batch-size 4  # 快速试跑
+
+# 指定 parquet 数据文件（覆盖配置中的 data.train_parquet / data.val_parquet）
+python -m src.train --config configs/default.yaml --train-parquet data/my_train.parquet
+python -m src.train --config configs/default.yaml --train-parquet data/a.parquet --val-parquet data/b.parquet
 
 # 3. 推理可视化：左=输入图，右=预测几何体在 GT 相机/光照/地面下的重建渲染
 python -m src.infer --ckpt outputs/best.pt --n 8
