@@ -17,9 +17,29 @@ using UnityEngine;
 ///    写入 parquet 文件，列结构与 ImageToScene/data/generate_data.py 完全一致：
 ///        image   : binary  —— PNG 字节
 ///        objects : string  —— 场景 JSON
+/// 4. 拆分：可按“随机打乱 / 按场景分组 / 固定间隔”把样本拆成训练集与验证集，
+///    分别输出 {前缀}_train.parquet 与 {前缀}_val.parquet（也可关闭拆分只输出单个文件）。
 /// </summary>
 public class ScreenshotParquetPackerWindow : EditorWindow
 {
+    /// <summary>训练集 / 验证集拆分方式。</summary>
+    private enum SplitMode
+    {
+        /// <summary>随机打乱后按比例切分（相同种子结果可复现）。</summary>
+        RandomShuffle = 0,
+        /// <summary>按场景分组切分：同一场景（文件名去掉最后一段）整组进同一集合，避免同场景多视角泄漏。</summary>
+        SceneGroup = 1,
+        /// <summary>按固定间隔抽取：每 N 张取 1 张进验证集。</summary>
+        Interval = 2,
+    }
+
+    private static readonly string[] SplitModeNames =
+    {
+        "随机打乱（按种子，可复现）",
+        "按场景分组（同一场景不跨集合）",
+        "固定间隔（每 N 张取 1 张）",
+    };
+
     private string sourceDir = "";
     private int targetWidth = 256;
     private int targetHeight = 256;
@@ -27,8 +47,16 @@ public class ScreenshotParquetPackerWindow : EditorWindow
     private bool outputPathTouched;
     private bool convertToGrayscale = true;
 
+    // 训练集 / 验证集拆分
+    private bool enableSplit = true;
+    private int splitMode = (int)SplitMode.RandomShuffle;
+    private float valRatio = 0.1f;
+    private int splitSeed = 12345;
+    private int valEveryNth = 10;
+
     // 扫描结果
     private List<string> pairPngPaths = new List<string>();
+    private List<string> pairRelNames = new List<string>();
     private int missingJsonCount;
     private readonly StringBuilder scanReport = new StringBuilder();
     private Vector2 scroll;
@@ -37,7 +65,7 @@ public class ScreenshotParquetPackerWindow : EditorWindow
     public static void Open()
     {
         var win = GetWindow<ScreenshotParquetPackerWindow>("截图打包 Parquet");
-        win.minSize = new Vector2(480f, 420f);
+        win.minSize = new Vector2(480f, 520f);
     }
 
     private void OnEnable()
@@ -89,7 +117,31 @@ public class ScreenshotParquetPackerWindow : EditorWindow
             convertToGrayscale);
 
         EditorGUILayout.Space(6f);
-        EditorGUILayout.LabelField("3. 输出 parquet 文件", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("3. 训练集 / 验证集拆分", EditorStyles.boldLabel);
+        enableSplit = EditorGUILayout.Toggle(
+            new GUIContent("拆分为两个数据集", "开启后输出 *_train.parquet（训练集）与 *_val.parquet（验证集）两个文件；关闭则只输出单个文件。"),
+            enableSplit);
+        using (new EditorGUI.DisabledScope(!enableSplit))
+        {
+            splitMode = EditorGUILayout.Popup("拆分方式", splitMode, SplitModeNames);
+            if (splitMode == (int)SplitMode.Interval)
+            {
+                valEveryNth = Mathf.Max(2, EditorGUILayout.IntField(
+                    new GUIContent("间隔 N", "排序后每 N 张中的最后 1 张进入验证集。"), valEveryNth));
+            }
+            else
+            {
+                valRatio = EditorGUILayout.Slider(
+                    new GUIContent("验证集比例", "验证集条数 = round(总数 × 比例)，并保证训练集与验证集均至少 1 条。"),
+                    valRatio, 0.01f, 0.5f);
+                splitSeed = EditorGUILayout.IntField(
+                    new GUIContent("随机种子", "相同种子 + 相同文件列表 → 完全相同的拆分结果。"), splitSeed);
+            }
+        }
+
+        EditorGUILayout.Space(6f);
+        EditorGUILayout.LabelField(enableSplit ? "4. 输出 parquet 文件（拆分时为文件名前缀）" : "4. 输出 parquet 文件",
+            EditorStyles.boldLabel);
         using (new EditorGUILayout.HorizontalScope())
         {
             outputParquetPath = EditorGUILayout.TextField(outputParquetPath);
@@ -99,7 +151,7 @@ public class ScreenshotParquetPackerWindow : EditorWindow
                     ? sourceDir
                     : Path.GetDirectoryName(outputParquetPath);
                 string picked = EditorUtility.SaveFilePanel(
-                    "保存 parquet 文件", dir ?? "", "train", "parquet");
+                    "保存 parquet 文件", dir ?? "", "dataset", "parquet");
                 if (!string.IsNullOrEmpty(picked))
                 {
                     outputParquetPath = picked;
@@ -117,7 +169,7 @@ public class ScreenshotParquetPackerWindow : EditorWindow
             }
             using (new EditorGUI.DisabledScope(pairPngPaths.Count == 0 || string.IsNullOrEmpty(outputParquetPath)))
             {
-                if (GUILayout.Button("打包 Parquet", GUILayout.Height(26f)))
+                if (GUILayout.Button(enableSplit ? "打包 训练集 + 验证集" : "打包 Parquet", GUILayout.Height(26f)))
                 {
                     Pack();
                 }
@@ -137,7 +189,12 @@ public class ScreenshotParquetPackerWindow : EditorWindow
             "打包规则：目录（含子目录）中每个 *.png 寻找同名 *.json 配对；" +
             "缺少 JSON 的图片将被跳过。图片按目标尺寸面积平均重采样（缩小）/" +
             "双线性插值（放大）后，与 JSON 文本按行写入 parquet：" +
-            "image(binary) + objects(string)，兼容 pyarrow.parquet 直接读取。",
+            "image(binary) + objects(string)，兼容 pyarrow.parquet 直接读取。\n" +
+            "拆分规则：按“拆分方式”把配对好的样本分为训练集与验证集，两集合无交集；" +
+            "验证集条数 = round(总数 × 比例)（固定间隔模式为每 N 张取 1 张），" +
+            "并在总数 ≥ 2 时保证两边各至少 1 条。" +
+            "“按场景分组”以文件名去掉最后一段下划线作为场景键（如 SceneA_Cam1 → SceneA），" +
+            "整组进同一集合，避免同一场景的不同相机视角同时出现在训练与验证集中。",
             MessageType.None);
     }
 
@@ -146,7 +203,7 @@ public class ScreenshotParquetPackerWindow : EditorWindow
         sourceDir = dir;
         if (!outputPathTouched && Directory.Exists(dir))
         {
-            outputParquetPath = Path.Combine(dir, "train.parquet");
+            outputParquetPath = Path.Combine(dir, "dataset.parquet");
         }
     }
 
@@ -154,6 +211,7 @@ public class ScreenshotParquetPackerWindow : EditorWindow
     private void ScanPairs()
     {
         pairPngPaths.Clear();
+        pairRelNames.Clear();
         missingJsonCount = 0;
         scanReport.Length = 0;
 
@@ -183,9 +241,11 @@ public class ScreenshotParquetPackerWindow : EditorWindow
                 continue;
             }
             pairPngPaths.Add(png);
+            pairRelNames.Add(relName);
         }
 
         scanReport.AppendLine(string.Format("配对成功: {0} 组（将写入 {1} 行）", pairPngPaths.Count, pairPngPaths.Count));
+        AppendSplitPreview();
         if (missingJsonCount > 0)
         {
             scanReport.AppendLine(string.Format("缺少 JSON 被跳过: {0} 张，例如:", missingJsonCount));
@@ -205,6 +265,195 @@ public class ScreenshotParquetPackerWindow : EditorWindow
                 }
             }
         }
+    }
+
+    // ================= 训练集 / 验证集拆分 =================
+
+    /// <summary>在扫描报告中追加当前拆分规则的切分预览。</summary>
+    private void AppendSplitPreview()
+    {
+        if (pairPngPaths.Count == 0)
+        {
+            return;
+        }
+        if (!enableSplit)
+        {
+            scanReport.AppendLine("拆分: 未启用 -> 全部样本写入单个 parquet。");
+            return;
+        }
+
+        bool[] isVal = BuildSplitFlags(pairPngPaths.Count, pairRelNames);
+        int valCount = isVal.Count(v => v);
+        string trainPath, valPath;
+        ResolveOutputPaths(out trainPath, out valPath);
+        scanReport.AppendLine(string.Format("拆分规则: {0}", DescribeSplitRule()));
+        scanReport.AppendLine(string.Format("拆分预览: 训练集 {0} 行 / 验证集 {1} 行",
+            pairPngPaths.Count - valCount, valCount));
+        scanReport.AppendLine("  训练集 -> " + trainPath);
+        scanReport.AppendLine("  验证集 -> " + valPath);
+    }
+
+    /// <summary>用一句话描述当前拆分规则。</summary>
+    private string DescribeSplitRule()
+    {
+        switch ((SplitMode)splitMode)
+        {
+            case SplitMode.Interval:
+                return string.Format(CultureInfo.InvariantCulture, "固定间隔，每 {0} 张取 1 张进验证集", valEveryNth);
+            case SplitMode.SceneGroup:
+                return string.Format(CultureInfo.InvariantCulture,
+                    "按场景分组随机，验证集比例 {0:P0}，种子 {1}", valRatio, splitSeed);
+            default:
+                return string.Format(CultureInfo.InvariantCulture,
+                    "随机打乱，验证集比例 {0:P0}，种子 {1}", valRatio, splitSeed);
+        }
+    }
+
+    /// <summary>
+    /// 计算每一行归属：返回长度 count 的布尔数组，true 表示该行进入验证集。
+    /// 规则确定且可复现：仅依赖（拆分方式、比例/间隔、种子、已排序的文件列表）。
+    /// </summary>
+    private bool[] BuildSplitFlags(int count, List<string> relNames)
+    {
+        var isVal = new bool[count];
+        if (count == 0 || !enableSplit)
+        {
+            return isVal;
+        }
+        // 只有 1 条样本时全部进训练集，避免出现空集合
+        if (count == 1)
+        {
+            return isVal;
+        }
+
+        if ((SplitMode)splitMode == SplitMode.Interval)
+        {
+            int n = Mathf.Max(2, valEveryNth);
+            int picked = 0;
+            for (int i = 0; i < count; i++)
+            {
+                if (i % n == n - 1)
+                {
+                    isVal[i] = true;
+                    picked++;
+                }
+            }
+            if (picked == 0)
+            {
+                isVal[count - 1] = true;
+            }
+            else if (picked == count)
+            {
+                isVal[0] = false;
+            }
+            return isVal;
+        }
+
+        int target = Mathf.Clamp(Mathf.RoundToInt(count * valRatio), 1, count - 1);
+        var rng = new System.Random(splitSeed);
+
+        if ((SplitMode)splitMode == SplitMode.RandomShuffle)
+        {
+            AssignRandomPerSample(isVal, count, target, rng);
+            return isVal;
+        }
+
+        // 按场景分组：整组进同一集合，避免同场景多视角跨越训练/验证集
+        var groups = new List<string>();
+        var groupToIndices = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < count; i++)
+        {
+            string key = GroupKeyOf(relNames[i]);
+            List<int> list;
+            if (!groupToIndices.TryGetValue(key, out list))
+            {
+                list = new List<int>();
+                groupToIndices.Add(key, list);
+                groups.Add(key);
+            }
+            list.Add(i);
+        }
+
+        var groupOrder = new int[groups.Count];
+        for (int i = 0; i < groups.Count; i++) groupOrder[i] = i;
+        // 先按场景名排序保证基线稳定，再按种子打乱
+        Array.Sort(groupOrder, (a, b) => string.CompareOrdinal(groups[a], groups[b]));
+        Shuffle(groupOrder, rng);
+
+        int assigned = 0;
+        foreach (int gi in groupOrder)
+        {
+            if (assigned >= target)
+            {
+                break;
+            }
+            List<int> members = groupToIndices[groups[gi]];
+            // 仅在“不超出目标”或“加入后更接近目标”时纳入，避免单个大场景把比例撑大
+            bool take = assigned + members.Count <= target
+                        || Math.Abs(assigned + members.Count - target) < Math.Abs(assigned - target);
+            if (!take)
+            {
+                continue;
+            }
+            foreach (int idx in members)
+            {
+                isVal[idx] = true;
+                assigned++;
+            }
+        }
+
+        // 兜底：场景数过少（如全部样本属于同一场景）时分组无法保证两侧非空，
+        // 退化为逐样本随机分配，仍保持“两边各至少 1 条”。
+        int valCount = isVal.Count(v => v);
+        if (valCount == 0 || valCount == count)
+        {
+            Array.Clear(isVal, 0, isVal.Length);
+            AssignRandomPerSample(isVal, count, target, rng);
+        }
+        return isVal;
+    }
+
+    /// <summary>在样本粒度上随机挑选 target 条进入验证集（两边各至少 1 条）。</summary>
+    private static void AssignRandomPerSample(bool[] isVal, int count, int target, System.Random rng)
+    {
+        var order = new int[count];
+        for (int i = 0; i < count; i++) order[i] = i;
+        Shuffle(order, rng);
+        int n = Mathf.Clamp(target, 1, count - 1);
+        for (int k = 0; k < n; k++) isVal[order[k]] = true;
+    }
+
+    /// <summary>Fisher-Yates 洗牌，原地修改数组。</summary>
+    private static void Shuffle(int[] array, System.Random rng)
+    {
+        for (int i = array.Length - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            int tmp = array[i];
+            array[i] = array[j];
+            array[j] = tmp;
+        }
+    }
+
+    /// <summary>
+    /// 取场景分组键：文件名去掉扩展名后再去掉最后一段下划线后缀（SceneA_Cam1 -> SceneA）；
+    /// 无下划线时返回整个文件名。
+    /// </summary>
+    private static string GroupKeyOf(string relName)
+    {
+        string name = Path.GetFileNameWithoutExtension(relName.Replace('/', Path.DirectorySeparatorChar));
+        int idx = name.LastIndexOf('_');
+        return idx > 0 ? name.Substring(0, idx) : name;
+    }
+
+    /// <summary>由用户设置的输出路径推导训练集 / 验证集两个文件名。</summary>
+    private void ResolveOutputPaths(out string trainPath, out string valPath)
+    {
+        string dir = Path.GetDirectoryName(outputParquetPath) ?? "";
+        string stem = Path.GetFileNameWithoutExtension(outputParquetPath);
+        if (string.IsNullOrEmpty(stem)) stem = "dataset";
+        trainPath = Path.Combine(dir, stem + "_train.parquet");
+        valPath = Path.Combine(dir, stem + "_val.parquet");
     }
 
     /// <summary>执行打包：逐张 重采样 -> 编码 PNG -> 与 JSON 一起写 parquet。</summary>
@@ -227,8 +476,17 @@ public class ScreenshotParquetPackerWindow : EditorWindow
             Directory.CreateDirectory(outDir);
         }
 
-        var imageColumn = new List<byte[]>(pairPngPaths.Count);
-        var objectsColumn = new List<byte[]>(pairPngPaths.Count);
+        if (pairRelNames.Count != pairPngPaths.Count)
+        {
+            pairRelNames.Clear();
+            foreach (string p in pairPngPaths) pairRelNames.Add(ToRelativeName(sourceDir, p));
+        }
+
+        bool[] isVal = BuildSplitFlags(pairPngPaths.Count, pairRelNames);
+        var trainImages = new List<byte[]>();
+        var trainObjects = new List<byte[]>();
+        var valImages = new List<byte[]>();
+        var valObjects = new List<byte[]>();
         int total = pairPngPaths.Count;
         bool cancelled = false;
 
@@ -237,10 +495,11 @@ public class ScreenshotParquetPackerWindow : EditorWindow
             for (int i = 0; i < total; i++)
             {
                 string png = pairPngPaths[i];
-                string name = ToRelativeName(sourceDir, png);
+                string name = pairRelNames[i];
+                string tag = !enableSplit ? "训练" : (isVal[i] ? "验证" : "训练");
                 if (EditorUtility.DisplayCancelableProgressBar(
                         "截图打包 Parquet",
-                        string.Format("[{0}/{1}] {2}", i + 1, total, name),
+                        string.Format("[{0}/{1}] {2}  [{3}]", i + 1, total, name, tag),
                         (float)i / total))
                 {
                     cancelled = true;
@@ -261,29 +520,62 @@ public class ScreenshotParquetPackerWindow : EditorWindow
                 string jsonPath = Path.ChangeExtension(png, ".json");
                 byte[] jsonBytes = Encoding.UTF8.GetBytes(File.ReadAllText(jsonPath));
 
-                imageColumn.Add(pngBytes);
-                objectsColumn.Add(jsonBytes);
+                if (isVal[i])
+                {
+                    valImages.Add(pngBytes);
+                    valObjects.Add(jsonBytes);
+                }
+                else
+                {
+                    trainImages.Add(pngBytes);
+                    trainObjects.Add(jsonBytes);
+                }
             }
 
             if (cancelled)
             {
                 return;
             }
-            if (imageColumn.Count == 0)
+            if (trainImages.Count == 0 && valImages.Count == 0)
             {
                 EditorUtility.DisplayDialog("截图打包 Parquet", "没有成功处理的图片，未生成 parquet 文件。", "确定");
                 return;
             }
 
-            var col1 = new MinimalParquetWriter.Column { Name = "image", IsUtf8 = false, Values = imageColumn };
-            var col2 = new MinimalParquetWriter.Column { Name = "objects", IsUtf8 = true, Values = objectsColumn };
-            MinimalParquetWriter.Write(outputParquetPath, col1, col2);
+            var report = new StringBuilder();
 
-            long mb = new FileInfo(outputParquetPath).Length / 1000000L;
+            if (!enableSplit)
+            {
+                WriteParquet(outputParquetPath, trainImages, trainObjects);
+                report.AppendLine(string.Format("输出: {0} ({1} MB)", outputParquetPath, FileMB(outputParquetPath)));
+            }
+            else
+            {
+                string trainPath, valPath;
+                ResolveOutputPaths(out trainPath, out valPath);
+
+                if (trainImages.Count == 0 || valImages.Count == 0)
+                {
+                    EditorUtility.DisplayDialog("截图打包 Parquet",
+                        string.Format("拆分后有一侧为空（训练集 {0} 行 / 验证集 {1} 行），请调整拆分规则后重试。",
+                            trainImages.Count, valImages.Count),
+                        "确定");
+                    return;
+                }
+
+                WriteParquet(trainPath, trainImages, trainObjects);
+                WriteParquet(valPath, valImages, valObjects);
+                report.AppendLine(string.Format("训练集: {0} 行 -> {1} ({2} MB)",
+                    trainImages.Count, trainPath, FileMB(trainPath)));
+                report.AppendLine(string.Format("验证集: {0} 行 -> {1} ({2} MB)",
+                    valImages.Count, valPath, FileMB(valPath)));
+                report.AppendLine(string.Format("拆分规则: {0}", DescribeSplitRule()));
+            }
+
+            int rows = trainImages.Count + valImages.Count;
             EditorUtility.DisplayDialog("截图打包 Parquet",
-                string.Format("完成：写入 {0} 行。\n输出: {1} ({2} MB)", imageColumn.Count, outputParquetPath, mb),
-                "确定");
-            Debug.Log(string.Format("[截图打包 Parquet] 完成: {0} 行 -> {1}", imageColumn.Count, outputParquetPath));
+                string.Format("完成：共写入 {0} 行。\n{1}", rows, report.ToString().TrimEnd()), "确定");
+            Debug.Log(string.Format("[截图打包 Parquet] 完成: {0} 行\n{1}", rows, report.ToString().TrimEnd()));
         }
         catch (Exception e)
         {
@@ -294,6 +586,19 @@ public class ScreenshotParquetPackerWindow : EditorWindow
         {
             EditorUtility.ClearProgressBar();
         }
+    }
+
+    /// <summary>写出单个 parquet 文件（image(binary) + objects(string)）。</summary>
+    private static void WriteParquet(string path, List<byte[]> images, List<byte[]> objects)
+    {
+        var col1 = new MinimalParquetWriter.Column { Name = "image", IsUtf8 = false, Values = images };
+        var col2 = new MinimalParquetWriter.Column { Name = "objects", IsUtf8 = true, Values = objects };
+        MinimalParquetWriter.Write(path, col1, col2);
+    }
+
+    private static long FileMB(string path)
+    {
+        return new FileInfo(path).Length / 1000000L;
     }
 
     // ================= 图片加载与重采样 =================
