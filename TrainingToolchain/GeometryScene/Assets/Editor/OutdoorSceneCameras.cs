@@ -11,8 +11,14 @@ internal sealed partial class OutdoorSceneBuilder
         sun.transform.SetParent(lighting, false);
         sun.transform.localRotation = Quaternion.Euler(rng.Range(40f, 60f), rng.Range(5f, 85f), 0f);
         sun.type = LightType.Directional;
-        sun.intensity = theme == OutdoorSceneGeneratorTool.Theme.DesertIndustry ? rng.Range(1.15f, 1.45f) : rng.Range(1f, 1.32f);
-        sun.color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? new Color(rng.Range(0.72f, 0.9f), rng.Range(0.82f, 0.97f), 1f) : new Color(1f, rng.Range(0.88f, 0.98f), rng.Range(0.72f, 0.92f));
+        sun.intensity = theme == OutdoorSceneGeneratorTool.Theme.DesertIndustry ? rng.Range(1.15f, 1.45f) :
+            theme == OutdoorSceneGeneratorTool.Theme.SnowyAlpine ? rng.Range(1.22f, 1.48f) :
+            theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands ? rng.Range(0.85f, 1.05f) :
+            rng.Range(1f, 1.32f);
+        sun.color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? new Color(rng.Range(0.72f, 0.9f), rng.Range(0.82f, 0.97f), 1f) :
+            theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands ? new Color(1f, rng.Range(0.55f, 0.72f), rng.Range(0.42f, 0.58f)) :
+            theme == OutdoorSceneGeneratorTool.Theme.SnowyAlpine ? new Color(0.93f, 0.96f, 1f) :
+            new Color(1f, rng.Range(0.88f, 0.98f), rng.Range(0.72f, 0.92f));
         sun.shadows = LightShadows.Soft;
         sun.shadowStrength = 0.65f;
         sun.shadowBias = 0.04f;
@@ -40,7 +46,11 @@ internal sealed partial class OutdoorSceneBuilder
             camera.farClipPlane = 800f;
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = theme == OutdoorSceneGeneratorTool.Theme.ThreeLaneValley ? new Color(0.18f, 0.25f, 0.24f) :
-                theme == OutdoorSceneGeneratorTool.Theme.DesertIndustry ? new Color(0.32f, 0.28f, 0.22f) : new Color(0.12f, 0.15f, 0.22f);
+                theme == OutdoorSceneGeneratorTool.Theme.DesertIndustry ? new Color(0.32f, 0.28f, 0.22f) :
+                theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? new Color(0.12f, 0.15f, 0.22f) :
+                theme == OutdoorSceneGeneratorTool.Theme.SnowyAlpine ? new Color(0.6f, 0.69f, 0.79f) :
+                theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands ? new Color(0.16f, 0.08f, 0.07f) :
+                new Color(0.17f, 0.37f, 0.5f);
             camera.allowHDR = false;
             camera.allowMSAA = true;
             camera.enabled = i == 0;

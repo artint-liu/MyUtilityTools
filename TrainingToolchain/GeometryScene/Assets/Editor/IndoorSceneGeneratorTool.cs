@@ -12,7 +12,6 @@ public static class IndoorSceneGeneratorTool
 
     public const string MenuRoot = "生成室内场景";
     public const int KindCount = 11;
-    public const string MaterialPath = "Assets/Materials/WhiteLit.mat";
     public static int FixedSeed = -1;
 
     [MenuItem(MenuRoot + "/随机场景", false, 0)]
@@ -124,13 +123,11 @@ public static class IndoorSceneGeneratorTool
     internal static void BuildSceneContents(int seed, Action<string, float> progress = null)
     {
         KindForSeed(seed);
-        Material material = AssetDatabase.LoadAssetAtPath<Material>(MaterialPath);
-        if (material == null) throw new InvalidOperationException("缺少白模材质：" + MaterialPath);
         IndoorLayout.Plan plan = IndoorLayout.Create(seed);
         var container = new GameObject($"Indoor_V1_{plan.Kind}_Seed{seed}");
         try
         {
-            var builder = new IndoorSceneBuilder(container.transform, material, plan, progress);
+            var builder = new IndoorSceneBuilder(container.transform, plan, progress);
             builder.Build();
         }
         catch

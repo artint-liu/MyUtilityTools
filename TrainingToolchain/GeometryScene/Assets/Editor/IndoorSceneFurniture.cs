@@ -22,10 +22,106 @@ internal sealed partial class IndoorSceneBuilder
     }
 
     private void FB(FurnitureFrame f, IndoorPart name, float x, float y, float z, float w, float h, float d)
-        => Box(f.Parent, IndoorNameTable.Get(name), f.Point(new Vector3(x, y, z)), f.Size(new Vector3(w, h, d)));
+        => Box(f.Parent, IndoorNameTable.Get(name), f.Point(new Vector3(x, y, z)), f.Size(new Vector3(w, h, d)), MaterialFor(name));
 
     private void FP(FurnitureFrame f, IndoorPart name, PrimitiveType type, float x, float y, float z, float w, float h, float d)
-        => Primitive(f.Parent, IndoorNameTable.Get(name), type, f.Point(new Vector3(x, y, z)), f.Size(new Vector3(w, h, d)));
+        => Primitive(f.Parent, IndoorNameTable.Get(name), type, f.Point(new Vector3(x, y, z)), f.Size(new Vector3(w, h, d)), MaterialFor(name));
+
+    /// <summary>家具构件 → 纯色材质：木料深浅棕、织物蓝、床品白、电器深灰、书籍多色轮换。</summary>
+    private Material MaterialFor(IndoorPart part)
+    {
+        switch (part)
+        {
+            case IndoorPart.BedFrame:
+            case IndoorPart.Headboard:
+            case IndoorPart.CabinetBody:
+            case IndoorPart.CabinetDoor:
+            case IndoorPart.ChairLeg:
+            case IndoorPart.TableLeg:
+            case IndoorPart.TableFoot:
+            case IndoorPart.Pedestal:
+            case IndoorPart.LampStem:
+                return SolidColorMaterialPalette.Get(SceneColor.WoodDark);
+            case IndoorPart.Mattress:
+                return SolidColorMaterialPalette.Get(SceneColor.BeddingWhite);
+            case IndoorPart.Pillow:
+                return SolidColorMaterialPalette.Get(SceneColor.FabricLight);
+            case IndoorPart.FoldedBlanket:
+                return SolidColorMaterialPalette.Get(SceneColor.BlanketBlue);
+            case IndoorPart.MonitorBase:
+            case IndoorPart.MonitorStand:
+            case IndoorPart.Monitor:
+            case IndoorPart.Keyboard:
+            case IndoorPart.Cooktop:
+            case IndoorPart.Register:
+                return SolidColorMaterialPalette.Get(SceneColor.ScreenDark);
+            case IndoorPart.SofaBase:
+            case IndoorPart.SofaBack:
+            case IndoorPart.Arm:
+            case IndoorPart.SeatCushion:
+            case IndoorPart.BackCushion:
+                return SolidColorMaterialPalette.Get(SceneColor.FabricBlue);
+            case IndoorPart.TableTop:
+            case IndoorPart.RoundTableTop:
+            case IndoorPart.ChairSeat:
+            case IndoorPart.ChairBack:
+            case IndoorPart.ShelfSide:
+            case IndoorPart.ShelfBack:
+            case IndoorPart.ShelfBoard:
+            case IndoorPart.ToolBoard:
+            case IndoorPart.CounterTop:
+                return SolidColorMaterialPalette.Get(SceneColor.WoodMid);
+            case IndoorPart.Plate:
+            case IndoorPart.Cup:
+            case IndoorPart.Bowl:
+            case IndoorPart.TubBase:
+            case IndoorPart.TubSide:
+            case IndoorPart.TubEnd:
+                return SolidColorMaterialPalette.Get(SceneColor.CeramicWhite);
+            case IndoorPart.Book:
+            case IndoorPart.BookStack:
+                SceneColor[] bookColors = { SceneColor.BookRed, SceneColor.BookBlue, SceneColor.BookGreen, SceneColor.BookGold };
+                return SolidColorMaterialPalette.Get(bookColors[primitiveIndex & 3]);
+            case IndoorPart.Handle:
+            case IndoorPart.Tap:
+            case IndoorPart.TapSpout:
+            case IndoorPart.Faucet:
+                return SolidColorMaterialPalette.Get(SceneColor.MetalDark);
+            case IndoorPart.Worktop:
+            case IndoorPart.SinkBase:
+            case IndoorPart.SinkRim:
+                return SolidColorMaterialPalette.Get(SceneColor.Steel);
+            case IndoorPart.Backsplash:
+                return SolidColorMaterialPalette.Get(SceneColor.WallPaint);
+            case IndoorPart.MachineBase:
+            case IndoorPart.PressColumn:
+            case IndoorPart.PressHeader:
+            case IndoorPart.MotorHousing:
+            case IndoorPart.TankLid:
+            case IndoorPart.ViseBase:
+                return SolidColorMaterialPalette.Get(SceneColor.MachineBlue);
+            case IndoorPart.HydraulicRam:
+            case IndoorPart.PressPlate:
+            case IndoorPart.Tank:
+            case IndoorPart.Tool:
+                return SolidColorMaterialPalette.Get(SceneColor.Steel);
+            case IndoorPart.Valve:
+            case IndoorPart.ValveHandle:
+            case IndoorPart.ViseWheel:
+                return SolidColorMaterialPalette.Get(SceneColor.MachineRed);
+            case IndoorPart.Conveyor:
+                return SolidColorMaterialPalette.Get(SceneColor.ScreenDark);
+            case IndoorPart.Workpiece:
+                return SolidColorMaterialPalette.Get(SceneColor.Brass);
+            case IndoorPart.Pallet:
+            case IndoorPart.Crate:
+                return SolidColorMaterialPalette.Get(SceneColor.CrateTan);
+            case IndoorPart.LampShade:
+                return SolidColorMaterialPalette.Get(SceneColor.WarmYellow);
+            default:
+                return SolidColorMaterialPalette.Get(SceneColor.WoodMid);
+        }
+    }
 
     private void BuildFurniture(Transform parent, IndoorLayout.Room room, IndoorLayout.Furniture item)
     {

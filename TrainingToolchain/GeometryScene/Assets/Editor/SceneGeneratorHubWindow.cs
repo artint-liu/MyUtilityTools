@@ -74,6 +74,12 @@ public sealed class SceneGeneratorHubWindow : EditorWindow
                 StartExecution();
         }
 
+        using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
+        {
+            if (GUILayout.Button("清理生成的场景", GUILayout.Height(22f)))
+                GeneratedSceneCleaner.CleanAll();
+        }
+
         if (totalTasks > 0)
         {
             EditorGUILayout.Space(4f);

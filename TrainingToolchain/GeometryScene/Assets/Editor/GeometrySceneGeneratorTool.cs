@@ -31,6 +31,9 @@ public static class GeometrySceneGeneratorTool
     /// </summary>
     public static int FixedSeed = -1;
 
+    /// <summary>统一物体命名器：与室内场景一致，生成 "部件名_00001" 格式名称。</summary>
+    private static readonly SceneObjectNamer namer = new SceneObjectNamer();
+
     [MenuItem(MenuRoot + "/1个几何体")]
     public static void Generate1() => GenerateGeometryScene(1);
 
@@ -76,6 +79,7 @@ public static class GeometrySceneGeneratorTool
 
         // 新建空场景
         EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        namer.Reset();
 
         new GameObject("Geometry_" + objectCount);
         BuildLighting();
@@ -92,6 +96,9 @@ public static class GeometrySceneGeneratorTool
 
         BuildGround(areaSize, whiteLit);
         BuildObjects(objectCount, areaSize, seed, whiteLit);
+
+        // 兜底：合并偶发的贴合/相交等价 Cube 与 Cylinder（null 表示遍历场景所有根物体）
+        int merged = SceneBoxMerger.Merge(null);
         BuildCameras(CameraCountForObjectCount(objectCount), areaSize, seed);
 
         // 保存场景（文件名带种子号，便于复现）
@@ -101,7 +108,7 @@ public static class GeometrySceneGeneratorTool
         EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), scenePath);
         AssetDatabase.Refresh();
         Debug.Log($"[生成几何体] 已生成 {objectCount} 个几何体的场景（种子 {seed}）并保存到: {scenePath}，" +
-                  $"包含 {CameraCountForObjectCount(objectCount)} 个不同角度相机。");
+                  $"兜底合并减少 {merged} 个等价体，包含 {CameraCountForObjectCount(objectCount)} 个不同角度相机。");
     }
 
     private static void BuildLighting()
@@ -117,7 +124,7 @@ public static class GeometrySceneGeneratorTool
     private static void BuildGround(float areaSize, Material whiteLit)
     {
         var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
+        ground.name = namer.Next("Ground");
         float side = areaSize * 1.6f; // 比布局区域更大，保证相机画面内有完整地面
         ground.transform.localScale = new Vector3(side / 10f, 1f, side / 10f); // Plane 默认 10x10
         ground.transform.position = Vector3.zero;
@@ -190,7 +197,7 @@ public static class GeometrySceneGeneratorTool
             float y = sy * 0.5f; // 底面落在地面上
 
             var go = GameObject.CreatePrimitive(type);
-            go.name = $"Obj_{i + 1}_{type}";
+            go.name = namer.Next(type.ToString());
             go.transform.position = new Vector3(x, y, z);
             go.transform.rotation = Quaternion.Euler(rx, ry, rz);
             go.transform.localScale = new Vector3(sx, sy, sz);

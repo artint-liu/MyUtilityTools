@@ -7,10 +7,10 @@ using UnityEngine.SceneManagement;
 
 public static class OutdoorSceneGeneratorTool
 {
-    public enum Theme { ThreeLaneValley, DesertIndustry, AlienColony }
+    public enum Theme { ThreeLaneValley, DesertIndustry, AlienColony, SnowyAlpine, VolcanicBadlands, ArchipelagoLagoon }
     public const string MenuRoot = "生成室外场景";
-    public const int Version = 3;
-    public const int ThemeCount = 3;
+    public const int Version = 4;
+    public const int ThemeCount = 6;
     public const string OutputFolder = "Assets/Scenes/Outdoor";
     private static bool generating;
 
@@ -22,6 +22,12 @@ public static class OutdoorSceneGeneratorTool
     public static void GenerateDesert() => GenerateFromSeed(EncodeTheme(NewSeed(), Theme.DesertIndustry));
     [MenuItem(MenuRoot + "/异星殖民地（科幻RTS风格）", false, 3)]
     public static void GenerateAlien() => GenerateFromSeed(EncodeTheme(NewSeed(), Theme.AlienColony));
+    [MenuItem(MenuRoot + "/雪原山脊（雪地生存风格）", false, 4)]
+    public static void GenerateSnow() => GenerateFromSeed(EncodeTheme(NewSeed(), Theme.SnowyAlpine));
+    [MenuItem(MenuRoot + "/火山荒原（熔岩采矿风格）", false, 5)]
+    public static void GenerateVolcanic() => GenerateFromSeed(EncodeTheme(NewSeed(), Theme.VolcanicBadlands));
+    [MenuItem(MenuRoot + "/群岛潟湖（海岛探险风格）", false, 6)]
+    public static void GenerateArchipelago() => GenerateFromSeed(EncodeTheme(NewSeed(), Theme.ArchipelagoLagoon));
     [MenuItem(MenuRoot + "/按种子生成…", false, 20)]
     public static void OpenSeedWindow() => EditorWindow.GetWindow<OutdoorSeedWindow>(true, "室外场景种子");
     [MenuItem(MenuRoot + "/预生成共享材质与基本体", false, 21)]

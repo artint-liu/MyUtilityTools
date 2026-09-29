@@ -7,15 +7,14 @@ using Kind = IndoorSceneGeneratorTool.SceneKind;
 internal sealed partial class IndoorSceneBuilder
 {
     private readonly Transform root;
-    private readonly Material material;
     private readonly IndoorLayout.Plan plan;
     private readonly Action<string, float> progress;
     private int primitiveIndex;
     private const float WallThickness = 0.18f;
 
-    public IndoorSceneBuilder(Transform root, Material material, IndoorLayout.Plan plan, Action<string, float> progress)
+    public IndoorSceneBuilder(Transform root, IndoorLayout.Plan plan, Action<string, float> progress)
     {
-        this.root = root; this.material = material; this.plan = plan; this.progress = progress;
+        this.root = root; this.plan = plan; this.progress = progress;
     }
 
     public void Build()
@@ -45,7 +44,7 @@ internal sealed partial class IndoorSceneBuilder
         return go.transform;
     }
 
-    private GameObject Primitive(Transform parent, string name, PrimitiveType type, Vector3 position, Vector3 size)
+    private GameObject Primitive(Transform parent, string name, PrimitiveType type, Vector3 position, Vector3 size, Material mat)
     {
         if (size.x <= 0f || size.y <= 0f || size.z <= 0f) throw new InvalidOperationException("无效基本体尺寸：" + name);
         GameObject go = GameObject.CreatePrimitive(type);
@@ -54,28 +53,30 @@ internal sealed partial class IndoorSceneBuilder
         go.transform.position = position;
         if (type == PrimitiveType.Cylinder || type == PrimitiveType.Capsule) size.y *= 0.5f;
         go.transform.localScale = size;
-        go.GetComponent<MeshRenderer>().sharedMaterial = material;
+        go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         UnityEngine.Object.DestroyImmediate(go.GetComponent<Collider>());
         return go;
     }
 
-    private void Box(Transform parent, string name, Vector3 center, Vector3 size)
-        => Primitive(parent, name, PrimitiveType.Cube, center, size);
+    private void Box(Transform parent, string name, Vector3 center, Vector3 size, Material mat)
+        => Primitive(parent, name, PrimitiveType.Cube, center, size, mat);
 
-    private void Slab(Transform parent, string name, Rect rect, float top, float thickness)
+    private void Slab(Transform parent, IndoorStruct name, Rect rect, float top, float thickness)
     {
         if (rect.width < 0.001f || rect.height < 0.001f) return;
-        Box(parent, name, new Vector3(rect.center.x, top - thickness * 0.5f, rect.center.y), new Vector3(rect.width, thickness, rect.height));
+        Box(parent, IndoorNameTable.StructName(name),
+            new Vector3(rect.center.x, top - thickness * 0.5f, rect.center.y), new Vector3(rect.width, thickness, rect.height),
+            MaterialFor(name));
     }
 
     private void SlabWithHole(Transform parent, Rect floor, Rect hole, float top)
     {
         hole = Rect.MinMaxRect(Mathf.Max(floor.xMin, hole.xMin), Mathf.Max(floor.yMin, hole.yMin),
             Mathf.Min(floor.xMax, hole.xMax), Mathf.Min(floor.yMax, hole.yMax));
-        Slab(parent, IndoorNameTable.StructName(IndoorStruct.FloorLeft), Rect.MinMaxRect(floor.xMin, floor.yMin, hole.xMin, floor.yMax), top, 0.18f);
-        Slab(parent, IndoorNameTable.StructName(IndoorStruct.FloorRight), Rect.MinMaxRect(hole.xMax, floor.yMin, floor.xMax, floor.yMax), top, 0.18f);
-        Slab(parent, IndoorNameTable.StructName(IndoorStruct.FloorFront), Rect.MinMaxRect(hole.xMin, floor.yMin, hole.xMax, hole.yMin), top, 0.18f);
-        Slab(parent, IndoorNameTable.StructName(IndoorStruct.FloorBack), Rect.MinMaxRect(hole.xMin, hole.yMax, hole.xMax, floor.yMax), top, 0.18f);
+        Slab(parent, IndoorStruct.FloorLeft, Rect.MinMaxRect(floor.xMin, floor.yMin, hole.xMin, floor.yMax), top, 0.18f);
+        Slab(parent, IndoorStruct.FloorRight, Rect.MinMaxRect(hole.xMax, floor.yMin, floor.xMax, floor.yMax), top, 0.18f);
+        Slab(parent, IndoorStruct.FloorFront, Rect.MinMaxRect(hole.xMin, floor.yMin, hole.xMax, hole.yMin), top, 0.18f);
+        Slab(parent, IndoorStruct.FloorBack, Rect.MinMaxRect(hole.xMin, hole.yMax, hole.xMax, floor.yMax), top, 0.18f);
     }
 
     private void BuildArchitecture()
@@ -88,7 +89,7 @@ internal sealed partial class IndoorSceneBuilder
             Transform level = Group($"{IndoorNameTable.StructName(IndoorStruct.FloorLevel)}_{floor + 1}", architecture);
             Rect slab = area;
             if (plan.Kind == Kind.Loft && floor > 0) slab.xMin = -plan.CorridorWidth * 0.5f;
-            if (floor == 0) Slab(level, IndoorNameTable.StructName(IndoorStruct.FloorSlab), slab, y, 0.18f);
+            if (floor == 0) Slab(level, IndoorStruct.FloorSlab, slab, y, 0.18f);
             else SlabWithHole(level, slab, plan.StairHole, y);
             ExteriorWall(level, true, area.xMin, area.xMax, area.yMin, y, floor == 0);
             ExteriorWall(level, true, area.xMin, area.xMax, area.yMax, y, false);
@@ -105,7 +106,7 @@ internal sealed partial class IndoorSceneBuilder
             if (plan.Kind == Kind.Loft && floor == 1)
                 Rail(level, new Vector3(-plan.CorridorWidth * 0.5f, y, area.yMin + 0.15f), new Vector3(-plan.CorridorWidth * 0.5f, y, plan.RoomsEnd));
         }
-        Slab(architecture, IndoorNameTable.StructName(IndoorStruct.RoofCeiling), area, plan.Storey * plan.Floors, 0.18f);
+        Slab(architecture, IndoorStruct.RoofCeiling, area, plan.Storey * plan.Floors, 0.18f);
         foreach (IndoorLayout.Room room in plan.Rooms)
         {
             if (!plan.Corridor) continue;
@@ -138,9 +139,12 @@ internal sealed partial class IndoorSceneBuilder
             float a = start + i * bay;
             WallOpening(parent, alongX, a, a + bay, fixedAxis, y, height, a + bay * 0.5f, bay * 0.54f, 1.05f, Mathf.Min(plan.Storey - 0.55f, 2.65f));
             Vector3 sill = alongX ? new Vector3(a + bay * 0.5f, y + 1.05f, fixedAxis) : new Vector3(fixedAxis, y + 1.05f, a + bay * 0.5f);
-            Box(parent, IndoorNameTable.StructName(IndoorStruct.WindowSill), sill, alongX ? new Vector3(bay * 0.58f, 0.07f, 0.34f) : new Vector3(0.34f, 0.07f, bay * 0.58f));
+            Box(parent, IndoorNameTable.StructName(IndoorStruct.WindowSill), sill,
+                alongX ? new Vector3(bay * 0.58f, 0.07f, 0.34f) : new Vector3(0.34f, 0.07f, bay * 0.58f),
+                MaterialFor(IndoorStruct.WindowSill));
             Vector3 mullion = sill + Vector3.up * ((Mathf.Min(plan.Storey - 0.55f, 2.65f) - 1.05f) * 0.5f);
-            Box(parent, IndoorNameTable.StructName(IndoorStruct.WindowMullion), mullion, new Vector3(0.045f, (mullion.y - sill.y) * 2f, 0.045f));
+            Box(parent, IndoorNameTable.StructName(IndoorStruct.WindowMullion), mullion,
+                new Vector3(0.045f, (mullion.y - sill.y) * 2f, 0.045f), MaterialFor(IndoorStruct.WindowMullion));
         }
     }
 
@@ -149,7 +153,8 @@ internal sealed partial class IndoorSceneBuilder
         if (end - start < 0.001f || height < 0.001f) return;
         Box(parent, IndoorNameTable.StructName(IndoorStruct.Wall), alongX ? new Vector3((start + end) * 0.5f, bottom + height * 0.5f, axis) :
             new Vector3(axis, bottom + height * 0.5f, (start + end) * 0.5f),
-            alongX ? new Vector3(end - start, height, WallThickness) : new Vector3(WallThickness, height, end - start));
+            alongX ? new Vector3(end - start, height, WallThickness) : new Vector3(WallThickness, height, end - start),
+            MaterialFor(IndoorStruct.Wall));
     }
 
     private void WallOpening(Transform parent, bool alongX, float start, float end, float axis, float y, float height, float openingCenter, float width, float bottom, float top)
@@ -168,11 +173,15 @@ internal sealed partial class IndoorSceneBuilder
         for (int i = 0; i < 10; i++)
         {
             float h = rise * (i + 1);
-            Box(parent, IndoorNameTable.StructName(IndoorStruct.StairUp), new Vector3(-0.82f, y + h * 0.5f, start + run * (i + 0.5f)), new Vector3(1.4f, h, run));
+            Box(parent, IndoorNameTable.StructName(IndoorStruct.StairUp),
+                new Vector3(-0.82f, y + h * 0.5f, start + run * (i + 0.5f)), new Vector3(1.4f, h, run),
+                MaterialFor(IndoorStruct.StairUp));
             float top = plan.Storey * 0.5f + h;
-            Box(parent, IndoorNameTable.StructName(IndoorStruct.StairReturn), new Vector3(0.82f, y + top - rise * 0.5f, start + run * (9.5f - i)), new Vector3(1.4f, rise, run));
+            Box(parent, IndoorNameTable.StructName(IndoorStruct.StairReturn),
+                new Vector3(0.82f, y + top - rise * 0.5f, start + run * (9.5f - i)), new Vector3(1.4f, rise, run),
+                MaterialFor(IndoorStruct.StairReturn));
         }
-        Slab(parent, IndoorNameTable.StructName(IndoorStruct.StairMidLanding), new Rect(-1.52f, start + 3f, 3.04f, 0.95f), y + plan.Storey * 0.5f, 0.18f);
+        Slab(parent, IndoorStruct.StairMidLanding, new Rect(-1.52f, start + 3f, 3.04f, 0.95f), y + plan.Storey * 0.5f, 0.18f);
         Rail(parent, new Vector3(-1.52f, y + rise, start + 0.15f), new Vector3(-1.52f, y + plan.Storey * 0.5f, start + 2.85f));
         Rail(parent, new Vector3(1.52f, y + plan.Storey, start + 0.15f), new Vector3(1.52f, y + plan.Storey * 0.5f + rise, start + 2.85f));
         Rail(parent, new Vector3(-1.52f, y + plan.Storey * 0.5f, start + 3.95f), new Vector3(1.52f, y + plan.Storey * 0.5f, start + 3.95f));
@@ -184,11 +193,13 @@ internal sealed partial class IndoorSceneBuilder
         for (int i = 0; i <= posts; i++)
         {
             Vector3 foot = Vector3.Lerp(a, b, (float)i / posts);
-            Primitive(parent, IndoorNameTable.StructName(IndoorStruct.RailPost), PrimitiveType.Cylinder, foot + Vector3.up * 0.48f, new Vector3(0.045f, 0.96f, 0.045f));
+            Primitive(parent, IndoorNameTable.StructName(IndoorStruct.RailPost), PrimitiveType.Cylinder,
+                foot + Vector3.up * 0.48f, new Vector3(0.045f, 0.96f, 0.045f), MaterialFor(IndoorStruct.RailPost));
         }
         Vector3 direction = b - a;
-        GameObject rail = Primitive(parent, IndoorNameTable.StructName(IndoorStruct.Handrail), PrimitiveType.Cylinder, (a + b) * 0.5f + Vector3.up * 0.98f,
-            new Vector3(0.065f, direction.magnitude, 0.065f));
+        GameObject rail = Primitive(parent, IndoorNameTable.StructName(IndoorStruct.Handrail), PrimitiveType.Cylinder,
+            (a + b) * 0.5f + Vector3.up * 0.98f, new Vector3(0.065f, direction.magnitude, 0.065f),
+            MaterialFor(IndoorStruct.Handrail));
         rail.transform.rotation = Quaternion.FromToRotation(Vector3.up, direction.normalized);
     }
 
@@ -199,15 +210,51 @@ internal sealed partial class IndoorSceneBuilder
         for (int i = 0; i < count; i++)
         {
             float x = Mathf.Lerp(room.Area.xMin, room.Area.xMax, (i + 1f) / (count + 1f));
-            Box(parent, IndoorNameTable.StructName(IndoorStruct.CeilingLight), new Vector3(x, y + room.Height - 0.055f, room.Area.center.y), new Vector3(0.8f, 0.07f, 0.35f));
+            Box(parent, IndoorNameTable.StructName(IndoorStruct.CeilingLight),
+                new Vector3(x, y + room.Height - 0.055f, room.Area.center.y), new Vector3(0.8f, 0.07f, 0.35f),
+                MaterialFor(IndoorStruct.CeilingLight));
         }
         if (room.Kind == IndoorLayout.RoomKind.Workshop)
         {
             for (int i = 1; i <= 3; i++)
             {
                 float z = Mathf.Lerp(room.Area.yMin, room.Area.yMax, i / 4f);
-                Box(parent, IndoorNameTable.StructName(IndoorStruct.OverheadBeam), new Vector3(room.Area.center.x, y + room.Height - 0.25f, z), new Vector3(room.Area.width - 0.2f, 0.25f, 0.18f));
+                Box(parent, IndoorNameTable.StructName(IndoorStruct.OverheadBeam),
+                    new Vector3(room.Area.center.x, y + room.Height - 0.25f, z), new Vector3(room.Area.width - 0.2f, 0.25f, 0.18f),
+                    MaterialFor(IndoorStruct.OverheadBeam));
             }
+        }
+    }
+
+    /// <summary>建筑构件 → 纯色材质：楼板木色、墙体米白、楼梯水泥灰、栏杆深金属、吸顶灯暖黄。</summary>
+    private Material MaterialFor(IndoorStruct part)
+    {
+        switch (part)
+        {
+            case IndoorStruct.FloorSlab:
+            case IndoorStruct.FloorLeft:
+            case IndoorStruct.FloorRight:
+            case IndoorStruct.FloorFront:
+            case IndoorStruct.FloorBack:
+                return SolidColorMaterialPalette.Get(SceneColor.FloorWood);
+            case IndoorStruct.RoofCeiling:
+                return SolidColorMaterialPalette.Get(SceneColor.CeilingWhite);
+            case IndoorStruct.WindowSill:
+            case IndoorStruct.WindowMullion:
+                return SolidColorMaterialPalette.Get(SceneColor.TrimWood);
+            case IndoorStruct.StairUp:
+            case IndoorStruct.StairReturn:
+            case IndoorStruct.StairMidLanding:
+                return SolidColorMaterialPalette.Get(SceneColor.Concrete);
+            case IndoorStruct.RailPost:
+            case IndoorStruct.Handrail:
+                return SolidColorMaterialPalette.Get(SceneColor.MetalDark);
+            case IndoorStruct.CeilingLight:
+                return SolidColorMaterialPalette.Get(SceneColor.WarmYellow);
+            case IndoorStruct.OverheadBeam:
+                return SolidColorMaterialPalette.Get(SceneColor.Steel);
+            default:
+                return SolidColorMaterialPalette.Get(SceneColor.WallPaint);
         }
     }
 

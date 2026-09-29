@@ -11,12 +11,12 @@ internal sealed partial class OutdoorSceneBuilder
     private readonly OutdoorSceneAssets assets;
     private readonly OutdoorRandom random;
     private readonly Action<string, float> progress;
+    private readonly SceneObjectNamer namer = new SceneObjectNamer();
     private readonly List<Disc> occupied = new List<Disc>();
     private readonly List<Route> routes = new List<Route>();
     private readonly List<Vector3> cameraTargets = new List<Vector3>();
     private Transform terrain, architecture, nature, details;
     private float alienOffset;
-    private const float HalfSize = 64f;
 
     private struct Disc { public Vector2 Center; public float Radius; }
     private sealed class Route { public Vector2[] Points; public float Width; }
@@ -37,16 +37,19 @@ internal sealed partial class OutdoorSceneBuilder
         architecture = Group(root, "02_Architecture");
         nature = Group(root, "03_VegetationAndRocks");
         details = Group(root, "04_LandmarksAndDetails");
+        ChooseRegion();
         progress?.Invoke("规划道路、水系和建筑分区…", 0.05f);
-        var ground = theme == OutdoorSceneGeneratorTool.Theme.ThreeLaneValley ? OutdoorColor.Grass :
-            theme == OutdoorSceneGeneratorTool.Theme.DesertIndustry ? OutdoorColor.Sand : OutdoorColor.AlienSoil;
-        Box(terrain, "Ground", new Vector3(0f, -1.2f, 0f), new Vector3(128f, 2.4f, 128f), ground);
         switch (theme)
         {
             case OutdoorSceneGeneratorTool.Theme.ThreeLaneValley: BuildValley(); break;
             case OutdoorSceneGeneratorTool.Theme.DesertIndustry: BuildDesert(); break;
             case OutdoorSceneGeneratorTool.Theme.AlienColony: BuildAlien(); break;
+            case OutdoorSceneGeneratorTool.Theme.SnowyAlpine: BuildSnow(); break;
+            case OutdoorSceneGeneratorTool.Theme.VolcanicBadlands: BuildVolcanic(); break;
+            case OutdoorSceneGeneratorTool.Theme.ArchipelagoLagoon: BuildArchipelago(); break;
         }
+        progress?.Invoke("构建台地、山丘与沟壑等地形起伏…", 0.3f);
+        BuildGround();
         progress?.Invoke("多轮布置植被与地貌，避开通路和建筑…", 0.43f);
         ScatterNature();
         progress?.Invoke("合并材质相同、并集仍为长方体的几何体…", 0.77f);
@@ -70,7 +73,7 @@ internal sealed partial class OutdoorSceneBuilder
         Vector3 size, OutdoorColor color, Quaternion rotation)
     {
         var go = GameObject.CreatePrimitive(type);
-        go.name = name + "_" + type;
+        go.name = namer.Next(name);
         go.transform.SetParent(parent, false);
         go.transform.localPosition = position;
         go.transform.localRotation = rotation;
@@ -95,7 +98,7 @@ internal sealed partial class OutdoorSceneBuilder
 
     private GameObject Cone(Transform parent, string name, Vector3 position, float diameter, float height, OutdoorColor color, bool inverted = false)
     {
-        var go = new GameObject(name + "_Cone", typeof(MeshFilter), typeof(MeshRenderer));
+        var go = new GameObject(namer.Next(name), typeof(MeshFilter), typeof(MeshRenderer));
         go.transform.SetParent(parent, false);
         go.transform.localPosition = position;
         go.transform.localScale = new Vector3(diameter, height, diameter);
@@ -116,15 +119,15 @@ internal sealed partial class OutdoorSceneBuilder
         for (int i = 1; i < points.Length; i++)
         {
             Vector2 delta = points[i] - points[i - 1];
-            Box(group, "ContinuousSurface" + i, P((points[i] + points[i - 1]) * 0.5f, height * 0.5f),
+            Box(group, "ContinuousSurface", P((points[i] + points[i - 1]) * 0.5f, height * 0.5f),
                 new Vector3(width, height, delta.magnitude), color, Mathf.Atan2(delta.x, delta.y) * Mathf.Rad2Deg);
         }
-        for (int i = 1; i < points.Length - 1; i++) Cylinder(group, "Junction" + i, P(points[i], height * 0.5f), width, height, color);
+        for (int i = 1; i < points.Length - 1; i++) Cylinder(group, "Junction", P(points[i], height * 0.5f), width, height, color);
     }
 
     private bool Free(Vector2 p, float radius)
     {
-        if (Mathf.Abs(p.x) + radius > HalfSize - 1f || Mathf.Abs(p.y) + radius > HalfSize - 1f) return false;
+        if (!InsideRegion(p, radius)) return false;
         foreach (var disc in occupied)
             if ((p - disc.Center).sqrMagnitude < (radius + disc.Radius) * (radius + disc.Radius)) return false;
         foreach (var route in routes)
@@ -156,7 +159,15 @@ internal sealed partial class OutdoorSceneBuilder
 
     private void ScatterNature()
     {
-        int count = theme == OutdoorSceneGeneratorTool.Theme.ThreeLaneValley ? random.Range(190, 260) : random.Range(90, 145);
+        int count;
+        switch (theme)
+        {
+            case OutdoorSceneGeneratorTool.Theme.ThreeLaneValley: count = random.Range(190, 260); break;
+            case OutdoorSceneGeneratorTool.Theme.SnowyAlpine: count = random.Range(170, 240); break;
+            case OutdoorSceneGeneratorTool.Theme.ArchipelagoLagoon: count = random.Range(120, 180); break;
+            case OutdoorSceneGeneratorTool.Theme.VolcanicBadlands: count = random.Range(130, 190); break;
+            default: count = random.Range(90, 145); break;
+        }
         for (int pass = 0; pass < 3; pass++)
         {
             int placed = 0;
@@ -168,11 +179,15 @@ internal sealed partial class OutdoorSceneBuilder
                 Vector2 p;
                 if (pass == 0 && theme == OutdoorSceneGeneratorTool.Theme.ThreeLaneValley && random.Chance(0.65f))
                 {
+                    // 边缘密林：贴近区域边界采样
                     float side = random.Chance(0.5f) ? -1f : 1f;
-                    p = new Vector2(random.Range(-57f, 57f), random.Range(49f, 59f) * side);
-                    if (random.Chance(0.5f)) p = new Vector2(p.y, p.x);
+                    if (random.Chance(0.5f))
+                        p = new Vector2(side * random.Range(boundX - 13f, boundX - 5f), random.Range(-boundY + 7f, boundY - 7f));
+                    else
+                        p = new Vector2(random.Range(-boundX + 7f, boundX - 7f), side * random.Range(boundY - 13f, boundY - 5f));
                 }
-                else p = new Vector2(random.Range(-60f, 60f), random.Range(-60f, 60f));
+                else if (theme == OutdoorSceneGeneratorTool.Theme.ArchipelagoLagoon) p = RandomLandPoint(random);
+                else p = RandomPoint(random);
                 float radius = pass == 0 ? random.Range(1.7f, 2.8f) : random.Range(0.6f, 1.3f);
                 if (!Free(p, radius)) continue;
                 Reserve(p, radius);
@@ -183,21 +198,36 @@ internal sealed partial class OutdoorSceneBuilder
                     {
                         if (random.Chance(0.3f)) DesertPlant(p, radius); else Rock(p, radius, OutdoorColor.Sandstone);
                     }
-                    else if (random.Chance(0.35f)) AlienPlant(p, radius); else Rock(p, radius, OutdoorColor.AlienRock);
+                    else if (theme == OutdoorSceneGeneratorTool.Theme.AlienColony)
+                    {
+                        if (random.Chance(0.35f)) AlienPlant(p, radius); else Rock(p, radius, OutdoorColor.AlienRock);
+                    }
+                    else if (theme == OutdoorSceneGeneratorTool.Theme.SnowyAlpine) SnowTree(p, radius);
+                    else if (theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands)
+                    {
+                        float pick = random.Value();
+                        if (pick < 0.42f) ObsidianSpire(p, radius);
+                        else if (pick < 0.7f) EmberCrystal(p, radius);
+                        else Rock(p, radius, OutdoorColor.Ash);
+                    }
+                    else PalmTree(p, radius);
                 }
                 else if (pass == 1)
                 {
-                    var color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? OutdoorColor.AlienLeaf : OutdoorColor.Bush;
-                    Sphere(nature, "Shrub" + nature.childCount, P(p, radius * 0.45f), new Vector3(radius * 1.6f, radius, radius * 1.4f), color);
+                    var color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? OutdoorColor.AlienLeaf :
+                        theme == OutdoorSceneGeneratorTool.Theme.SnowyAlpine ? OutdoorColor.Bush :
+                        theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands ? OutdoorColor.Rust : OutdoorColor.Bush;
+                    Sphere(nature, "Shrub", P(p, GroundHeight(p) + radius * 0.45f), new Vector3(radius * 1.6f, radius, radius * 1.4f), color);
                 }
                 else
                 {
-                    var tuft = Group(nature, "GrassTuft" + nature.childCount, P(p), random.Range(0f, 360f));
-                    var color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? OutdoorColor.AlienLeaf : OutdoorColor.GrassLight;
+                    var tuft = Group(nature, "GrassTuft" + nature.childCount, P(p, GroundHeight(p)), random.Range(0f, 360f));
+                    var color = theme == OutdoorSceneGeneratorTool.Theme.AlienColony ? OutdoorColor.AlienLeaf :
+                        theme == OutdoorSceneGeneratorTool.Theme.VolcanicBadlands ? OutdoorColor.Rust : OutdoorColor.GrassLight;
                     for (int blade = 0; blade < 3; blade++)
                     {
                         float h = random.Range(0.45f, 0.95f);
-                        Cone(tuft, "GrassBlade" + blade, new Vector3((blade - 1) * 0.28f, h * 0.5f, (blade % 2) * 0.3f), 0.3f, h, color);
+                        Cone(tuft, "GrassBlade", new Vector3((blade - 1) * 0.28f, h * 0.5f, (blade % 2) * 0.3f), 0.3f, h, color);
                     }
                 }
                 placed++;
@@ -208,7 +238,7 @@ internal sealed partial class OutdoorSceneBuilder
     private void Tree(Vector2 p, float radius, bool maple)
     {
         float height = radius * random.Range(2.2f, 3.1f);
-        var tree = Group(nature, (maple ? "MapleTree" : "PineTree") + nature.childCount, P(p), random.Range(0f, 360f));
+        var tree = Group(nature, (maple ? "MapleTree" : "PineTree") + nature.childCount, P(p, GroundHeight(p)), random.Range(0f, 360f));
         Cylinder(tree, "Trunk_Brown", Vector3.up * height * 0.28f, radius * 0.3f, height * 0.56f, OutdoorColor.Trunk);
         if (maple)
         {
@@ -217,7 +247,7 @@ internal sealed partial class OutdoorSceneBuilder
             for (int i = 0; i < 3; i++)
             {
                 float angle = i * Mathf.PI * 2f / 3f;
-                Sphere(tree, "MapleLeaves_OrangeRed" + i,
+                Sphere(tree, "MapleLeaves_OrangeRed",
                     new Vector3(Mathf.Cos(angle) * radius * 0.5f, height * 0.62f, Mathf.Sin(angle) * radius * 0.5f),
                     new Vector3(radius * 1.25f, height * 0.35f, radius * 1.25f), OutdoorColor.MapleLeaf);
             }
@@ -225,14 +255,14 @@ internal sealed partial class OutdoorSceneBuilder
         else
         {
             for (int i = 0; i < 3; i++)
-                Cone(tree, "PineNeedles_DeepGreen" + i, Vector3.up * height * (0.43f + i * 0.19f),
+                Cone(tree, "PineNeedles_DeepGreen", Vector3.up * height * (0.43f + i * 0.19f),
                     radius * (1.8f - i * 0.43f), height * 0.48f, OutdoorColor.PineLeaf);
         }
     }
 
     private void DesertPlant(Vector2 p, float radius)
     {
-        var plant = Group(nature, "DesertCactus" + nature.childCount, P(p));
+        var plant = Group(nature, "DesertCactus" + nature.childCount, P(p, GroundHeight(p)));
         float h = radius * 2.1f;
         Cylinder(plant, "CactusStem_Green", Vector3.up * h * 0.5f, 0.65f, h, OutdoorColor.Bush);
         Box(plant, "CactusArm_Green", new Vector3(0.7f, h * 0.55f, 0f), new Vector3(1f, 0.4f, 0.4f), OutdoorColor.Bush);
@@ -241,7 +271,7 @@ internal sealed partial class OutdoorSceneBuilder
 
     private void AlienPlant(Vector2 p, float radius)
     {
-        var plant = Group(nature, "AlienPlant" + nature.childCount, P(p));
+        var plant = Group(nature, "AlienPlant" + nature.childCount, P(p, GroundHeight(p)));
         Cylinder(plant, "WoodyStem_Brown", Vector3.up * radius, radius * 0.25f, radius * 2f, OutdoorColor.Trunk);
         Sphere(plant, "AlienCanopy_Purple", Vector3.up * radius * 2.1f, new Vector3(radius * 1.8f, radius * 0.8f, radius * 1.8f), OutdoorColor.AlienLeaf);
         Cone(plant, "AlienBud_Cyan", Vector3.up * radius * 2.8f, radius * 0.55f, radius * 1.1f, OutdoorColor.MineralBlue);
@@ -250,7 +280,7 @@ internal sealed partial class OutdoorSceneBuilder
     private void Rock(Vector2 p, float radius, OutdoorColor color)
     {
         float height = random.Range(1.2f, 3.5f) * radius;
-        var rock = Box(nature, "Rock" + nature.childCount, P(p, height * 0.35f),
+        var rock = Box(nature, "Rock", P(p, GroundHeight(p) + height * 0.35f),
             new Vector3(radius * 1.3f, height, radius * 1.2f), color);
         rock.transform.localRotation = Quaternion.Euler(random.Range(-12f, 12f), random.Range(0f, 360f), random.Range(-10f, 10f));
     }

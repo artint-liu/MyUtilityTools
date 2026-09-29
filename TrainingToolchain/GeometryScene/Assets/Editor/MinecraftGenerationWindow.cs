@@ -43,7 +43,7 @@ public sealed class MinecraftGenerationWindow : EditorWindow
 
     private void OnGUI()
     {
-        EditorGUILayout.LabelField("有限 Minecraft 白模场景 · V2", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("有限 Minecraft 场景（纯色材质） · V2", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox("单一种子决定主题、地形、建筑、植物、道具、灯光及 9 个透视相机。\n" +
             "范围为 32 × 32 格；不会生成人物或动物；生成时可取消。", MessageType.Info);
         seed = EditorGUILayout.IntField("种子（0 ～ 2147483647）", seed);

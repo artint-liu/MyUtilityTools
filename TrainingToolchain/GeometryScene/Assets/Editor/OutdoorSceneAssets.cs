@@ -8,7 +8,8 @@ internal enum OutdoorColor
 {
     Grass, GrassLight, PineLeaf, MapleLeaf, Trunk, Bush, Stone, StoneLight, Sand, Sandstone,
     Water, Path, Concrete, Metal, MetalDark, Rust, RoofBlue, RoofRed, TeamBlue, TeamRed,
-    Gold, Glass, MineralBlue, MineralGreen, AlienSoil, AlienRock, AlienLeaf, White, Asphalt
+    Gold, Glass, MineralBlue, MineralGreen, AlienSoil, AlienRock, AlienLeaf, White, Asphalt,
+    Lava, Ash, DeepWater
 }
 
 internal sealed class OutdoorSceneAssets
@@ -21,7 +22,8 @@ internal sealed class OutdoorSceneAssets
     {
         "587944", "809B50", "174D35", "D95325", "70452C", "3D693C", "687777", "A4AF9A", "C8AC70", "A88658",
         "318C9F", "C1B491", "8C9491", "758894", "344653", "A56743", "376875", "985949", "2B9FCC", "D15B4D",
-        "D6AF55", "77BFC7", "48C5DC", "9ABD42", "4C5265", "77758A", "817296", "DFE3D9", "444C50"
+        "D6AF55", "77BFC7", "48C5DC", "9ABD42", "4C5265", "77758A", "817296", "DFE3D9", "444C50",
+        "E8621D", "4B4440", "1E6075"
     };
 
     public static OutdoorSceneAssets Load()

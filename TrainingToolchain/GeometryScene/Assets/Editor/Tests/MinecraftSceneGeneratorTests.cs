@@ -105,7 +105,7 @@ public sealed class MinecraftSceneGeneratorTests
         foreach (int seed in new[] { 0, 1, 2, 3, 1024, int.MaxValue })
             tests.SeedReproducesSceneAndCameras(seed);
         tests.SeedControlsThemeAndRejectsNegativeValues();
-        Debug.Log("[生成Minecraft] 全部检查通过：Box 合并、门洞保留、种子复现、白模、基本体及 9 相机取景。");
+        Debug.Log("[生成Minecraft] 全部检查通过：Box 合并、门洞保留、种子复现、纯色材质、基本体及 9 相机取景。");
     }
 
     private static string Snapshot(int seed)
@@ -117,7 +117,8 @@ public sealed class MinecraftSceneGeneratorTests
             var bounds = new Bounds(Vector3.zero, Vector3.zero);
             foreach (var renderer in renderers)
             {
-                Assert.AreEqual("Assets/Materials/WhiteLit.mat", AssetDatabase.GetAssetPath(renderer.sharedMaterial));
+                StringAssert.StartsWith(SolidColorMaterialPalette.Folder + "/",
+                    AssetDatabase.GetAssetPath(renderer.sharedMaterial), "必须使用调色板纯色材质。");
                 CollectionAssert.Contains(new[] { "Cube", "Sphere", "Cylinder", "Capsule" },
                     renderer.GetComponent<MeshFilter>().sharedMesh.name);
                 bounds.Encapsulate(renderer.bounds);

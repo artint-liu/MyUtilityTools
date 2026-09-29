@@ -1,79 +1,15 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 internal static class MinecraftBoxMerger
 {
     private const float Tolerance = 0.00001f;
 
-    private sealed class Box
-    {
-        public GameObject Object;
-        public Material Material;
-        public Bounds Bounds;
-        public bool Removed;
-    }
-
-    public static int Merge(Transform root, Action<float> progress = null)
-    {
-        var boxes = new List<Box>();
-        foreach (var filter in root.GetComponentsInChildren<MeshFilter>(true))
-        {
-            if (filter.sharedMesh == null || filter.sharedMesh.name != "Cube") continue;
-            var transform = filter.transform;
-            if (Quaternion.Angle(transform.rotation, Quaternion.identity) > Tolerance)
-                throw new InvalidOperationException("Minecraft Box 合并仅支持世界轴对齐的方块。");
-            var renderer = filter.GetComponent<MeshRenderer>();
-            boxes.Add(new Box
-            {
-                Object = filter.gameObject,
-                Material = renderer.sharedMaterial,
-                Bounds = new Bounds(transform.position, transform.lossyScale)
-            });
-        }
-
-        int removed = 0;
-        int pass = 0;
-        bool changed;
-        do
-        {
-            changed = false;
-            float start = 1f - Mathf.Pow(0.5f, pass);
-            float span = Mathf.Pow(0.5f, ++pass);
-            for (int i = 0; i < boxes.Count; i++)
-            {
-                if ((i & 31) == 0) progress?.Invoke(start + span * i / Math.Max(1, boxes.Count));
-                var a = boxes[i];
-                if (a.Removed) continue;
-                for (int j = i + 1; j < boxes.Count; j++)
-                {
-                    var b = boxes[j];
-                    if (b.Removed || a.Material != b.Material) continue;
-                    if (!TryUnion(a.Bounds, b.Bounds, out Bounds union)) continue;
-                    a.Bounds = union;
-                    b.Removed = true;
-                    removed++;
-                    changed = true;
-                }
-            }
-        } while (changed);
-
-        foreach (var box in boxes)
-        {
-            if (box.Removed)
-            {
-                UnityEngine.Object.DestroyImmediate(box.Object);
-                continue;
-            }
-            var transform = box.Object.transform;
-            var parentScale = transform.parent != null ? transform.parent.lossyScale : Vector3.one;
-            transform.position = box.Bounds.center;
-            transform.localScale = new Vector3(box.Bounds.size.x / parentScale.x,
-                box.Bounds.size.y / parentScale.y, box.Bounds.size.z / parentScale.z);
-        }
-        progress?.Invoke(1f);
-        return removed;
-    }
+    /// <summary>
+    /// 合并 root 下的等价方块（兜底公共实现见 <see cref="SceneBoxMerger"/>，
+    /// 同时覆盖贴合与相交两类可合并情形）。
+    /// </summary>
+    public static int Merge(Transform root, Action<float> progress = null) => SceneBoxMerger.Merge(root, progress);
 
     public static bool TryUnion(Bounds a, Bounds b, out Bounds union)
     {

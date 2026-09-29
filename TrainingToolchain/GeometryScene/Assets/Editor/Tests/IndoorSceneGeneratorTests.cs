@@ -269,7 +269,7 @@ public sealed class IndoorSceneGeneratorTests
                     throw new OperationCanceledException();
                 tests.SeedReproducesGeometryLightsAndCameras(seeds[i]);
             }
-            Debug.Log("[生成室内场景] 验证通过：220 个布局、全部 11 类场景、种子复现、白模、基本体、室内相机、洞口保留、等价 Box 合并及取消清理。");
+            Debug.Log("[生成室内场景] 验证通过：220 个布局、全部 11 类场景、种子复现、纯色材质、基本体、室内相机、洞口保留、等价 Box 合并及取消清理。");
         }
         finally { EditorUtility.ClearProgressBar(); }
     }
@@ -288,7 +288,8 @@ public sealed class IndoorSceneGeneratorTests
             Assert.Greater(renderers.Length, 30);
             foreach (MeshRenderer renderer in renderers)
             {
-                Assert.AreEqual(IndoorSceneGeneratorTool.MaterialPath, AssetDatabase.GetAssetPath(renderer.sharedMaterial));
+                StringAssert.StartsWith(SolidColorMaterialPalette.Folder + "/",
+                    AssetDatabase.GetAssetPath(renderer.sharedMaterial), "必须使用调色板纯色材质。");
                 string mesh = renderer.GetComponent<MeshFilter>().sharedMesh.name;
                 CollectionAssert.Contains(new[] { "Cube", "Sphere", "Cylinder", "Capsule" }, mesh);
                 Assert.Greater(renderer.bounds.size.sqrMagnitude, 0f);

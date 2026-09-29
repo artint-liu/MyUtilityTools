@@ -45,7 +45,7 @@ public sealed class IndoorGenerationWindow : EditorWindow
 
     private void OnGUI()
     {
-        EditorGUILayout.LabelField("程序化室内白模 · V1", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("程序化室内场景（纯色材质） · V1", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox("支持独立房间、住宅、Loft、别墅、公寓楼、工厂、书店和餐馆。\n" +
             "只有基本几何体，不生成人物或动物；每个房间有不同角度透视相机。", MessageType.Info);
         seed = EditorGUILayout.IntField("种子（0 ～ 2147483647）", seed);

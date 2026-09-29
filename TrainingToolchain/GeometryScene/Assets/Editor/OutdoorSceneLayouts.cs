@@ -5,13 +5,14 @@ internal sealed partial class OutdoorSceneBuilder
     private void BuildValley()
     {
         var rng = new OutdoorRandom(seed, 10);
+        float scale = Mathf.Min(boundX, boundY) / 64f; // 区域尺寸缩放：内容随更大的地形展开
         int crossingMode = rng.Range(0, 3);
         bool denseForest = rng.Chance(0.72f);
         bool ancientCitadel = rng.Chance(0.28f);
         bool mirrorRiver = crossingMode != 2;
-        float edge = rng.Range(39f, 46f);
-        float bevel = rng.Range(8f, 16f);
-        float centerBend = rng.Range(-9f, 9f);
+        float edge = rng.Range(39f, 46f) * scale;
+        float bevel = rng.Range(8f, 16f) * scale;
+        float centerBend = rng.Range(-9f, 9f) * scale;
         float widthA = rng.Range(4.8f, 6.4f);
         float widthB = rng.Range(5.7f, 7.3f);
         var a = new Vector2(-edge, -edge);
@@ -19,8 +20,8 @@ internal sealed partial class OutdoorSceneBuilder
         var top = new[] { a, new Vector2(-edge, edge - bevel), new Vector2(-edge + bevel, edge), b };
         var bottom = new[] { a, new Vector2(edge - bevel, -edge), new Vector2(edge, -edge + bevel), b };
         var middle = new[] { a, new Vector2(centerBend * 0.35f, -centerBend), new Vector2(-centerBend * 0.35f, centerBend), b };
-        var river = crossingMode == 0 ? new[] { new Vector2(-61f, 61f), new Vector2(0f, centerBend), new Vector2(61f, -61f) } :
-            crossingMode == 1 ? new[] { new Vector2(-61f, -61f), new Vector2(0f, centerBend), new Vector2(61f, 61f) } :
+        var river = crossingMode == 0 ? new[] { new Vector2(-61f, 61f) * scale, new Vector2(0f, centerBend), new Vector2(61f, -61f) * scale } :
+            crossingMode == 1 ? new[] { new Vector2(-61f, -61f) * scale, new Vector2(0f, centerBend), new Vector2(61f, 61f) * scale } :
             new[] { new Vector2(-61f, centerBend), new Vector2(61f, centerBend * 0.5f) };
         Road("VariableRiver", river, rng.Range(7.5f, 10f), OutdoorColor.Water, 0.08f);
         Road("TopLane", top, widthA, OutdoorColor.Path);
@@ -41,7 +42,7 @@ internal sealed partial class OutdoorSceneBuilder
                 Vector2 direction = (SampleRoute(lanes[lane], t + 0.01f) - position).normalized;
                 float laneWidth = lane == 1 ? widthB : widthA;
                 float clearance = laneWidth * 0.5f + 2.6f + rng.Range(0.8f, 2f);
-                if (crossingMode == 0 && lane == 1 && Mathf.Abs(position.x + position.y) < 36f) clearance += 13f;
+                if (crossingMode == 0 && lane == 1 && Mathf.Abs(position.x + position.y) < 36f * scale) clearance += 13f;
                 position += new Vector2(-direction.y, direction.x) * (i % 2 == 0 ? clearance : -clearance);
                 ValleyTower(position, t < 0.5f ? OutdoorColor.TeamBlue : OutdoorColor.TeamRed, rng.Range(0, 3));
             }
@@ -62,7 +63,7 @@ internal sealed partial class OutdoorSceneBuilder
         int ruins = rng.Range(2, 5);
         for (int quadrant = 0; quadrant < ruins; quadrant++)
         {
-            Vector2 center = new Vector2((quadrant < 2 ? -1f : 1f) * rng.Range(13f, 28f), (quadrant % 2 == 0 ? -1f : 1f) * rng.Range(13f, 28f));
+            Vector2 center = new Vector2((quadrant < 2 ? -1f : 1f) * rng.Range(13f, 28f) * scale, (quadrant % 2 == 0 ? -1f : 1f) * rng.Range(13f, 28f) * scale);
             if (!Free(center, 6f)) continue;
             Reserve(center, 6f);
             if (rng.Chance(0.2f)) ValleyShrine(center, quadrant); else ValleyRuins(center, quadrant, rng.Range(3, 8));
@@ -70,7 +71,7 @@ internal sealed partial class OutdoorSceneBuilder
         int outcrops = rng.Range(8, 30);
         for (int i = 0; i < outcrops; i++)
         {
-            Vector2 p = new Vector2(rng.Range(-55f, 55f), rng.Range(-55f, 55f));
+            Vector2 p = RandomPoint(rng);
             float radius = rng.Range(2.5f, denseForest ? 5.8f : 4.2f);
             if (!Free(p, radius)) continue;
             Reserve(p, radius);
@@ -195,11 +196,11 @@ internal sealed partial class OutdoorSceneBuilder
         float shift = rng.Range(-1.5f, 1.5f);
         int baseStyle = rng.Range(0, 4);
         bool asymmetry = rng.Chance(0.55f);
-        Road("EastWestHighway", new[] { new Vector2(-62f, shift), new Vector2(62f, shift) }, 8f, OutdoorColor.Asphalt);
-        if (baseStyle != 2) Road("NorthSouthHighway", new[] { new Vector2(5f + shift, -62f), new Vector2(5f + shift, 62f) }, 7f, OutdoorColor.Asphalt);
+        Road("EastWestHighway", new[] { new Vector2(-boundX + 2f, shift), new Vector2(boundX - 2f, shift) }, 8f, OutdoorColor.Asphalt);
+        if (baseStyle != 2) Road("NorthSouthHighway", new[] { new Vector2(5f + shift, -boundY + 2f), new Vector2(5f + shift, boundY - 2f) }, 7f, OutdoorColor.Asphalt);
         else
         {
-            Road("NorthSouthHighway", new[] { new Vector2(-28f, -62f), new Vector2(-28f, shift) }, 7f, OutdoorColor.Asphalt);
+            Road("NorthSouthHighway", new[] { new Vector2(-28f, -boundY + 2f), new Vector2(-28f, shift) }, 7f, OutdoorColor.Asphalt);
             Road("EastBranch", new[] { new Vector2(-28f, shift), new Vector2(38f, shift) }, 6f, OutdoorColor.Asphalt);
         }
         for (int baseIndex = 0; baseIndex < 2; baseIndex++)
@@ -231,8 +232,13 @@ internal sealed partial class OutdoorSceneBuilder
         progress?.Invoke("构建差异化工业区、矿区和配套设施…", 0.22f);
         if (baseStyle != 1 || rng.Chance(0.6f))
         {
-            var runwayCenter = new Vector2((baseStyle == 2 ? 38f : 5f + shift) + 3.5f + 1.5f + 47f * 0.5f, rng.Chance(0.5f) ? -43f : 43f);
-            Runway(runwayCenter, rng.Chance(0.5f));
+            bool vertical = rng.Chance(0.5f);
+            float x = (baseStyle == 2 ? 38f : 5f + shift) + 3.5f + 1.5f + 47f * 0.5f;
+            float z = rng.Chance(0.5f) ? -43f : 43f;
+            var runwayCenter = vertical
+                ? new Vector2(Mathf.Clamp(x, -(boundX - 8f), boundX - 8f), Mathf.Clamp(z, -(boundY - 25f), boundY - 25f))
+                : new Vector2(Mathf.Clamp(x, -(boundX - 25f), boundX - 25f), Mathf.Clamp(z, -(boundY - 8f), boundY - 8f));
+            Runway(runwayCenter, vertical);
             cameraTargets.Add(P(runwayCenter));
         }
         if (rng.Chance(0.75f)) ResourceField(new Vector2(-37f, 35f), OutdoorColor.MineralGreen, false);
@@ -249,7 +255,7 @@ internal sealed partial class OutdoorSceneBuilder
         int mesas = rng.Range(6, asymmetry ? 24 : 16);
         for (int i = 0; i < mesas; i++)
         {
-            var p = new Vector2(rng.Range(-55f, 55f), rng.Range(-55f, 55f));
+            var p = RandomPoint(rng);
             float radius = rng.Range(2.5f, 6f);
             if (!Free(p, radius)) continue;
             Reserve(p, radius);
@@ -396,7 +402,7 @@ internal sealed partial class OutdoorSceneBuilder
         int rocks = rng.Range(8, 26);
         for (int i = 0; i < rocks; i++)
         {
-            Vector2 p = new Vector2(rng.Range(-55f, 55f), rng.Range(-55f, 55f));
+            Vector2 p = RandomPoint(rng);
             float radius = rng.Range(2.4f, 5f);
             if (!Free(p, radius)) continue;
             Reserve(p, radius);

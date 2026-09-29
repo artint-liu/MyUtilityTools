@@ -38,7 +38,7 @@ public static class OutdoorSceneValidation
             CheckVariantDiversity(assets);
             CheckCancellation(assets);
             CheckSaveReload(assets);
-            Debug.Log($"[生成室外场景] V{OutdoorSceneGeneratorTool.Version} 验证通过：{seeds.Length} 个种子完整复现、道路净空及斜坡边界、无关资源保护、共享材质、12 机位、Box 合并、取消清理和保存重载。");
+            Debug.Log($"[生成室外场景] V{OutdoorSceneGeneratorTool.Version} 验证通过：{seeds.Length} 个种子完整复现（{OutdoorSceneGeneratorTool.ThemeCount} 种风格、方形/长方/圆/8 字区域、台地起伏与沟壑）、道路净空及斜坡边界、无关资源保护、共享材质、12 机位、Box 合并、取消清理和保存重载。");
         }
         catch (OperationCanceledException)
         {
@@ -55,7 +55,7 @@ public static class OutdoorSceneValidation
     private static void CheckSeeds()
     {
         foreach (int seed in new[] { 0, 1, 2, int.MaxValue })
-            for (int kind = 0; kind < 3; kind++)
+            for (int kind = 0; kind < OutdoorSceneGeneratorTool.ThemeCount; kind++)
             {
                 var theme = (OutdoorSceneGeneratorTool.Theme)kind;
                 int encoded = OutdoorSceneGeneratorTool.EncodeTheme(seed, theme);
@@ -194,11 +194,11 @@ public static class OutdoorSceneValidation
 
     private static void CheckVariantDiversity(OutdoorSceneAssets assets)
     {
-        for (int theme = 0; theme < 3; theme++)
+        for (int theme = 0; theme < OutdoorSceneGeneratorTool.ThemeCount; theme++)
         {
             int unique = 0;
             string first = Snapshot(theme, assets);
-            for (int i = 1; i < 8; i++) if (Snapshot(theme + i * 3, assets) != first) unique++;
+            for (int i = 1; i < 8; i++) if (Snapshot(theme + i * OutdoorSceneGeneratorTool.ThemeCount, assets) != first) unique++;
             Require(unique >= 6, "同一主题的种子只改变位置，建筑组合或样式变化不足。");
         }
     }
@@ -209,9 +209,9 @@ public static class OutdoorSceneValidation
         {
             var highways = renderers.Where(r => r.transform.parent != null && r.transform.parent.name.EndsWith("Highway", StringComparison.Ordinal)).ToArray();
             foreach (var highway in highways)
-                foreach (var pad in renderers.Where(r => r.name == "ConcretePad_Cube"))
+                foreach (var pad in renderers.Where(r => r.name.StartsWith("ConcretePad_", StringComparison.Ordinal)))
                     Require(!OverlapXZ(highway.bounds, pad.bounds), "工业主路穿过建筑基座。");
-            var runway = renderers.SingleOrDefault(r => r.name == "SingleRunwaySlab_Cube");
+            var runway = renderers.SingleOrDefault(r => r.name.StartsWith("SingleRunwaySlab_", StringComparison.Ordinal));
             if (runway != null)
             {
                 foreach (var highway in highways) Require(!OverlapXZ(highway.bounds, runway.bounds), "跑道与主路交叉。");
@@ -227,11 +227,11 @@ public static class OutdoorSceneValidation
             {
                 Require(supports.Length == 4, "传送门柱或基础缺失。");
                 Require(true, "传送门柱或基础阻挡主路。");
-                var apron = renderers.Single(r => r.name == "GateApron_Cylinder");
+                var apron = renderers.Single(r => r.name.StartsWith("GateApron_", StringComparison.Ordinal));
                 Require(apron.bounds.max.y < causeway.bounds.max.y, "传送门铺地形成横向台阶。");
-                Require(renderers.Single(r => r.name == "GateLintel_Cube").bounds.min.y > 5f, "传送门净高不足。");
+                Require(renderers.Single(r => r.name.StartsWith("GateLintel_", StringComparison.Ordinal)).bounds.min.y > 5f, "传送门净高不足。");
             }
-            foreach (var ramp in renderers.Where(r => r.name == "SlopedAccessRamp_Cube"))
+            foreach (var ramp in renderers.Where(r => r.name.StartsWith("SlopedAccessRamp_", StringComparison.Ordinal)))
             {
                 Require(true, "殖民地斜坡跨入主路。");
                 var top = ramp.transform.TransformPoint(new Vector3(0f, 0.5f, -0.5f));
@@ -247,7 +247,7 @@ public static class OutdoorSceneValidation
         else if (root.name.Contains("_ThreeLaneValley_"))
         {
             var lanes = renderers.Where(r => r.transform.parent != null && (r.transform.parent.name.EndsWith("Lane", StringComparison.Ordinal) || r.transform.parent.name.EndsWith("River", StringComparison.Ordinal))).ToArray();
-            foreach (var tower in renderers.Where(r => r.name == "Foundation_Cylinder" && r.transform.parent.name.StartsWith("LaneBeacon", StringComparison.Ordinal)))
+            foreach (var tower in renderers.Where(r => r.name.StartsWith("Foundation_", StringComparison.Ordinal) && r.transform.parent.name.StartsWith("LaneBeacon", StringComparison.Ordinal)))
             {
                 float radius = tower.transform.lossyScale.x * 0.5f;
                 foreach (var lane in lanes)
@@ -298,9 +298,9 @@ public static class OutdoorSceneValidation
 
     private static int FindAlienOffsetSeed(bool positive)
     {
-        for (int seed = 2; seed < 30000; seed += 3)
+        for (int seed = 2; seed < 30000; seed += OutdoorSceneGeneratorTool.ThemeCount)
         {
-            float offset = new OutdoorRandom(seed).Range(-5f, 5f);
+            float offset = new OutdoorRandom(seed, 30).Range(-5f, 5f);
             if (positive ? offset > 4.9f : offset < -4.9f) return seed;
         }
         throw new InvalidOperationException("未找到台地偏移边界测试种子。");

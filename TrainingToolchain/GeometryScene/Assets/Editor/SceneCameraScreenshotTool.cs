@@ -21,6 +21,11 @@ using UnityEngine.Rendering.Universal;
 /// 两份 JSON 内容完全相同（仅为与各自 PNG 建立文件映射关系），内容为 ImageToScene 格式的相机与可见物体参数。
 /// 亮度约定：背景填充（天空盒/纯黑清屏）= 0（无穷远）；几何像素按 min-max 归一化，
 /// 模型最近处 → 1.0，模型最远处 → 0.0，深度铺满整个灰度范围。
+///
+/// 物体缺席增强（菜单项带"-物体缺席"后缀）：每个相机完成常规截图后，对本相机画面中
+/// 按像素面积降序排名前 n（默认 5，可通过"截图/物体缺席数量/设置..."调节）的可见物体
+/// 依次单独隐藏并重拍，额外生成 n 张缺席照片与对应 JSON（objects 为剔除缺席物体后的可见物体）。
+/// 场景物体数或相机内可见物体数不足 n 时跳过该增强，仅输出常规截图。
 /// </summary>
 public static class SceneCameraScreenshotTool
 {
@@ -81,6 +86,25 @@ public static class SceneCameraScreenshotTool
     private static CameraClearFlags idPassSavedClearFlags;
     private static Color idPassSavedBgColor;
     private static bool? idPassSavedPostFx;
+
+    // 物体缺席增强状态（常规截图后，按画面面积从大到小依次隐藏前 n 个可见物体重拍）
+    private const int DefaultAbsentCount = 5;  // 每个相机默认额外生成 5 张缺席样本
+    private const int MaxAbsentCount = 50;     // 缺席样本数量上限
+    private static int absentCount = LoadConfiguredAbsentCount();
+    private static bool absenceMode;   // 本次任务是否启用物体缺席增强
+    private static bool absenceActive; // 当前相机是否正处于缺席重拍阶段
+    private static int absenceIndex;   // 当前隐藏的缺席物体序号（指向 absenceItems）
+    private static List<ObjectInfo> baseObjects;  // 常规截图的可见物体参数（缺席 JSON 以此剔除被隐藏物体）
+    private static List<AbsenceItem> absenceItems; // 按画面面积降序的前 n 个可见物体
+    private static readonly Dictionary<int, int> idPixelAreas = new Dictionary<int, int>();
+
+    /// <summary>缺席样本候选项：可见渲染器 + 其 ObjectInfo + ID 通道统计出的像素面积。</summary>
+    private class AbsenceItem
+    {
+        public Renderer renderer;
+        public ObjectInfo info;
+        public int pixelCount;
+    }
 
     #region 截图尺寸菜单（256 / 512 / 1024 / 2048）
 
@@ -151,7 +175,7 @@ public static class SceneCameraScreenshotTool
         {
             string path = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ConfigFilePath);
             File.WriteAllText(path,
-                JsonUtility.ToJson(new CaptureSizeConfig { size = size }, prettyPrint: true));
+                JsonUtility.ToJson(new CaptureSizeConfig { size = size, absentCount = absentCount }, prettyPrint: true));
         }
         catch (Exception e)
         {
@@ -163,6 +187,73 @@ public static class SceneCameraScreenshotTool
     private class CaptureSizeConfig
     {
         public int size;
+        public int absentCount; // 物体缺席样本数量 n
+    }
+
+    #endregion
+
+    #region 物体缺席数量设置
+
+    [MenuItem("截图/物体缺席数量/设置...")]
+    private static void OpenAbsentCountSettings()
+    {
+        var window = EditorWindow.GetWindow<AbsentCountWindow>(true, "物体缺席数量", true);
+        window.Initialize(absentCount);
+    }
+
+    /// <summary>物体缺席样本数量设置窗口（写入 ProjectSettings/SceneCameraScreenshotTool.json 持久化）。</summary>
+    private class AbsentCountWindow : EditorWindow
+    {
+        private int value;
+
+        public void Initialize(int current)
+        {
+            value = current;
+        }
+
+        private void OnGUI()
+        {
+            EditorGUILayout.HelpBox(
+                "每个相机完成常规截图后，按画面面积从大到小依次隐藏前 n 个可见物体并重拍，\n" +
+                "额外生成 n 张缺席照片及对应 JSON。场景物体数或相机内可见物体数不足 n 时跳过。",
+                MessageType.Info);
+            value = EditorGUILayout.IntSlider("缺席样本数量 n", value, 1, MaxAbsentCount);
+            EditorGUILayout.Space();
+            if (GUILayout.Button("应用"))
+            {
+                if (running)
+                {
+                    EditorUtility.DisplayDialog("场景相机截图", "任务正在执行中，无法修改物体缺席数量。", "确定");
+                    return;
+                }
+                if (value != absentCount)
+                {
+                    absentCount = value;
+                    WriteCaptureSizeConfig(captureSize);
+                }
+                Close();
+            }
+        }
+    }
+
+    /// <summary>读取配置文件中的物体缺席样本数量，文件不存在或值非法时返回默认 5。</summary>
+    private static int LoadConfiguredAbsentCount()
+    {
+        try
+        {
+            string path = Path.Combine(Directory.GetParent(Application.dataPath).FullName, ConfigFilePath);
+            if (!File.Exists(path))
+            {
+                return DefaultAbsentCount;
+            }
+            string json = File.ReadAllText(path);
+            int n = JsonUtility.FromJson<CaptureSizeConfig>(json)?.absentCount ?? DefaultAbsentCount;
+            return n >= 1 && n <= MaxAbsentCount ? n : DefaultAbsentCount;
+        }
+        catch
+        {
+            return DefaultAbsentCount;
+        }
     }
 
     #endregion
@@ -170,19 +261,61 @@ public static class SceneCameraScreenshotTool
     [MenuItem("截图/颜色/所有场景/所有透视相机")]
     public static void CaptureAllPerspectiveCameras()
     {
-        BeginCaptureAllScenes(false);
+        BeginCaptureAllScenes(false, false);
+    }
+
+    [MenuItem("截图/颜色/所有场景/所有透视相机-物体缺席")]
+    public static void CaptureAllPerspectiveCamerasAbsent()
+    {
+        BeginCaptureAllScenes(false, true);
     }
 
     [MenuItem("截图/深度/所有场景/所有透视相机")]
     public static void CaptureAllScenesDepthMaps()
     {
-        BeginCaptureAllScenes(true);
+        BeginCaptureAllScenes(true, false);
     }
 
-    /// <summary>扫描所有场景并对每个透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图）。</summary>
-    private static void BeginCaptureAllScenes(bool isDepth)
+    [MenuItem("截图/深度/所有场景/所有透视相机-物体缺席")]
+    public static void CaptureAllScenesDepthMapsAbsent()
     {
-        if (!TryBeginCapture(isDepth))
+        BeginCaptureAllScenes(true, true);
+    }
+
+    [MenuItem("截图/颜色/当前场景/所有透视相机")]
+    public static void CaptureCurrentSceneCameras()
+    {
+        BeginCaptureCurrentScene(false, false);
+    }
+
+    [MenuItem("截图/颜色/当前场景/所有透视相机-物体缺席")]
+    public static void CaptureCurrentSceneCamerasAbsent()
+    {
+        BeginCaptureCurrentScene(false, true);
+    }
+
+    [MenuItem("截图/深度/当前场景/所有透视相机")]
+    public static void CaptureCurrentSceneDepthMaps()
+    {
+        BeginCaptureCurrentScene(true, false);
+    }
+
+    [MenuItem("截图/深度/当前场景/所有透视相机-物体缺席")]
+    public static void CaptureCurrentSceneDepthMapsAbsent()
+    {
+        BeginCaptureCurrentScene(true, true);
+    }
+
+    [MenuItem("截图/深度/当前场景/当前透视相机-物体缺席")]
+    public static void CaptureCurrentSceneCurrentCameraDepthMapsAbsent()
+    {
+        BeginCaptureCurrentSceneSingleCamera(true, true);
+    }
+
+    /// <summary>扫描所有场景并对每个透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图；withAbsence=true 额外生成物体缺席样本）。</summary>
+    private static void BeginCaptureAllScenes(bool isDepth, bool withAbsence)
+    {
+        if (!TryBeginCapture(isDepth, withAbsence))
         {
             return;
         }
@@ -222,22 +355,10 @@ public static class SceneCameraScreenshotTool
         StartCapture(State.OpenScene, SceneQueue.Count, 0, true);
     }
 
-    [MenuItem("截图/颜色/当前场景/所有透视相机")]
-    public static void CaptureCurrentSceneCameras()
+    /// <summary>仅对当前打开场景中的透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图；withAbsence=true 额外生成物体缺席样本）。</summary>
+    private static void BeginCaptureCurrentScene(bool isDepth, bool withAbsence)
     {
-        BeginCaptureCurrentScene(false);
-    }
-
-    [MenuItem("截图/深度/当前场景/所有透视相机")]
-    public static void CaptureCurrentSceneDepthMaps()
-    {
-        BeginCaptureCurrentScene(true);
-    }
-
-    /// <summary>仅对当前打开场景中的透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图）。</summary>
-    private static void BeginCaptureCurrentScene(bool isDepth)
-    {
-        if (!TryBeginCapture(isDepth))
+        if (!TryBeginCapture(isDepth, withAbsence))
         {
             return;
         }
@@ -254,8 +375,41 @@ public static class SceneCameraScreenshotTool
         StartCapture(State.PrepCamera, 1, 1, false);
     }
 
+    /// <summary>仅对当前选中的透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图；withAbsence=true 额外生成物体缺席样本）。</summary>
+    private static void BeginCaptureCurrentSceneSingleCamera(bool isDepth, bool withAbsence)
+    {
+        if (!TryBeginCapture(isDepth, withAbsence))
+        {
+            return;
+        }
+
+        Camera cam = GetSelectedSceneCamera();
+        if (cam == null || cam.orthographic)
+        {
+            EditorUtility.DisplayDialog("场景相机截图", "请先在 Hierarchy 中选中一个透视相机。", "确定");
+            return;
+        }
+
+        // 不打开/保存/切换场景，仅对当前选中相机截图
+        CameraQueue.Clear();
+        CameraQueue.Enqueue(cam);
+        originalScenePath = string.Empty;
+        StartCapture(State.PrepCamera, 1, 1, false);
+    }
+
+    /// <summary>获取编辑器当前选中的场景相机（优先选中的 GameObject 本身，其次其父级链上的相机）。</summary>
+    private static Camera GetSelectedSceneCamera()
+    {
+        if (Selection.activeTransform == null)
+        {
+            return null;
+        }
+        Camera cam = Selection.activeTransform.GetComponent<Camera>();
+        return cam != null ? cam : Selection.activeTransform.GetComponentInParent<Camera>();
+    }
+
     /// <summary>公共前置检查与输出目录准备，返回 false 表示任务已存在不能开始。</summary>
-    private static bool TryBeginCapture(bool isDepth)
+    private static bool TryBeginCapture(bool isDepth, bool withAbsence)
     {
         if (running)
         {
@@ -264,6 +418,11 @@ public static class SceneCameraScreenshotTool
         }
 
         depthMode = isDepth;
+        absenceMode = withAbsence;
+        absenceActive = false;
+        absenceIndex = 0;
+        absenceItems = null;
+        baseObjects = null;
         outputDir = Path.Combine(Directory.GetParent(Application.dataPath).FullName,
             isDepth ? DepthOutputFolderName : OutputFolderName);
         Directory.CreateDirectory(outputDir);
@@ -449,10 +608,14 @@ public static class SceneCameraScreenshotTool
             return; // 真实渲染帧尚未推进足够数量
         }
 
-        string sceneName = Path.GetFileNameWithoutExtension(EditorSceneManager.GetActiveScene().path);
-        currentBaseName = SanitizeFileName(sceneName + "_" + currentCamera.name);
-        EditorUtility.DisplayProgressBar("场景相机截图", $"截图: {currentBaseName} ({doneSceneCount}/{totalSceneCount})",
-            (float)doneSceneCount / totalSceneCount);
+        string absentTag = absenceActive ? "_absent_" + (absenceIndex + 1) : string.Empty;
+        if (!absenceActive)
+        {
+            string sceneName = Path.GetFileNameWithoutExtension(EditorSceneManager.GetActiveScene().path);
+            currentBaseName = SanitizeFileName(sceneName + "_" + currentCamera.name);
+            EditorUtility.DisplayProgressBar("场景相机截图", $"截图: {currentBaseName} ({doneSceneCount}/{totalSceneCount})",
+                (float)doneSceneCount / totalSceneCount);
+        }
 
         // 读取像素并保存灰度 PNG（符合 ImageToScene 输入格式）
         RenderTexture prevActive = RenderTexture.active;
@@ -472,12 +635,21 @@ public static class SceneCameraScreenshotTool
         tex.SetPixels32(colors);
         tex.Apply();
 
-        string pngPath = Path.Combine(outputDir, currentBaseName + ".png");
+        string pngPath = Path.Combine(outputDir, currentBaseName + absentTag + ".png");
         File.WriteAllBytes(pngPath, tex.EncodeToPNG());
         UnityEngine.Object.DestroyImmediate(tex);
 
-        // PNG 已保存，进入像素级遮挡剔除：渲染 ID 通道后再生成 JSON
         framesWaited = 0;
+        if (absenceActive)
+        {
+            // 缺席照片 JSON：常规可见物体剔除当前被隐藏的物体，随后切换下一个缺席物体或收尾
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + ".json"),
+                BuildSceneJson(currentCamera, BuildAbsenceObjects()));
+            AdvanceAbsence();
+            return;
+        }
+
+        // PNG 已保存，进入像素级遮挡剔除：渲染 ID 通道后再生成 JSON
         state = State.PrepIdPass;
         EditorApplication.QueuePlayerLoopUpdate();
     }
@@ -527,6 +699,22 @@ public static class SceneCameraScreenshotTool
                 r.sharedMaterials = new[] { depthMaterial };
             }
             SaveCameraPassSettings();
+        }
+        else if (absenceActive)
+        {
+            // 缺席阶段复用已收集的渲染器列表：材质已恢复为原始值，重新套用深度材质
+            foreach (IdMappedRenderer m in idMappedRenderers)
+            {
+                if (m.renderer != null)
+                {
+                    m.renderer.sharedMaterials = new[] { depthMaterial };
+                }
+            }
+            // 缺席阶段的深度通道必须与基础深度通道使用相同相机设置：
+            // 缺席开始前已恢复原始背景/后处理（供缺席照片正常成像），
+            // 此处需重新切回纯黑背景 + 关闭后处理，否则天空盒颜色/后处理会被写进深度 RT，
+            // 且天空盒像素参与 min-max 归一化，导致缺席深度图出现黑白渐变/反转的伪深度
+            ApplyCameraPassSettings();
         }
 
         depthMaterial.SetFloat(DepthModeProp, mode);
@@ -591,14 +779,23 @@ public static class SceneCameraScreenshotTool
         var outTex = new Texture2D(captureSize, captureSize, TextureFormat.RGB24, false);
         outTex.SetPixels32(colors);
         outTex.Apply();
+        string absentTag = absenceActive ? "_absent_" + (absenceIndex + 1) : string.Empty;
         string suffix = depthPassMode == 0 ? "_zbuffer_depth" : "_linear_depth";
-        File.WriteAllBytes(Path.Combine(outputDir, currentBaseName + suffix + ".png"), outTex.EncodeToPNG());
+        File.WriteAllBytes(Path.Combine(outputDir, currentBaseName + absentTag + suffix + ".png"), outTex.EncodeToPNG());
         UnityEngine.Object.DestroyImmediate(outTex);
 
         framesWaited = 0;
         if (depthPassMode == 0)
         {
             EnterDepthPass(1); // 同一相机接着渲染线性深度
+        }
+        else if (absenceActive)
+        {
+            // 缺席样本的两种深度图完成：写入 JSON（与常规深度 JSON 同格式，剔除缺席物体）后处理下一个缺席物体
+            string absentJson = BuildSceneJson(currentCamera, BuildAbsenceObjects());
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + "_linear_depth.json"), absentJson);
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + "_zbuffer_depth.json"), absentJson);
+            AdvanceAbsence();
         }
         else
         {
@@ -723,12 +920,22 @@ public static class SceneCameraScreenshotTool
     {
         idPassSavedClearFlags = currentCamera.clearFlags;
         idPassSavedBgColor = currentCamera.backgroundColor;
+        var camData = currentCamera.GetComponent<UniversalAdditionalCameraData>();
+        if (camData != null)
+        {
+            idPassSavedPostFx = camData.renderPostProcessing;
+        }
+        ApplyCameraPassSettings();
+    }
+
+    /// <summary>应用深度/ID 通道的相机设置（纯黑背景 + 关闭后处理），不覆盖已保存的原始设置（供缺席阶段重复调用）。</summary>
+    private static void ApplyCameraPassSettings()
+    {
         currentCamera.clearFlags = CameraClearFlags.SolidColor;
         currentCamera.backgroundColor = new Color(0f, 0f, 0f, 1f);
         var camData = currentCamera.GetComponent<UniversalAdditionalCameraData>();
         if (camData != null)
         {
-            idPassSavedPostFx = camData.renderPostProcessing;
             camData.renderPostProcessing = false;
         }
     }
@@ -760,32 +967,60 @@ public static class SceneCameraScreenshotTool
             File.WriteAllBytes(Path.Combine(idDebugDir, currentBaseName + "_id.png"), tex.EncodeToPNG());
         }
         UnityEngine.Object.DestroyImmediate(tex);
+        visibleIds.Clear();
+        idPixelAreas.Clear();
         foreach (Color32 p in pixels)
         {
             int id = ColorToId(p);
             if (id > 0)
             {
                 visibleIds.Add(id);
+                if (absenceMode)
+                {
+                    int area;
+                    idPixelAreas.TryGetValue(id, out area);
+                    idPixelAreas[id] = area + 1; // 统计该物体在画面中的像素面积
+                }
             }
         }
 
-        // 先按可见 ID 收集渲染器，再恢复材质与相机设置，最后生成 JSON
+        // 先按可见 ID 收集渲染器，恢复材质与相机设置后再生成物体参数
         var visibleRenderers = new List<Renderer>();
+        var visibleRendererIds = new List<int>();
         foreach (IdMappedRenderer m in idMappedRenderers)
         {
             if (visibleIds.Contains(m.id))
             {
                 visibleRenderers.Add(m.renderer);
+                visibleRendererIds.Add(m.id);
             }
         }
-        RestoreIdPassState();
+
+        // 缺席条件预判：场景物体数与相机内可见物体数均不少于 n 才执行（保留渲染器列表供深度通道复用）
+        bool absencePending = absenceMode
+            && visibleRenderers.Count >= absentCount
+            && idMappedRenderers.Count >= absentCount;
+        RestoreIdPassState(absencePending);
 
         var objects = new List<ObjectInfo>();
-        foreach (Renderer r in visibleRenderers)
+        List<AbsenceItem> absenceCandidates = absencePending ? new List<AbsenceItem>() : null;
+        for (int i = 0; i < visibleRenderers.Count; i++)
         {
-            if (TryBuildObjectInfo(r, out ObjectInfo info))
+            if (!TryBuildObjectInfo(visibleRenderers[i], out ObjectInfo info))
             {
-                objects.Add(info);
+                continue;
+            }
+            objects.Add(info);
+            if (absenceCandidates != null)
+            {
+                int area;
+                idPixelAreas.TryGetValue(visibleRendererIds[i], out area);
+                absenceCandidates.Add(new AbsenceItem
+                {
+                    renderer = visibleRenderers[i],
+                    info = info,
+                    pixelCount = area
+                });
             }
         }
 
@@ -802,17 +1037,147 @@ public static class SceneCameraScreenshotTool
             File.WriteAllText(Path.Combine(outputDir, currentBaseName + ".json"), sceneJson);
         }
 
+        // 物体缺席增强：按画面面积从大到小依次隐藏前 n 个可见物体重拍
+        if (absencePending)
+        {
+            if (!TryBeginAbsencePhase(objects, absenceCandidates))
+            {
+                FinishCurrentCamera(); // 条件不满足（如大量不支持类型的可见物体），按常规流程收尾
+            }
+            return;
+        }
+
         // 恢复相机状态
+        FinishCurrentCamera();
+    }
+
+    /// <summary>
+    /// 尝试进入当前相机的物体缺席阶段：场景物体数与相机内可见物体数均不少于 n 时，
+    /// 取画面面积最大的前 n 个可见物体作为缺席对象；返回 false 表示条件不满足，按常规流程收尾。
+    /// </summary>
+    private static bool TryBeginAbsencePhase(List<ObjectInfo> baseObjectsSnapshot, List<AbsenceItem> candidates)
+    {
+        if (candidates == null || candidates.Count < absentCount)
+        {
+            if (idMappedRenderers.Count > 0)
+            {
+                RestoreIdPassState(); // 清空预判时保留的渲染器列表
+            }
+            return false;
+        }
+
+        baseObjects = baseObjectsSnapshot;
+        absenceItems = candidates.OrderByDescending(c => c.pixelCount).Take(absentCount).ToList();
+        absenceIndex = 0;
+        absenceActive = true;
+
+        HideCurrentAbsenceObject();
+        framesWaited = 0;
+        frameBaseline = Time.frameCount;
+        if (depthMode)
+        {
+            // 缺席深度照片沿用基础深度通道的线性浮点 RT（ID 通道曾切换到彩色 RT）
+            if (depthRT == null || depthRT.width != captureSize)
+            {
+                ReleaseDepthRT();
+                depthRT = new RenderTexture(captureSize, captureSize, 24,
+                    RenderTextureFormat.RFloat, RenderTextureReadWrite.Linear);
+                depthRT.Create();
+            }
+            currentCamera.targetTexture = depthRT;
+            state = State.PrepDepthZ;
+        }
+        else
+        {
+            currentCamera.targetTexture = renderTexture;
+            state = State.ReadPixels;
+        }
+
+        EditorUtility.DisplayProgressBar(depthMode ? "场景相机深度截图" : "场景相机截图",
+            $"缺席样本 1/{absenceItems.Count}: {currentBaseName}", (float)doneSceneCount / totalSceneCount);
+        EditorApplication.QueuePlayerLoopUpdate();
+        return true;
+    }
+
+    /// <summary>隐藏当前缺席物体（关闭其渲染器，物体本身保持激活）。</summary>
+    private static void HideCurrentAbsenceObject()
+    {
+        if (absenceItems[absenceIndex].renderer != null)
+        {
+            absenceItems[absenceIndex].renderer.enabled = false;
+        }
+    }
+
+    /// <summary>恢复当前缺席物体的渲染器（缺席流程收尾或异常退出兜底时调用）。</summary>
+    private static void UnhideCurrentAbsenceObject()
+    {
+        if (absenceItems != null && absenceIndex >= 0 && absenceIndex < absenceItems.Count
+            && absenceItems[absenceIndex].renderer != null)
+        {
+            absenceItems[absenceIndex].renderer.enabled = true;
+        }
+    }
+
+    /// <summary>完成当前缺席样本后切换到下一个物体；全部完成后恢复物体并结束本相机。</summary>
+    private static void AdvanceAbsence()
+    {
+        UnhideCurrentAbsenceObject();
+        absenceIndex++;
+        if (absenceIndex >= absenceItems.Count)
+        {
+            EndAbsencePhase();
+            return;
+        }
+        HideCurrentAbsenceObject();
+        framesWaited = 0;
+        frameBaseline = Time.frameCount;
+        state = depthMode ? State.PrepDepthZ : State.ReadPixels;
+
+        EditorUtility.DisplayProgressBar(depthMode ? "场景相机深度截图" : "场景相机截图",
+            $"缺席样本 {absenceIndex + 1}/{absenceItems.Count}: {currentBaseName}",
+            (float)doneSceneCount / totalSceneCount);
+        EditorApplication.QueuePlayerLoopUpdate();
+    }
+
+    /// <summary>结束本相机的缺席阶段：恢复被隐藏物体、清理状态并处理下一个相机。</summary>
+    private static void EndAbsencePhase()
+    {
+        UnhideCurrentAbsenceObject();
+        absenceActive = false;
+        absenceItems = null;
+        baseObjects = null;
+        absenceIndex = 0;
+        RestoreIdPassState(); // 清空渲染器列表并恢复相机背景/后处理
+        FinishCurrentCamera();
+    }
+
+    /// <summary>构建缺席样本的 objects 列表：常规可见物体剔除当前被隐藏的一个。</summary>
+    private static List<ObjectInfo> BuildAbsenceObjects()
+    {
+        ObjectInfo hidden = absenceItems[absenceIndex].info;
+        var list = new List<ObjectInfo>(baseObjects.Count);
+        foreach (ObjectInfo o in baseObjects)
+        {
+            if (!ReferenceEquals(o, hidden))
+            {
+                list.Add(o);
+            }
+        }
+        return list;
+    }
+
+    /// <summary>结束当前相机的全部截图工作，恢复相机状态并回到 PrepCamera 处理下一个相机。</summary>
+    private static void FinishCurrentCamera()
+    {
         currentCamera.targetTexture = null;
         currentCamera.enabled = currentCameraWasEnabled;
         currentCamera = null;
         capturedCount++;
-
         state = State.PrepCamera;
     }
 
-    /// <summary>恢复所有渲染器原始材质，并还原相机背景与后处理设置。</summary>
-    private static void RestoreIdPassState()
+    /// <summary>恢复所有渲染器原始材质，并还原相机背景与后处理设置；keepMappedRenderers=true 时保留渲染器列表（供缺席阶段的深度通道复用）。</summary>
+    private static void RestoreIdPassState(bool keepMappedRenderers = false)
     {
         foreach (IdMappedRenderer m in idMappedRenderers)
         {
@@ -825,7 +1190,10 @@ public static class SceneCameraScreenshotTool
                 UnityEngine.Object.DestroyImmediate(m.idMaterial);
             }
         }
-        idMappedRenderers.Clear();
+        if (!keepMappedRenderers)
+        {
+            idMappedRenderers.Clear();
+        }
 
         if (currentCamera != null)
         {
@@ -961,8 +1329,7 @@ public static class SceneCameraScreenshotTool
             quaternion = NormalizeQuaternion(t.rotation),
             size3 = size3,
             radius = radius,
-            height = height,
-            albedo = GetGrayscaleAlbedo(r)
+            height = height
         };
         return true;
     }
@@ -975,17 +1342,6 @@ public static class SceneCameraScreenshotTool
             q = new Quaternion(-q.x, -q.y, -q.z, -q.w); // 规范 w>=0 消除双覆盖歧义
         }
         return q;
-    }
-
-    private static float GetGrayscaleAlbedo(Renderer r)
-    {
-        Material mat = r.sharedMaterial;
-        if (mat == null || !mat.HasProperty("_Color"))
-        {
-            return 0.7f; // 与 README 示例默认值一致
-        }
-        Color c = mat.color;
-        return Mathf.Clamp01(0.299f * c.r + 0.587f * c.g + 0.114f * c.b);
     }
 
     /// <summary>
@@ -1052,7 +1408,12 @@ public static class SceneCameraScreenshotTool
                 break;
         }
 
-        sb.Append("\"albedo\": ").Append(FormatFloat(o.albedo)).Append('}');
+        // 去掉最后一个 ", " 后再收尾，避免留下尾逗号
+        if (sb[sb.Length - 1] == ' ' && sb[sb.Length - 2] == ',')
+        {
+            sb.Length -= 2;
+        }
+        sb.Append('}');
         return sb.ToString();
     }
 
@@ -1093,8 +1454,13 @@ public static class SceneCameraScreenshotTool
         running = false;
         EditorUtility.ClearProgressBar();
 
-        // 若在 ID 通道中途出错，恢复被临时替换的材质与相机设置
+        // 若在 ID 通道或缺席阶段中途出错，恢复被临时替换的材质与相机设置
         RestoreIdPassState();
+        UnhideCurrentAbsenceObject();
+        absenceActive = false;
+        absenceItems = null;
+        baseObjects = null;
+        absenceIndex = 0;
 
         if (currentCamera != null)
         {
@@ -1120,9 +1486,12 @@ public static class SceneCameraScreenshotTool
 
         if (success)
         {
+            string absenceInfo = absenceMode
+                ? $"（已启用物体缺席增强，每个相机最多额外 {absentCount} 张缺席样本）"
+                : string.Empty;
             string summary = depthMode
-                ? $"完成：共处理 {totalSceneCount} 个场景，为 {capturedCount} 个相机保存线性/ZBuffer 深度图（各配一份 JSON，每相机 4 个文件）。\n输出目录: {outputDir}"
-                : $"完成：共处理 {totalSceneCount} 个场景，保存 {capturedCount} 张截图及对应 JSON。\n输出目录: {outputDir}";
+                ? $"完成：共处理 {totalSceneCount} 个场景，为 {capturedCount} 个相机保存线性/ZBuffer 深度图（各配一份 JSON，每相机 4 个文件）{absenceInfo}。\n输出目录: {outputDir}"
+                : $"完成：共处理 {totalSceneCount} 个场景，保存 {capturedCount} 张截图及对应 JSON{absenceInfo}。\n输出目录: {outputDir}";
             EditorUtility.DisplayDialog("场景相机截图", summary, "确定");
         }
         else
@@ -1155,6 +1524,5 @@ public static class SceneCameraScreenshotTool
         public Vector3 size3;    // box: sx,sy,sz; ellipsoid: rx,ry,rz
         public float radius;     // sphere/cylinder/cone/capsule: r
         public float height;     // cylinder/cone/capsule: h（圆柱段高度）
-        public float albedo;     // 灰度反照率 0~1
     }
 }

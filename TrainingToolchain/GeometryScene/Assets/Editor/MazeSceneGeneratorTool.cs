@@ -23,6 +23,9 @@ public static class MazeSceneGeneratorTool
 
     private const string WhiteLitMaterialPath = "Assets/Materials/WhiteLit.mat";
 
+    /// <summary>统一物体命名器：与室内场景一致，生成 "部件名_00001" 格式名称。</summary>
+    private static readonly SceneObjectNamer namer = new SceneObjectNamer();
+
     /// <summary>
     /// 固定种子：>=0 时所有生成命令都使用该种子（便于命令行/批处理复现指定迷宫）；
     /// -1（默认）时每次随机取新种子，种子号会写入场景文件名。
@@ -66,6 +69,7 @@ public static class MazeSceneGeneratorTool
 
         // 新建空场景
         EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        namer.Reset();
 
         var mazeRoot = new GameObject("Maze_" + size + "x" + size);
         BuildLighting();
@@ -83,6 +87,9 @@ public static class MazeSceneGeneratorTool
         var (horizontal, vertical) = GenerateMazeWalls(size, new System.Random(seed));
         BuildWalls(mazeRoot.transform, size, horizontal, vertical, whiteLit);
 
+        // 兜底：把同一行/列上贴合或相交的分段墙体合并为整段长方体，减少场景物体数量
+        int merged = SceneBoxMerger.Merge(mazeRoot.transform);
+
         BuildCameras(size);
 
         // 保存场景（文件名带种子号，便于复现）
@@ -91,7 +98,8 @@ public static class MazeSceneGeneratorTool
             "Maze_" + size + "x" + size + "_Seed" + seed + ".unity").Replace('\\', '/');
         EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), scenePath);
         AssetDatabase.Refresh();
-        Debug.Log($"[生成迷宫] 已生成 {size}x{size} 迷宫场景（种子 {seed}）并保存到: {scenePath}，包含 5 个不同角度相机（含 1 个俯视相机）。");
+        Debug.Log($"[生成迷宫] 已生成 {size}x{size} 迷宫场景（种子 {seed}）并保存到: {scenePath}，" +
+                  $"兜底合并减少 {merged} 个墙体分段，包含 5 个不同角度相机（含 1 个俯视相机）。");
     }
 
     private static void BuildLighting()
@@ -107,7 +115,7 @@ public static class MazeSceneGeneratorTool
     private static void BuildGround(int size, Material whiteLit)
     {
         var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
+        ground.name = namer.Next("Ground");
         float side = (size + 2) * CellSize;
         ground.transform.localScale = new Vector3(side / 10f, 1f, side / 10f); // Plane 默认 10x10
         ground.transform.position = Vector3.zero;
@@ -202,7 +210,7 @@ public static class MazeSceneGeneratorTool
                 float z = -half + r * CellSize;
                 float x = -half + (c + 0.5f) * CellSize;
                 var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                wall.name = $"Wall_H_{r}_{c}";
+                wall.name = namer.Next("Wall_H");
                 wall.transform.SetParent(root, false);
                 wall.transform.position = new Vector3(x, centerY, z);
                 wall.transform.localScale = new Vector3(CellSize + WallThickness, WallHeight, WallThickness);
@@ -225,7 +233,7 @@ public static class MazeSceneGeneratorTool
                 float x = -half + c * CellSize;
                 float z = -half + (r + 0.5f) * CellSize;
                 var wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                wall.name = $"Wall_V_{r}_{c}";
+                wall.name = namer.Next("Wall_V");
                 wall.transform.SetParent(root, false);
                 wall.transform.position = new Vector3(x, centerY, z);
                 wall.transform.localScale = new Vector3(WallThickness, WallHeight, CellSize + WallThickness);

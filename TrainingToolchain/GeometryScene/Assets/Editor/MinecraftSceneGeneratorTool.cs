@@ -12,7 +12,8 @@ using UnityEngine;
 /// 每次执行用种子驱动的值噪声生成 32x32 体素地形（方块化柱体），
 /// 按主题随机布置树木（方块/球体/针叶三种形态）、小屋（开门墙 + 阶梯屋顶 + 烟囱）、
 /// 花草、圆石（球体）、路灯（圆柱杆 + 球形灯头）、水井、码头等要素；
-/// 不使用人物/动物。所有物体为 Unity 基本体 + 白模材质（WhiteLit）。
+/// 不使用人物/动物。所有物体为 Unity 基本体 + 按要素分配的纯色材质
+/// （泥土棕、草皮绿、树叶绿、水体蓝等，材质缓存于 Assets/Generated/SolidColor）。
 /// 新建 Unity 场景保存到 Assets/Scenes/Minecraft/ 下（文件名含种子号），
 /// 场景内包含 8 个不同角度的环绕透视相机 + 1 个正上方俯视相机。
 /// 生成过程显示进度条（物体较多时可能达到分钟级）。
@@ -21,8 +22,6 @@ public static class MinecraftSceneGeneratorTool
 {
     private const string MenuRoot = "生成Minecraft场景";
     private const string ScenesFolder = "Assets/Scenes/Minecraft";
-
-    private const string WhiteLitMaterialPath = "Assets/Materials/WhiteLit.mat";
 
     private const int GridSize = 32;      // 体素网格边长（格）
     private const int MaxHeight = 18;     // 单列最大高度（格）
@@ -43,6 +42,9 @@ public static class MinecraftSceneGeneratorTool
     /// V2 中单一种子决定主题、几何、灯光与相机；旧版场景不适用 V2 种子规则。
     /// </summary>
     public static int FixedSeed = -1;
+
+    /// <summary>统一物体命名器：与室内场景一致，生成 "部件名_00001" 格式名称。</summary>
+    private static readonly SceneObjectNamer namer = new SceneObjectNamer();
 
     [MenuItem(MenuRoot + "/随机主题")]
     public static void GenerateRandom() => GenerateScene(-1);
@@ -133,11 +135,9 @@ public static class MinecraftSceneGeneratorTool
 
     internal static GameObject BuildSceneContents(int seed)
     {
+        namer.Reset();
         var theme = ThemeForSeed(seed);
         var rng = new System.Random(seed);
-        var whiteLit = AssetDatabase.LoadAssetAtPath<Material>(WhiteLitMaterialPath);
-        if (whiteLit == null)
-            throw new InvalidOperationException("缺少白模材质：" + WhiteLitMaterialPath);
         var root = new GameObject($"Minecraft_V2_{theme}_Seed{seed}");
         BuildLighting();
         ReportProgress("规划地形高度场...", 0.06f);
@@ -149,23 +149,23 @@ public static class MinecraftSceneGeneratorTool
         for (int i = 0; i < houseCount; i++)
         {
             ReportProgress($"布置小屋 {i + 1}/{houseCount}...", 0.10f + 0.06f * i);
-            if (TryPlaceCottage(root.transform, plan, occupied, doorCells, rng, whiteLit, theme, i + 1, out Vector2 center))
+            if (TryPlaceCottage(root.transform, plan, occupied, doorCells, rng, theme, i + 1, out Vector2 center))
                 houseCenters.Add(center);
         }
 
         ReportProgress("布置树木...", 0.22f);
         int treeCount = TreeCountFor(theme, rng);
-        int treesBuilt = BuildTrees(root.transform, plan, occupied, rng, whiteLit, theme, treeCount);
+        int treesBuilt = BuildTrees(root.transform, plan, occupied, rng, theme, treeCount);
         ReportProgress("布置花草/圆石...", 0.40f);
         int flowerCount = FlowerCountFor(theme, rng);
-        BuildFlowers(root.transform, plan, occupied, rng, whiteLit, theme, flowerCount);
+        BuildFlowers(root.transform, plan, occupied, rng, theme, flowerCount);
         int rockCount = RockCountFor(theme, rng);
-        BuildRocks(root.transform, plan, occupied, rng, whiteLit, rockCount);
+        BuildRocks(root.transform, plan, occupied, rng, rockCount);
         ReportProgress("布置小道具（路灯/水井/码头）...", 0.48f);
-        BuildProps(root.transform, plan, occupied, doorCells, houseCenters, rng, whiteLit, theme);
+        BuildProps(root.transform, plan, occupied, doorCells, houseCenters, rng, theme);
         ReportProgress("生成体素地形方块...", 0.55f);
-        BuildTerrain(root.transform, plan, theme, whiteLit);
-        BuildGround(whiteLit);
+        BuildTerrain(root.transform, plan, theme);
+        BuildGround();
         int removed = MinecraftBoxMerger.Merge(root.transform,
             p => ReportProgress("多轮合并等价 Box（保留门洞、台阶和树冠缺角）...", 0.78f + p * 0.13f));
         ReportProgress("布置相机...", 0.93f);
@@ -347,12 +347,13 @@ public static class MinecraftSceneGeneratorTool
 
     // ---------------------------------------------------------------- 地形方块
 
-    private static void BuildTerrain(Transform root, TerrainPlan plan, Theme theme, Material whiteLit)
+    private static void BuildTerrain(Transform root, TerrainPlan plan, Theme theme)
     {
         var terrainRoot = new GameObject("Terrain");
         terrainRoot.transform.SetParent(root, false);
         float half = GridSize * 0.5f;
         var heights = plan.Heights;
+        var dirt = SolidColorMaterialPalette.Get(SceneColor.DirtBrown);
 
         for (int x = 0; x < GridSize; x++)
         {
@@ -364,13 +365,20 @@ public static class MinecraftSceneGeneratorTool
             for (int z = 0; z < GridSize; z++)
             {
                 int h = heights[x, z];
-                // 每列一个拉伸方块：顶面在 y=h，柱体从 0 到 h（高度按格量化，保持方块轮廓）
-                var col = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                col.name = $"Terr_{x}_{z}";
-                col.transform.SetParent(terrainRoot.transform, false);
-                col.transform.position = new Vector3(x - half + 0.5f, h * 0.5f, z - half + 0.5f);
-                col.transform.localScale = new Vector3(1f, h, 1f);
-                SetMaterial(col, whiteLit);
+                // 表层 1 格（草皮/砂/裸岩）+ 其下泥土柱体；高度按格量化，保持方块轮廓
+                Material top = TerrainTopMaterial(theme, h);
+                if (h <= 1)
+                {
+                    CreateBlock(terrainRoot.transform, "Terr", top,
+                        new Vector3(x - half + 0.5f, 0.5f, z - half + 0.5f), Vector3.one);
+                }
+                else
+                {
+                    CreateBlock(terrainRoot.transform, "Terr", top,
+                        new Vector3(x - half + 0.5f, h - 0.5f, z - half + 0.5f), Vector3.one);
+                    CreateBlock(terrainRoot.transform, "Terr", dirt,
+                        new Vector3(x - half + 0.5f, (h - 1) * 0.5f, z - half + 0.5f), new Vector3(1f, h - 1, 1f));
+                }
             }
         }
 
@@ -378,35 +386,46 @@ public static class MinecraftSceneGeneratorTool
         if (theme == Theme.Lake)
         {
             var water = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            water.name = "Water";
+            water.name = namer.Next("Water");
             water.transform.SetParent(root, false);
             water.transform.position = new Vector3(0f, WaterLevel - 0.05f, 0f);
             water.transform.localScale = new Vector3(GridSize, 0.1f, GridSize);
-            SetMaterial(water, whiteLit);
+            SetMaterial(water, SolidColorMaterialPalette.Get(SceneColor.WaterBlue));
         }
     }
 
-    private static void BuildGround(Material whiteLit)
+    /// <summary>地形表层材质：高山裸岩灰、水下湖床砂、其余草皮绿（仅依赖高度，不影响随机序列）。</summary>
+    private static Material TerrainTopMaterial(Theme theme, int h)
+    {
+        if (h >= 8) return SolidColorMaterialPalette.Get(SceneColor.StoneGray);
+        if (theme == Theme.Lake && h <= WaterLevel) return SolidColorMaterialPalette.Get(SceneColor.SandTan);
+        return SolidColorMaterialPalette.Get(SceneColor.GrassGreen);
+    }
+
+    private static void BuildGround()
     {
         // 比体素区域更大的地面，保证相机画面内边界外仍有地面
         var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
+        ground.name = namer.Next("Ground");
         float side = GridSize * 1.8f;
         ground.transform.localScale = new Vector3(side / 10f, 1f, side / 10f); // Plane 默认 10x10
         ground.transform.position = Vector3.zero;
-        SetMaterial(ground, whiteLit);
+        SetMaterial(ground, SolidColorMaterialPalette.Get(SceneColor.GrassGreen));
     }
 
     // ---------------------------------------------------------------- 小屋
 
     /// <summary>尝试放置一座小屋：选址（平整、不临水、远离边界）→ 削平地形 → 墙 + 门洞 + 阶梯屋顶 + 烟囱。</summary>
     private static bool TryPlaceCottage(Transform root, TerrainPlan plan, List<Rect> occupied,
-        List<Vector2Int> doorCells, System.Random rng, Material whiteLit, Theme theme, int index, out Vector2 center)
+        List<Vector2Int> doorCells, System.Random rng, Theme theme, int index, out Vector2 center)
     {
         const int margin = 4;      // 距边界最小距离
         const int wallHeight = 3;  // 墙体格数
         center = Vector2.zero;
         var heights = plan.Heights;
+        var wall = SolidColorMaterialPalette.Get(SceneColor.CottageWall);
+        var roof = SolidColorMaterialPalette.Get(SceneColor.RoofRed);
+        var chimneyMat = SolidColorMaterialPalette.Get(SceneColor.StoneGray);
 
         for (int attempt = 0; attempt < 180; attempt++)
         {
@@ -442,25 +461,25 @@ public static class MinecraftSceneGeneratorTool
             // 南墙（-Z 侧）：居中开 1 格宽、2 格高的门洞 → 左右两段 + 门楣
             float segW = (w - 1) * 0.5f;
             float wallY = baseY + wallHeight * 0.5f;
-            CreateBlock(houseRoot.transform, "Wall_S_L", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_S_L", wall,
                 new Vector3(cx - (segW + 1f) * 0.5f, wallY, z0 - half + 0.5f),
                 new Vector3(segW, wallHeight, 1f));
-            CreateBlock(houseRoot.transform, "Wall_S_R", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_S_R", wall,
                 new Vector3(cx + (segW + 1f) * 0.5f, wallY, z0 - half + 0.5f),
                 new Vector3(segW, wallHeight, 1f));
-            CreateBlock(houseRoot.transform, "Wall_S_Top", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_S_Top", wall,
                 new Vector3(cx, baseY + wallHeight - 0.5f, z0 - half + 0.5f),
                 new Vector3(1f, 1f, 1f));
 
             // 北墙（+Z 侧）
-            CreateBlock(houseRoot.transform, "Wall_N", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_N", wall,
                 new Vector3(cx, wallY, z0 - half + d - 0.5f),
                 new Vector3(w, wallHeight, 1f));
             // 东 / 西墙（跨度缩 2 格，避免与南北墙重叠）
-            CreateBlock(houseRoot.transform, "Wall_E", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_E", wall,
                 new Vector3(x0 - half + w - 0.5f, wallY, cz),
                 new Vector3(1f, wallHeight, d - 2));
-            CreateBlock(houseRoot.transform, "Wall_W", whiteLit,
+            CreateBlock(houseRoot.transform, "Wall_W", wall,
                 new Vector3(x0 - half + 0.5f, wallY, cz),
                 new Vector3(1f, wallHeight, d - 2));
 
@@ -468,7 +487,7 @@ public static class MinecraftSceneGeneratorTool
             int level = 0;
             for (int rw = w + 1, rd = d + 1; rw >= 1 && rd >= 1; rw -= 2, rd -= 2, level++)
             {
-                CreateBlock(houseRoot.transform, $"Roof_L{level}", whiteLit,
+                CreateBlock(houseRoot.transform, "Roof", roof,
                     new Vector3(cx, baseY + wallHeight + level + 0.5f, cz),
                     new Vector3(rw, 1f, rd));
             }
@@ -476,7 +495,7 @@ public static class MinecraftSceneGeneratorTool
             // 烟囱：立在一侧屋顶上
             float chimneyX = x0 - half + 1.5f;
             float chimneyZ = z0 - half + d - 1.5f;
-            CreateBlock(houseRoot.transform, "Chimney", whiteLit,
+            CreateBlock(houseRoot.transform, "Chimney", chimneyMat,
                 new Vector3(chimneyX, baseY + wallHeight + 1f, chimneyZ),
                 new Vector3(1f, 2f, 1f));
 
@@ -489,7 +508,7 @@ public static class MinecraftSceneGeneratorTool
     // ---------------------------------------------------------------- 树木
 
     private static int BuildTrees(Transform root, TerrainPlan plan, List<Rect> occupied,
-        System.Random rng, Material whiteLit, Theme theme, int treeCount)
+        System.Random rng, Theme theme, int treeCount)
     {
         var treesRoot = new GameObject("Trees");
         treesRoot.transform.SetParent(root, false);
@@ -521,19 +540,21 @@ public static class MinecraftSceneGeneratorTool
 
             positions.Add(new Vector2Int(x, z));
             built++;
-            BuildOneTree(treesRoot.transform, plan.Heights, rng, whiteLit, theme, x, z, built);
+            BuildOneTree(treesRoot.transform, plan.Heights, rng, theme, x, z);
         }
         return built;
     }
 
     /// <summary>随机一种树形：方块橡树 / 球冠橡树 / 针叶云杉（山地与密林中云杉比例更高）。</summary>
-    private static void BuildOneTree(Transform parent, int[,] heights, System.Random rng, Material whiteLit,
-        Theme theme, int x, int z, int index)
+    private static void BuildOneTree(Transform parent, int[,] heights, System.Random rng,
+        Theme theme, int x, int z)
     {
         float half = GridSize * 0.5f;
         float wx = x - half + 0.5f;
         float wz = z - half + 0.5f;
         int h = heights[x, z];
+        var trunk = SolidColorMaterialPalette.Get(SceneColor.TrunkBrown);
+        var leaf = SolidColorMaterialPalette.Get(SceneColor.LeafGreen);
 
         double spruceBias = (theme == Theme.Mountain || theme == Theme.Forest) ? 0.4 : 0.15;
         double roll = rng.NextDouble();
@@ -542,13 +563,13 @@ public static class MinecraftSceneGeneratorTool
         {
             // 针叶云杉：高树干 + 逐层收窄的方块树冠
             int th = NextRange(rng, 5, 7);
-            CreateBlock(parent, $"Tree{index}_Trunk", whiteLit,
+            CreateBlock(parent, "Tree_Trunk", trunk,
                 new Vector3(wx, h + 1f, wz), new Vector3(1f, 2f, 1f));
             int layer = 0;
             for (int y = h + 2; y <= h + th + 1; y++)
             {
                 int size = Mathf.Max(1, 3 - layer / 2);
-                CreateBlock(parent, $"Tree{index}_Leaf_{layer}", whiteLit,
+                CreateBlock(parent, "Tree_Leaf", leaf,
                     new Vector3(wx, y + 0.5f, wz), new Vector3(size, 1f, size));
                 layer++;
             }
@@ -557,29 +578,29 @@ public static class MinecraftSceneGeneratorTool
         {
             // 球冠橡树：树干 + 两个缩放球体树冠
             int th = NextRange(rng, 3, 4);
-            CreateBlock(parent, $"Tree{index}_Trunk", whiteLit,
+            CreateBlock(parent, "Tree_Trunk", trunk,
                 new Vector3(wx, h + th * 0.5f, wz), new Vector3(1f, th, 1f));
-            CreateBlock(parent, $"Tree{index}_Leaf_Low", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_Low", leaf,
                 new Vector3(wx, h + th + 0.4f, wz), new Vector3(3.4f, 2.2f, 3.4f), PrimitiveType.Sphere);
-            CreateBlock(parent, $"Tree{index}_Leaf_Top", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_Top", leaf,
                 new Vector3(wx, h + th + 1.7f, wz), new Vector3(2.2f, 1.6f, 2.2f), PrimitiveType.Sphere);
         }
         else
         {
             // 方块橡树：树干 + 十字缺角双层树冠 + 顶层 + 顶块
             int th = NextRange(rng, 3, 5);
-            CreateBlock(parent, $"Tree{index}_Trunk", whiteLit,
+            CreateBlock(parent, "Tree_Trunk", trunk,
                 new Vector3(wx, h + (th - 1) * 0.5f, wz), new Vector3(1f, th - 1, 1f));
             float leafY = h + th;
-            CreateBlock(parent, $"Tree{index}_Leaf_Center", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_Center", leaf,
                 new Vector3(wx, leafY, wz), new Vector3(5f, 2f, 3f));
-            CreateBlock(parent, $"Tree{index}_Leaf_North", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_North", leaf,
                 new Vector3(wx, leafY, wz + 2f), new Vector3(3f, 2f, 1f));
-            CreateBlock(parent, $"Tree{index}_Leaf_South", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_South", leaf,
                 new Vector3(wx, leafY, wz - 2f), new Vector3(3f, 2f, 1f));
-            CreateBlock(parent, $"Tree{index}_Leaf_Top", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_Top", leaf,
                 new Vector3(wx, h + th + 1.5f, wz), new Vector3(3f, 1f, 3f));
-            CreateBlock(parent, $"Tree{index}_Leaf_Cap", whiteLit,
+            CreateBlock(parent, "Tree_Leaf_Cap", leaf,
                 new Vector3(wx, h + th + 2.5f, wz), new Vector3(1f, 1f, 1f));
         }
     }
@@ -587,11 +608,12 @@ public static class MinecraftSceneGeneratorTool
     // ---------------------------------------------------------------- 花草与圆石
 
     private static void BuildFlowers(Transform root, TerrainPlan plan, List<Rect> occupied,
-        System.Random rng, Material whiteLit, Theme theme, int count)
+        System.Random rng, Theme theme, int count)
     {
         var flowersRoot = new GameObject("Flowers");
         flowersRoot.transform.SetParent(root, false);
         float half = GridSize * 0.5f;
+        var stem = SolidColorMaterialPalette.Get(SceneColor.LeafGreen);
         int built = 0;
 
         for (int attempt = 0; attempt < count * 6 && built < count; attempt++)
@@ -608,20 +630,29 @@ public static class MinecraftSceneGeneratorTool
             float wx = x - half + 0.5f + NextRange(rng, -0.25f, 0.25f);
             float wz = z - half + 0.5f + NextRange(rng, -0.25f, 0.25f);
             float stemH = NextRange(rng, 0.35f, 0.55f);
-            // 圆柱花茎 + 球形花头
-            CreateBlock(flowersRoot.transform, $"Flower{built}_Stem", whiteLit,
+            // 圆柱花茎 + 球形花头；花头颜色由格子坐标哈希决定，不消耗随机数
+            CreateBlock(flowersRoot.transform, "Flower_Stem", stem,
                 new Vector3(wx, h + stemH * 0.5f, wz), new Vector3(0.08f, stemH, 0.08f), PrimitiveType.Cylinder);
-            CreateBlock(flowersRoot.transform, $"Flower{built}_Head", whiteLit,
+            CreateBlock(flowersRoot.transform, "Flower_Head", FlowerHeadMaterial(x, z),
                 new Vector3(wx, h + stemH + 0.09f, wz), Vector3.one * 0.18f, PrimitiveType.Sphere);
         }
     }
 
+    /// <summary>花头颜色：红/黄/粉/白/蓝按格子坐标哈希轮换（确定性，不影响种子复现）。</summary>
+    private static Material FlowerHeadMaterial(int x, int z)
+    {
+        SceneColor[] heads = { SceneColor.FlowerRed, SceneColor.FlowerYellow, SceneColor.FlowerPink, SceneColor.FlowerWhite, SceneColor.FlowerBlue };
+        int hash = (x * 73856093) ^ (z * 19349663);
+        return SolidColorMaterialPalette.Get(heads[(hash & int.MaxValue) % heads.Length]);
+    }
+
     private static void BuildRocks(Transform root, TerrainPlan plan, List<Rect> occupied,
-        System.Random rng, Material whiteLit, int count)
+        System.Random rng, int count)
     {
         var rocksRoot = new GameObject("Rocks");
         rocksRoot.transform.SetParent(root, false);
         float half = GridSize * 0.5f;
+        var rock = SolidColorMaterialPalette.Get(SceneColor.StoneGray);
         int built = 0;
 
         for (int attempt = 0; attempt < count * 6 && built < count; attempt++)
@@ -636,7 +667,7 @@ public static class MinecraftSceneGeneratorTool
             float size = NextRange(rng, 0.7f, 2.2f);
             float squash = NextRange(rng, 0.6f, 1f);
             // 半球形圆石：压扁的球体，半埋入地面
-            CreateBlock(rocksRoot.transform, $"Rock{built}", whiteLit,
+            CreateBlock(rocksRoot.transform, "Rock", rock,
                 new Vector3(x - half + 0.5f, h + size * squash * 0.25f, z - half + 0.5f),
                 new Vector3(size, size * squash, size * NextRange(rng, 0.8f, 1.2f)), PrimitiveType.Sphere);
         }
@@ -646,26 +677,27 @@ public static class MinecraftSceneGeneratorTool
 
     /// <summary>路灯（圆柱杆 + 球形灯头）、水井（平原 30% 概率）、码头（湖泊，从岸边伸向湖心）。</summary>
     private static void BuildProps(Transform root, TerrainPlan plan, List<Rect> occupied,
-        List<Vector2Int> doorCells, List<Vector2> houseCenters, System.Random rng, Material whiteLit, Theme theme)
+        List<Vector2Int> doorCells, List<Vector2> houseCenters, System.Random rng, Theme theme)
     {
         var propsRoot = new GameObject("Props");
         propsRoot.transform.SetParent(root, false);
         float half = GridSize * 0.5f;
         var heights = plan.Heights;
+        var path = SolidColorMaterialPalette.Get(SceneColor.PathGray);
+        var metal = SolidColorMaterialPalette.Get(SceneColor.MetalDark);
+        var lamp = SolidColorMaterialPalette.Get(SceneColor.LampWarm);
 
         // 门口小路：从每扇门向 -Z 方向铺到边界，薄片方块贴着地形
         for (int i = 0; i < doorCells.Count; i++)
         {
             var door = doorCells[i];
             int px = door.x;
-            int tile = 0;
             for (int z = door.y; z >= 0; z--)
             {
                 int h = heights[px, z];
-                CreateBlock(propsRoot.transform, $"Path_{i}_{tile}", whiteLit,
+                CreateBlock(propsRoot.transform, "Path", path,
                     new Vector3(px - half + 0.5f, h + 0.05f, z - half + 0.5f),
                     new Vector3(1f, 0.1f, 1f));
-                tile++;
             }
 
             // 门两侧路灯
@@ -677,9 +709,9 @@ public static class MinecraftSceneGeneratorTool
                 int lh = heights[lx, lz];
                 float wx = lx - half + 0.5f;
                 float wz = lz - half + 0.5f;
-                CreateBlock(propsRoot.transform, $"Lamp_{i}_{side}_Pole", whiteLit,
+                CreateBlock(propsRoot.transform, "Lamp_Pole", metal,
                     new Vector3(wx, lh + 1.25f, wz), new Vector3(0.15f, 2.5f, 0.15f), PrimitiveType.Cylinder);
-                CreateBlock(propsRoot.transform, $"Lamp_{i}_{side}_Head", whiteLit,
+                CreateBlock(propsRoot.transform, "Lamp_Head", lamp,
                     new Vector3(wx, lh + 2.7f, wz), Vector3.one * 0.5f, PrimitiveType.Sphere);
             }
         }
@@ -697,13 +729,13 @@ public static class MinecraftSceneGeneratorTool
                 float wx = x - half + 0.5f;
                 float wz = z - half + 0.5f;
                 // 井圈（扁圆柱）+ 两根立柱 + 顶盖
-                CreateBlock(propsRoot.transform, "Well_Rim", whiteLit,
+                CreateBlock(propsRoot.transform, "Well_Rim", SolidColorMaterialPalette.Get(SceneColor.StoneGray),
                     new Vector3(wx, h + 0.45f, wz), new Vector3(1.6f, 0.9f, 1.6f), PrimitiveType.Cylinder);
-                CreateBlock(propsRoot.transform, "Well_PostL", whiteLit,
+                CreateBlock(propsRoot.transform, "Well_PostL", SolidColorMaterialPalette.Get(SceneColor.TrunkBrown),
                     new Vector3(wx - 0.6f, h + 1.7f, wz), new Vector3(0.15f, 1.6f, 0.15f));
-                CreateBlock(propsRoot.transform, "Well_PostR", whiteLit,
+                CreateBlock(propsRoot.transform, "Well_PostR", SolidColorMaterialPalette.Get(SceneColor.TrunkBrown),
                     new Vector3(wx + 0.6f, h + 1.7f, wz), new Vector3(0.15f, 1.6f, 0.15f));
-                CreateBlock(propsRoot.transform, "Well_Roof", whiteLit,
+                CreateBlock(propsRoot.transform, "Well_Roof", SolidColorMaterialPalette.Get(SceneColor.RoofRed),
                     new Vector3(wx, h + 2.6f, wz), new Vector3(1.8f, 0.15f, 1.8f));
                 break;
             }
@@ -714,6 +746,8 @@ public static class MinecraftSceneGeneratorTool
         {
             Vector2 lakeW = new Vector2(plan.LakeCenter.x - half + 0.5f, plan.LakeCenter.y - half + 0.5f);
             Vector2 dir = (lakeW - houseCenters[0]).normalized;
+            var plankMat = SolidColorMaterialPalette.Get(SceneColor.PlankWood);
+            var postMat = SolidColorMaterialPalette.Get(SceneColor.TrunkBrown);
             // 从小屋出发走向湖心，找到第一个低于水位的格子
             Vector2 p = houseCenters[0];
             for (int step = 0; step < GridSize; step++)
@@ -729,11 +763,11 @@ public static class MinecraftSceneGeneratorTool
                     {
                         Vector2 q = p + dir * plank;
                         float deckY = WaterLevel + 0.4f;
-                        CreateBlock(propsRoot.transform, $"Pier_Plank{plank}", whiteLit,
+                        CreateBlock(propsRoot.transform, "Pier_Plank", plankMat,
                             new Vector3(q.x, deckY, q.y), new Vector3(1.2f, 0.15f, 1.2f));
                         if (plank == 0 || plank == 4)
                         {
-                            CreateBlock(propsRoot.transform, $"Pier_Post{plank}", whiteLit,
+                            CreateBlock(propsRoot.transform, "Pier_Post", postMat,
                                 new Vector3(q.x, deckY * 0.5f, q.y), new Vector3(0.2f, deckY, 0.2f), PrimitiveType.Cylinder);
                         }
                     }
@@ -834,7 +868,7 @@ public static class MinecraftSceneGeneratorTool
         Vector3 pos, Vector3 size, PrimitiveType type = PrimitiveType.Cube)
     {
         var go = GameObject.CreatePrimitive(type);
-        go.name = name;
+        go.name = namer.Next(name);
         go.transform.SetParent(parent, false);
         go.transform.position = pos;
         if (type == PrimitiveType.Cylinder || type == PrimitiveType.Capsule) size.y *= 0.5f;

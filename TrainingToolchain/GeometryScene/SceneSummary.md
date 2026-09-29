@@ -11,7 +11,7 @@
 
 - **256×256 灰度 PNG** 截图（`Screenshots/*.png`，共 51 张）
 - **同名 JSON 标注**（`Screenshots/*.json`）：相机 `eye / target / fov_y_deg` + 视锥内物体的
-  `type（box/sphere/cylinder/ellipsoid/cone/capsule）、中心、四元数（w≥0 归一化）、尺寸、灰度 albedo`
+  `type（box/sphere/cylinder/ellipsoid/cone/capsule）、中心、四元数（w≥0 归一化）、尺寸`
 
 ## 二、共性特征
 
@@ -21,7 +21,7 @@
 | 组件 | 每个可见物体仅 `Transform + MeshFilter + MeshRenderer`；**无刚体/碰撞体/物理/动画/粒子** |
 | 运行时脚本 | **零自定义脚本**，仅有 URP 内部组件（`UniversalAdditionalLightData` 等） |
 | 静态标记 | 所有物体 `StaticEditorFlags = 0`（非静态，无光照烘焙、无静态批处理） |
-| 材质 | **全库统一白模**：所有场景的所有 MeshRenderer 均使用纯白材质 `WhiteLit`（1,1,1）；`Assets/Materials/` 下原有 31 个调色板材质（WallPaint、FloorWood、DarkMetal…）已不再被场景引用，JSON 标注中 albedo 恒为 1 |
+| 材质 | **全库统一白模**：所有场景的所有 MeshRenderer 均使用纯白材质 `WhiteLit`（1,1,1）；`Assets/Materials/` 下原有 31 个调色板材质（WallPaint、FloorWood、DarkMetal…）已不再被场景引用 |
 | 命名 | 强语义化命名，前缀即类别：`WS1N_`（工位）、`BldN/S/E/W`（建筑）、`Tree*_Trunk/Crown`、`Lamp*_Base/Pole/Arm/Head`、`Cor*/Mid*`（路口）、`Dash*`（标线） |
 | 灯光 | 室内/城市场景统一为 **1 个 Directional Light + 1 个 Point Light**，环境光模式 Trilight（除 OfficeScene 为 Flat、SampleScene 为 Skybox）；无雾效 |
 | 相机 | 除 Main Camera 外，每场景布置 **4~26 个语义命名的视点相机**（`Cam_Corner`、`Cam_Bird`、`Cam_Aisle1~6`…，多为禁用状态），供批量截图使用；已有 12 个场景共 51 个相机位，书店场景新增 102 个 |
