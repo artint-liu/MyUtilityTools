@@ -25,6 +25,7 @@ using UnityEngine.Rendering.Universal;
 /// 物体缺席增强（菜单项带"-物体缺席"后缀）：每个相机完成常规截图后，对本相机画面中
 /// 按像素面积降序排名前 n（默认 5，可通过"截图/物体缺席数量/设置..."调节）的可见物体
 /// 依次单独隐藏并重拍，额外生成 n 张缺席照片与对应 JSON（objects 为剔除缺席物体后的可见物体）。
+/// 地面类物体（地面/楼板/水体/道路/台地等大面积基底，见 GroundNameKeywords）不参与缺席隐藏。
 /// 场景物体数或相机内可见物体数不足 n 时跳过该增强，仅输出常规截图。
 /// </summary>
 public static class SceneCameraScreenshotTool
@@ -104,6 +105,40 @@ public static class SceneCameraScreenshotTool
         public Renderer renderer;
         public ObjectInfo info;
         public int pixelCount;
+    }
+
+    // 地面类物体名称关键词（不区分大小写，按子串匹配；缺席增强不隐藏这类物体）。
+    // 覆盖各生成器的地面/基底命名：Geometry/Maze 的 "Ground" Plane、Minecraft 的 "Water"，
+    // 室外的 GroundLobe/GroundDisc/GroundTerrace/SeaWater 等，室内的 Floor/楼板 楼板段。
+    private static readonly string[] GroundNameKeywords =
+        { "ground", "floor", "terrain", "terrace", "gully", "water", "地面", "地板", "楼板" };
+    // 父级链上用于识别地面类容器的关键词（如室外 "01_Terrain"、"TerracedGround" 分组）。
+    // 不含 "floor"：室内 "Floor_1" 楼层分组包含墙体等非地面物体，避免整组误判。
+    private static readonly string[] GroundParentKeywords = { "ground", "terrain", "地面", "楼板" };
+
+    /// <summary>判断渲染器所属物体（自身名称或父级链上的地面类容器）是否为地面类物体。</summary>
+    private static bool IsGroundLike(Renderer r)
+    {
+        string ownName = r.gameObject.name;
+        foreach (string keyword in GroundNameKeywords)
+        {
+            if (ownName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+        }
+        for (Transform t = r.transform.parent; t != null; t = t.parent)
+        {
+            string parentName = t.name;
+            foreach (string keyword in GroundParentKeywords)
+            {
+                if (parentName.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     #region 截图尺寸菜单（256 / 512 / 1024 / 2048）
@@ -1013,6 +1048,10 @@ public static class SceneCameraScreenshotTool
             objects.Add(info);
             if (absenceCandidates != null)
             {
+                if (IsGroundLike(visibleRenderers[i]))
+                {
+                    continue; // 地面类物体保留在可见物体 JSON 中，但不参与缺席隐藏
+                }
                 int area;
                 idPixelAreas.TryGetValue(visibleRendererIds[i], out area);
                 absenceCandidates.Add(new AbsenceItem
@@ -1053,7 +1092,7 @@ public static class SceneCameraScreenshotTool
 
     /// <summary>
     /// 尝试进入当前相机的物体缺席阶段：场景物体数与相机内可见物体数均不少于 n 时，
-    /// 取画面面积最大的前 n 个可见物体作为缺席对象；返回 false 表示条件不满足，按常规流程收尾。
+    /// 取画面面积最大的前 n 个非地面类可见物体作为缺席对象；返回 false 表示条件不满足，按常规流程收尾。
     /// </summary>
     private static bool TryBeginAbsencePhase(List<ObjectInfo> baseObjectsSnapshot, List<AbsenceItem> candidates)
     {
