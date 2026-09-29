@@ -46,7 +46,9 @@ ImageToScene/
     ├── dataset.py           # parquet 数据集
     ├── model.py             # ViT 编码器 + Transformer 解码器 (~1.03B)
     ├── train.py             # 训练循环
-    └── infer.py             # 推理与可视化
+    ├── infer.py             # 推理与可视化
+    ├── export.py            # checkpoint -> 量化 safetensors 导出
+    └── webui.py             # 本地 Web 测试台（FastAPI，上传图片推理）
 ```
 
 场景 JSON 结构（parquet `objects` 列）：
@@ -91,6 +93,15 @@ python -m src.train --config configs/default.yaml --train-parquet data/a.parquet
 
 # 3. 推理可视化：左=输入图，右=预测几何体在 GT 相机/光照/地面下的重建渲染
 python -m src.infer --ckpt outputs/best.pt --n 8
+
+# 4. 导出量化 safetensors（支持 fp32/fp16/bf16/int8，输出名自动拼接：
+#    best.pt -> best.fp16.safetensors / best.int8.safetensors）
+python -m src.export --ckpt outputs/best.pt --formats fp16
+python -m src.export --ckpt outputs/best.pt --formats fp16 bf16 int8
+python -m src.export --ckpt outputs/last.pt --formats fp16 --out my_model.safetensors
+
+# 5. 本地 Web 测试台：浏览器上传图片推理，可调光照/地面参数
+python -m src.webui --ckpt outputs/best.pt            # 打开 http://127.0.0.1:8000
 ```
 
 ## 训练细节
