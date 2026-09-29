@@ -43,10 +43,23 @@ def make_schedule(base_lr, warmup_steps, total_steps, min_lr):
     return fn
 
 
+def _fmt_sec(s: float) -> str:
+    s = int(s)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m{sec:02d}s"
+    if m:
+        return f"{m}m{sec:02d}s"
+    return f"{sec}s"
+
+
 def train_one_epoch(model, loader, optimizer, scheduler, scaler,
-                    device, tc, use_amp, amp_dtype, epoch):
+                    device, tc, use_amp, amp_dtype, epoch,
+                    total_epochs, train_t0):
     model.train()
     losses = []
+    t0 = time.time()
     for it, (images, tokens, labels) in enumerate(loader):
         images = images.to(device, non_blocking=True)
         tokens = tokens.to(device, non_blocking=True)
@@ -71,8 +84,18 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler,
         losses.append(loss.item())
         if (it + 1) % tc.get("log_every", 10) == 0:
             lr = scheduler.get_last_lr()[0]
-            print(f"  epoch {epoch} | it {it + 1}/{len(loader)} | "
-                  f"loss {np.mean(losses[-50:]):.4f} | lr {lr:.2e}")
+            now = time.time()
+            ep_elapsed = now - t0
+            ep_eta = ep_elapsed / (it + 1) * (len(loader) - it - 1)
+            # 整体进度按迭代数线性折算（resume 场景下不含此前会话耗时，近似值）
+            done_iters = epoch * len(loader) + it + 1
+            total_iters = total_epochs * len(loader)
+            all_elapsed = now - train_t0
+            all_eta = all_elapsed / max(done_iters, 1) * (total_iters - done_iters)
+            print(f"  epoch {epoch}/{total_epochs - 1} | it {it + 1}/{len(loader)} | "
+                  f"loss {np.mean(losses[-50:]):.4f} | lr {lr:.2e} | "
+                  f"epoch {_fmt_sec(ep_elapsed)}/{_fmt_sec(ep_elapsed + ep_eta)} | "
+                  f"eta {_fmt_sec(ep_eta)} | total eta {_fmt_sec(all_eta)}")
     return float(np.mean(losses))
 
 
@@ -193,13 +216,20 @@ def main():
         best_val = ck["best_val"]
         print(f"resumed from {resume_path} (epoch {start_epoch})")
 
+    train_t0 = time.time()
     for epoch in range(start_epoch, tc["epochs"]):
         t0 = time.time()
         train_loss = train_one_epoch(model, train_loader, optimizer, scheduler,
-                                     scaler, device, tc, use_amp, amp_dtype, epoch)
+                                     scaler, device, tc, use_amp, amp_dtype, epoch,
+                                     tc["epochs"], train_t0)
         val_loss, val_acc = evaluate(model, val_loader, device, use_amp, amp_dtype)
-        print(f"epoch {epoch}: train_loss {train_loss:.4f} | val_loss {val_loss:.4f} | "
-              f"val_token_acc {val_acc:.4f} | {time.time() - t0:.1f}s")
+        ep_total = time.time() - t0
+        all_elapsed = time.time() - train_t0
+        remain_epochs = tc["epochs"] - epoch - 1
+        print(f"epoch {epoch}/{tc['epochs'] - 1}: train_loss {train_loss:.4f} | "
+              f"val_loss {val_loss:.4f} | val_token_acc {val_acc:.4f} | "
+              f"{_fmt_sec(ep_total)} | elapsed {_fmt_sec(all_elapsed)} | "
+              f"total eta {_fmt_sec(ep_total * remain_epochs)}")
 
         state = {
             "model": model.state_dict(),
