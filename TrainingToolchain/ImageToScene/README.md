@@ -17,8 +17,9 @@
 | `capsule`（胶囊） | `cx,cy,cz, q, r,h`（h 为圆柱段高度） |
 
 - 旋转为归一化四元数 `(x,y,z,w)`，规范 `w>=0` 消除双覆盖歧义
-- 相机参数（Unity 坐标：左手系、+Y 向上）编码为 7 个条件 token 置于序列前缀，
-  使随机视角训练/推理成为良定问题
+- 相机参数（Unity 坐标：左手系、+Y 向上）同样编码为序列前缀的 7 个 token 并参与训练损失：
+  模型从图像**预测**相机（推理经 `decode_camera` 解出，用于重建渲染与相机误差评估），
+  物体 token 的生成以预测相机为前缀条件
 - 连续参数线性量化为 256 bin，序列格式：
   `BOS [相机 7 token] [类别 + 位置3 + 四元数4 + 尺寸3] × K EOS`（K≤6，序列长 75）
 - vocab = 4 特殊 + 6 类别 + 256 bin = **266**
@@ -68,6 +69,7 @@ ImageToScene/
 
 - **图像编码器**：ViT-Large/16（patch 16 → 256 个 token，d=1024，24 层，16 头），约 304M
 - **解码器**：20 层 Transformer（d=1536，24 头），causal self-attention + 对图像 token 的 cross-attention，约 724M
+- **生成**：贪心自回归 + KV cache 增量解码（每步仅前向单个 token），训练用 teacher-forcing 全序列前向
 
 ## 环境要求
 

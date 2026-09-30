@@ -43,11 +43,21 @@ class SelfAttention(nn.Module):
         self.qkv = nn.Linear(dim, dim * 3)
         self.proj = nn.Linear(dim, dim)
 
-    def forward(self, x):
+    def forward(self, x, cache: dict | None = None):
+        """cache 为 None 时走训练路径（完整序列 + 因果 mask）；
+        cache 非 None 时走增量解码路径：x 为单个新 token (B, 1, D)，
+        与缓存中的历史 K/V 拼接后做完整注意力（新 token 天然可见全部历史，无需 mask）。"""
         B, L, D = x.shape
         qkv = self.qkv(x).view(B, L, 3, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        x = F.scaled_dot_product_attention(q, k, v, is_causal=self.causal)
+        if cache is not None:
+            if cache["k"] is not None:
+                k = torch.cat([cache["k"], k], dim=2)
+                v = torch.cat([cache["v"], v], dim=2)
+            cache["k"], cache["v"] = k, v
+            x = F.scaled_dot_product_attention(q, k, v)
+        else:
+            x = F.scaled_dot_product_attention(q, k, v, is_causal=self.causal)
         return self.proj(x.transpose(1, 2).reshape(B, L, D))
 
 
@@ -96,8 +106,8 @@ class DecoderBlock(nn.Module):
         self.mlp = Mlp(dim, mlp_ratio, dropout)
         self.drop = nn.Dropout(dropout)
 
-    def forward(self, x, memory):
-        x = x + self.drop(self.self_attn(self.ln1(x)))
+    def forward(self, x, memory, cache: dict | None = None):
+        x = x + self.drop(self.self_attn(self.ln1(x), cache))
         x = x + self.drop(self.cross_attn(self.ln2(x), memory))
         x = x + self.drop(self.mlp(self.ln3(x)))
         return x
@@ -154,6 +164,18 @@ class ImageToSceneModel(nn.Module):
             x = blk(x, memory)
         return self.head(self.dec_norm(x))     # (B, L, vocab)
 
+    def decode_step(self, token, memory, caches, pos):
+        """单 token 增量解码（配合 generate 的 KV cache）。
+
+        token: (B,) 最新生成的 token；caches: 每层一个 {"k": None, "v": None}
+        （会被原地更新）；pos: (B,) 该 token 的序列位置。返回 (B, vocab) logits。
+        """
+        x = self.tok_emb(token) + self.pos_emb(pos)        # (B, dec_dim)
+        x = x[:, None]                                      # (B, 1, dec_dim)
+        for blk, cache in zip(self.dec, caches):
+            x = blk(x, memory, cache)
+        return self.head(self.dec_norm(x))[:, 0]            # (B, vocab)
+
     def forward(self, images, tokens):
         """teacher-forcing 训练前向。
 
@@ -165,14 +187,17 @@ class ImageToSceneModel(nn.Module):
 
     @torch.no_grad()
     def generate(self, images, eos_id: int = 2, pad_id: int = 0):
-        """贪心自回归生成，返回 (B, <=max_len) 的 token 序列。"""
+        """贪心自回归生成（带 KV cache 的增量解码），返回 (B, <=max_len) 的 token 序列。"""
         memory = self.encode_image(images)
         B = images.shape[0]
         device = images.device
         tokens = torch.full((B, 1), 1, dtype=torch.long, device=device)  # BOS
+        caches = [{"k": None, "v": None} for _ in self.dec]             # 每层一个 KV cache
         finished = torch.zeros(B, dtype=torch.bool, device=device)
         for _ in range(self.max_len - 1):
-            logits = self.decode_tokens(tokens, memory)[:, -1]
+            pos = torch.full((B,), tokens.shape[1] - 1, dtype=torch.long,
+                             device=device)
+            logits = self.decode_step(tokens[:, -1], memory, caches, pos)
             nxt = logits.argmax(-1)
             nxt = torch.where(finished, torch.full_like(nxt, pad_id), nxt)
             tokens = torch.cat([tokens, nxt[:, None]], dim=1)

@@ -15,6 +15,8 @@ using UnityEngine.Rendering.Universal;
 /// {"camera": {"eye": [...], "target": [...], "fov_y_deg": ...}, "objects": [...]}
 /// objects 仅记录截图像素中实际可见的几何体（逐像素 ID 渲染通道做遮挡剔除），参数格式与 ImageToScene README 一致
 /// （type: box/sphere/cylinder/ellipsoid/cone/capsule，四元数归一化且 w>=0）。
+/// objects 按画面像素面积占比降序排列（复用 ID 通道的逐像素统计）：首项为画面面积占比最大的物体，
+/// 下游按 max_objects 截断时优先保留视觉主体；每个物体附带 "area" 字段（画面像素占比 0~1）。
 ///
 /// 深度截图功能：以深度模式运行同一状态机，按菜单选择输出线性深度（*_linear_depth.png）
 /// 或 ZBuffer 深度（*_zbuffer_depth.png）之一，均输出到独立目录并各配同名 JSON。
@@ -1124,12 +1126,9 @@ public static class SceneCameraScreenshotTool
             if (id > 0)
             {
                 visibleIds.Add(id);
-                if (absenceMode)
-                {
-                    int area;
-                    idPixelAreas.TryGetValue(id, out area);
-                    idPixelAreas[id] = area + 1; // 统计该物体在画面中的像素面积
-                }
+                int area;
+                idPixelAreas.TryGetValue(id, out area);
+                idPixelAreas[id] = area + 1; // 统计该物体在画面中的像素面积（排序与缺席增强共用）
             }
         }
 
@@ -1159,6 +1158,9 @@ public static class SceneCameraScreenshotTool
             {
                 continue;
             }
+            int pixelArea;
+            idPixelAreas.TryGetValue(visibleRendererIds[i], out pixelArea);
+            info.pixelArea = pixelArea;   // ID 通道统计的画面像素面积（排序依据）
             objects.Add(info);
             if (absenceCandidates != null)
             {
@@ -1177,7 +1179,11 @@ public static class SceneCameraScreenshotTool
             }
         }
 
-        // 生成 JSON（ImageToScene 格式：camera + 像素级可见 objects）
+        // 按画面像素面积占比降序排序：首项为画面面积最大的物体。
+        // ImageToScene 按 max_objects 截断时优先保留视觉主体；缺席增强的候选排序与该顺序一致。
+        objects = objects.OrderByDescending(o => o.pixelArea).ToList();
+
+        // 生成 JSON（ImageToScene 格式：camera + 按面积降序的可见 objects）
         string sceneJson = BuildSceneJson(currentCamera, objects);
         if (depthMode)
         {
@@ -1561,12 +1567,10 @@ public static class SceneCameraScreenshotTool
                 break;
         }
 
-        // 去掉最后一个 ", " 后再收尾，避免留下尾逗号
-        if (sb[sb.Length - 1] == ' ' && sb[sb.Length - 2] == ',')
-        {
-            sb.Length -= 2;
-        }
-        sb.Append('}');
+        // 画面像素占比（0~1）：ID 通道像素数 / 截图总像素，作为排序依据输出，供下游过滤复用
+        sb.Append("\"area\": ")
+          .Append((o.pixelArea / (float)(captureSize * captureSize)).ToString("0.#####", CultureInfo.InvariantCulture))
+          .Append('}');
         return sb.ToString();
     }
 
@@ -1677,5 +1681,6 @@ public static class SceneCameraScreenshotTool
         public Vector3 size3;    // box: sx,sy,sz; ellipsoid: rx,ry,rz
         public float radius;     // sphere/cylinder/cone/capsule: r
         public float height;     // cylinder/cone/capsule: h（圆柱段高度）
+        public int pixelArea;   // ID 通道统计的画面像素面积（JSON 按其降序排序，area = pixelArea/总像素）
     }
 }

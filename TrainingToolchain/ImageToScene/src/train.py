@@ -103,6 +103,7 @@ def train_one_epoch(model, loader, optimizer, scheduler, scaler,
 def evaluate(model, loader, device, use_amp, amp_dtype):
     model.eval()
     tot_loss, tot_tok, correct = 0.0, 0, 0
+    cam_tok, cam_correct = 0, 0                      # 相机段（前 7 个预测位）
     for images, tokens, labels in loader:
         images = images.to(device, non_blocking=True)
         tokens = tokens.to(device, non_blocking=True)
@@ -119,8 +120,15 @@ def evaluate(model, loader, device, use_amp, amp_dtype):
         pred = logits.argmax(-1)
         correct += int((pred[valid] == target[valid]).sum().item())
         tot_tok += int(valid.sum().item())
+        # 相机参数 token（target 前 7 位 = 预测序列中的 cam_ex..cam_fov）单独统计
+        cam_tgt = target[:, :7]
+        cam_valid = cam_tgt != -100
+        cam_correct += int((pred[:, :7][cam_valid] ==
+                            cam_tgt[cam_valid]).sum().item())
+        cam_tok += int(cam_valid.sum().item())
         tot_loss += loss.item()
-    return tot_loss / max(tot_tok, 1), correct / max(tot_tok, 1)
+    return (tot_loss / max(tot_tok, 1), correct / max(tot_tok, 1),
+            cam_correct / max(cam_tok, 1))
 
 
 def parse_args():
@@ -222,12 +230,14 @@ def main():
         train_loss = train_one_epoch(model, train_loader, optimizer, scheduler,
                                      scaler, device, tc, use_amp, amp_dtype, epoch,
                                      tc["epochs"], train_t0)
-        val_loss, val_acc = evaluate(model, val_loader, device, use_amp, amp_dtype)
+        val_loss, val_acc, val_cam_acc = evaluate(model, val_loader, device,
+                                                  use_amp, amp_dtype)
         ep_total = time.time() - t0
         all_elapsed = time.time() - train_t0
         remain_epochs = tc["epochs"] - epoch - 1
         print(f"epoch {epoch}/{tc['epochs'] - 1}: train_loss {train_loss:.4f} | "
               f"val_loss {val_loss:.4f} | val_token_acc {val_acc:.4f} | "
+              f"val_cam_token_acc {val_cam_acc:.4f} | "
               f"{_fmt_sec(ep_total)} | elapsed {_fmt_sec(all_elapsed)} | "
               f"total eta {_fmt_sec(ep_total * remain_epochs)}")
 
