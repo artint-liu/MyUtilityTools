@@ -16,9 +16,9 @@ using UnityEngine.Rendering.Universal;
 /// objects 仅记录截图像素中实际可见的几何体（逐像素 ID 渲染通道做遮挡剔除），参数格式与 ImageToScene README 一致
 /// （type: box/sphere/cylinder/ellipsoid/cone/capsule，四元数归一化且 w>=0）。
 ///
-/// 深度截图功能：以深度模式运行同一状态机，为每个透视相机输出 4 个文件到独立目录：
-/// 线性深度图（*_linear_depth.png）、线性深度 JSON、ZBuffer 深度图（*_zbuffer_depth.png）、ZBuffer 深度 JSON。
-/// 两份 JSON 内容完全相同（仅为与各自 PNG 建立文件映射关系），内容为 ImageToScene 格式的相机与可见物体参数。
+/// 深度截图功能：以深度模式运行同一状态机，按菜单选择输出线性深度（*_linear_depth.png）
+/// 或 ZBuffer 深度（*_zbuffer_depth.png）之一，均输出到独立目录并各配同名 JSON。
+/// JSON 内容为 ImageToScene 格式的相机与可见物体参数。
 /// 亮度约定：背景填充（天空盒/纯黑清屏）= 0（无穷远）；几何像素按 min-max 归一化，
 /// 模型最近处 → 1.0，模型最远处 → 0.0，深度铺满整个灰度范围。
 ///
@@ -71,10 +71,18 @@ public static class SceneCameraScreenshotTool
     private static bool restoreSceneOnFinish;
 
     // 深度截图模式状态
-    private static bool depthMode;         // true: 输出线性/ZBuffer 深度图而非颜色图
+    private static bool depthMode;         // true: 输出深度图而非颜色图
     private static RenderTexture depthRT;  // 线性（非 sRGB）渲染目标，保证深度亮度值原样存储与读回
     private static Material depthMaterial; // 深度输出材质（所有渲染器共享，通道间切换 _DepthMode）
     private static int depthPassMode;      // 当前深度通道: 0=ZBuffer, 1=线性深度
+
+    /// <summary>深度输出种类：菜单决定本次任务只输出线性深度或只输出 ZBuffer 深度。</summary>
+    private enum DepthKind
+    {
+        ZBuffer = 0,
+        Linear = 1,
+    }
+    private static DepthKind depthKind = DepthKind.Linear;
 
     // 像素级遮挡剔除（ID 渲染通道）状态
     private const string UnlitShaderName = "Universal Render Pipeline/Unlit";
@@ -305,15 +313,31 @@ public static class SceneCameraScreenshotTool
         BeginCaptureAllScenes(false, true);
     }
 
-    [MenuItem("截图/深度/所有场景/所有透视相机")]
-    public static void CaptureAllScenesDepthMaps()
+    [MenuItem("截图/深度/线性深度/所有场景/所有透视相机")]
+    public static void CaptureAllScenesLinearDepth()
     {
+        depthKind = DepthKind.Linear;
         BeginCaptureAllScenes(true, false);
     }
 
-    [MenuItem("截图/深度/所有场景/所有透视相机-物体缺席")]
-    public static void CaptureAllScenesDepthMapsAbsent()
+    [MenuItem("截图/深度/线性深度/所有场景/所有透视相机-物体缺席")]
+    public static void CaptureAllScenesLinearDepthAbsent()
     {
+        depthKind = DepthKind.Linear;
+        BeginCaptureAllScenes(true, true);
+    }
+
+    [MenuItem("截图/深度/ZBuffer深度/所有场景/所有透视相机")]
+    public static void CaptureAllScenesZBufferDepth()
+    {
+        depthKind = DepthKind.ZBuffer;
+        BeginCaptureAllScenes(true, false);
+    }
+
+    [MenuItem("截图/深度/ZBuffer深度/所有场景/所有透视相机-物体缺席")]
+    public static void CaptureAllScenesZBufferDepthAbsent()
+    {
+        depthKind = DepthKind.ZBuffer;
         BeginCaptureAllScenes(true, true);
     }
 
@@ -329,22 +353,111 @@ public static class SceneCameraScreenshotTool
         BeginCaptureCurrentScene(false, true);
     }
 
-    [MenuItem("截图/深度/当前场景/所有透视相机")]
-    public static void CaptureCurrentSceneDepthMaps()
+    [MenuItem("截图/深度/线性深度/当前场景/所有透视相机")]
+    public static void CaptureCurrentSceneLinearDepth()
     {
+        depthKind = DepthKind.Linear;
         BeginCaptureCurrentScene(true, false);
     }
 
-    [MenuItem("截图/深度/当前场景/所有透视相机-物体缺席")]
-    public static void CaptureCurrentSceneDepthMapsAbsent()
+    [MenuItem("截图/深度/线性深度/当前场景/所有透视相机-物体缺席")]
+    public static void CaptureCurrentSceneLinearDepthAbsent()
     {
+        depthKind = DepthKind.Linear;
         BeginCaptureCurrentScene(true, true);
     }
 
-    [MenuItem("截图/深度/当前场景/当前透视相机-物体缺席")]
-    public static void CaptureCurrentSceneCurrentCameraDepthMapsAbsent()
+    [MenuItem("截图/深度/ZBuffer深度/当前场景/所有透视相机")]
+    public static void CaptureCurrentSceneZBufferDepth()
     {
+        depthKind = DepthKind.ZBuffer;
+        BeginCaptureCurrentScene(true, false);
+    }
+
+    [MenuItem("截图/深度/ZBuffer深度/当前场景/所有透视相机-物体缺席")]
+    public static void CaptureCurrentSceneZBufferDepthAbsent()
+    {
+        depthKind = DepthKind.ZBuffer;
+        BeginCaptureCurrentScene(true, true);
+    }
+
+    [MenuItem("截图/深度/线性深度/当前场景/当前透视相机-物体缺席")]
+    public static void CaptureCurrentSceneCurrentCameraLinearDepthAbsent()
+    {
+        depthKind = DepthKind.Linear;
         BeginCaptureCurrentSceneSingleCamera(true, true);
+    }
+
+    [MenuItem("截图/深度/ZBuffer深度/当前场景/当前透视相机-物体缺席")]
+    public static void CaptureCurrentSceneCurrentCameraZBufferDepthAbsent()
+    {
+        depthKind = DepthKind.ZBuffer;
+        BeginCaptureCurrentSceneSingleCamera(true, true);
+    }
+
+    [MenuItem("截图/清理所有截图内容")]
+    public static void ClearAllScreenshotOutputs()
+    {
+        if (running)
+        {
+            EditorUtility.DisplayDialog("场景相机截图", "任务正在执行中，无法清理截图内容。", "确定");
+            return;
+        }
+
+        string projectRoot = Directory.GetParent(Application.dataPath).FullName;
+        string[] folders =
+        {
+            Path.Combine(projectRoot, OutputFolderName),
+            Path.Combine(projectRoot, DepthOutputFolderName),
+        };
+
+        if (!folders.Any(Directory.Exists))
+        {
+            EditorUtility.DisplayDialog("场景相机截图", "未找到 Screenshots 或 Screenshots_depth 目录，无需清理。", "确定");
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "场景相机截图",
+                "将删除 Screenshots 与 Screenshots_depth 目录中的全部内容（保留目录本身），该操作无法撤销。\n是否继续？",
+                "删除", "取消"))
+        {
+            return;
+        }
+
+        int fileCount = 0, dirCount = 0;
+        var errors = new List<string>();
+        foreach (string folder in folders)
+        {
+            if (!Directory.Exists(folder))
+            {
+                continue;
+            }
+            foreach (string file in Directory.GetFiles(folder, "*", SearchOption.AllDirectories))
+            {
+                try { File.Delete(file); fileCount++; }
+                catch (Exception e) { errors.Add(file + ": " + e.Message); }
+            }
+            foreach (string dir in Directory.GetDirectories(folder, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(d => d.Length))
+            {
+                try { Directory.Delete(dir, true); dirCount++; }
+                catch (Exception e) { errors.Add(dir + ": " + e.Message); }
+            }
+        }
+        AssetDatabase.Refresh();
+
+        if (errors.Count > 0)
+        {
+            Debug.LogError("[场景相机截图] 清理截图内容时部分条目删除失败:\n" + string.Join("\n", errors.Take(20)));
+            EditorUtility.DisplayDialog("场景相机截图",
+                $"清理完成但有 {errors.Count} 个条目删除失败（详见 Console）。", "确定");
+        }
+        else
+        {
+            EditorUtility.DisplayDialog("场景相机截图",
+                $"已清理 Screenshots 与 Screenshots_depth 目录内容：{fileCount} 个文件、{dirCount} 个子目录。", "确定");
+        }
     }
 
     /// <summary>扫描所有场景并对每个透视相机截图（isDepth=true 时输出线性+ZBuffer 深度图；withAbsence=true 额外生成物体缺席样本）。</summary>
@@ -543,7 +656,7 @@ public static class SceneCameraScreenshotTool
                     TickReadPixels();
                     break;
                 case State.PrepDepthZ:
-                    EnterDepthPass(0);
+                    EnterDepthPass(depthKind == DepthKind.ZBuffer ? 0 : 1);
                     break;
                 case State.ReadDepthZ:
                 case State.ReadDepthLinear:
@@ -691,6 +804,12 @@ public static class SceneCameraScreenshotTool
 
     #region 深度截图（ZBuffer 深度 / 线性深度）
 
+    /// <summary>深度输出种类的中文名（用于进度条与完成提示）。</summary>
+    private static string KindName(DepthKind kind)
+    {
+        return kind == DepthKind.ZBuffer ? "ZBuffer" : "线性";
+    }
+
     /// <summary>
     /// 进入一次深度渲染通道：把所有网格渲染器临时替换为深度输出材质并渲染一帧。
     /// mode=0 输出 ZBuffer 原始深度，mode=1 输出按相机 near/far 归一化的线性深度。
@@ -820,21 +939,16 @@ public static class SceneCameraScreenshotTool
         UnityEngine.Object.DestroyImmediate(outTex);
 
         framesWaited = 0;
-        if (depthPassMode == 0)
+        if (absenceActive)
         {
-            EnterDepthPass(1); // 同一相机接着渲染线性深度
-        }
-        else if (absenceActive)
-        {
-            // 缺席样本的两种深度图完成：写入 JSON（与常规深度 JSON 同格式，剔除缺席物体）后处理下一个缺席物体
+            // 缺席样本的深度图完成：写入 JSON（与常规深度 JSON 同格式，剔除缺席物体）后处理下一个缺席物体
             string absentJson = BuildSceneJson(currentCamera, BuildAbsenceObjects());
-            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + "_linear_depth.json"), absentJson);
-            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + "_zbuffer_depth.json"), absentJson);
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + absentTag + suffix + ".json"), absentJson);
             AdvanceAbsence();
         }
         else
         {
-            // 两种深度图完成，进入 ID 通道生成 JSON（深度模式同样需要像素级可见性剔除）
+            // 深度图完成，进入 ID 通道生成 JSON（深度模式同样需要像素级可见性剔除）
             state = State.PrepIdPass;
             EditorApplication.QueuePlayerLoopUpdate();
         }
@@ -1067,9 +1181,9 @@ public static class SceneCameraScreenshotTool
         string sceneJson = BuildSceneJson(currentCamera, objects);
         if (depthMode)
         {
-            // 深度模式：线性深度与 ZBuffer 深度各配一份内容完全相同的 JSON（仅为文件映射关系）
-            File.WriteAllText(Path.Combine(outputDir, currentBaseName + "_linear_depth.json"), sceneJson);
-            File.WriteAllText(Path.Combine(outputDir, currentBaseName + "_zbuffer_depth.json"), sceneJson);
+            // 深度模式：仅为本次任务的深度图种类写一份 JSON（与 PNG 建立文件映射关系）
+            string depthSuffix = depthKind == DepthKind.ZBuffer ? "_zbuffer_depth" : "_linear_depth";
+            File.WriteAllText(Path.Combine(outputDir, currentBaseName + depthSuffix + ".json"), sceneJson);
         }
         else
         {
@@ -1529,7 +1643,7 @@ public static class SceneCameraScreenshotTool
                 ? $"（已启用物体缺席增强，每个相机最多额外 {absentCount} 张缺席样本）"
                 : string.Empty;
             string summary = depthMode
-                ? $"完成：共处理 {totalSceneCount} 个场景，为 {capturedCount} 个相机保存线性/ZBuffer 深度图（各配一份 JSON，每相机 4 个文件）{absenceInfo}。\n输出目录: {outputDir}"
+                ? $"完成：共处理 {totalSceneCount} 个场景，为 {capturedCount} 个相机保存{KindName(depthKind)}深度图（各配一份 JSON，每相机 2 个文件）{absenceInfo}。\n输出目录: {outputDir}"
                 : $"完成：共处理 {totalSceneCount} 个场景，保存 {capturedCount} 张截图及对应 JSON{absenceInfo}。\n输出目录: {outputDir}";
             EditorUtility.DisplayDialog("场景相机截图", summary, "确定");
         }
