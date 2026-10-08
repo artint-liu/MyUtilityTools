@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>众灵总线舵机调试器 · WebUI</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- 本地内置 Socket.IO 客户端，避免依赖 flask-socketio 内置的 /socket.io/socket.io.js
+       （在 threading/Werkzeug 模式下该路径会返回 400），离线也能用。 -->
+  <script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>众灵总线舵机调试器 <span class="sub">ZX361D / ZX361S · WebUI 版（Python + Flask）</span></h1>
+  </header>
+
+  <!-- 连接栏 -->
+  <div id="conn-bar" class="panel">
+    <div class="conn-row">
+      <label>串口</label>
+      <select id="port-select" style="width:160px;"></select>
+      <button id="refresh-ports" class="small">刷新</button>
+      <label>波特率</label>
+      <select id="baud-select" style="width:130px;"></select>
+      <div class="grow"></div>
+      <button id="toggle-conn" class="primary" style="width:96px;">打开串口</button>
+    </div>
+
+    <div id="id-row" class="section" style="margin-bottom:0;">
+      <label style="color:var(--text-dim);">舵机 ID</label>
+      <div class="stepper">
+        <button id="id-minus">‹</button>
+        <input type="number" id="servo-id" min="0" max="254" value="0">
+        <button id="id-plus">›</button>
+      </div>
+      <button id="id-broadcast" class="small">广播 255</button>
+      <div class="grow"></div>
+      <button id="goto-params" class="small">修改舵机 ID…</button>
+    </div>
+
+    <div id="conn-status">○ 未连接（将使用 <span id="st-port">COM3</span> @ <span id="st-baud">115200</span> bps · 8-N-1，点击右侧“打开串口”）</div>
+    <div id="fault-box"></div>
+  </div>
+
+  <!-- Tabs -->
+  <div id="tabs">
+    <button data-tab="0" class="active">舵机控制</button>
+    <button data-tab="1">状态监控</button>
+    <button data-tab="2">参数设置</button>
+    <button data-tab="3">多机同步</button>
+    <button data-tab="4">原始指令</button>
+  </div>
+
+  <div id="tab-content">
+    <!-- 页 1：舵机控制 -->
+    <div class="tab-panel active" data-panel="0">
+      <div class="section">
+        <div class="row">
+          <span class="hint" style="width:56px;">快捷读取</span>
+          <button id="btn-ver" class="small">固件版本 (PVER)</button>
+          <span class="hint">版本：</span><span id="m-ver" class="big-val">—</span>
+          <div class="grow"></div>
+          <button id="btn-pos" class="small">当前位置 (PRAD)</button>
+          <span class="hint">位置：</span><span id="m-pos" class="big-val">—</span>
+        </div>
+      </div>
+
+      <h3>位置 / 时间控制（#IDP{PWM}T{TIME}!）</h3>
+      <div class="slider-row">
+        <label>位置 PWM</label>
+        <input type="range" id="c-pwm" min="500" max="2500" value="1500">
+        <span class="val" id="c-pwm-val">1500</span>
+      </div>
+      <div class="slider-row">
+        <label>时间 T (ms)</label>
+        <input type="range" id="c-time" min="0" max="9999" value="1000">
+        <span class="val" id="c-time-val">1000</span>
+      </div>
+      <div class="row">
+        <button id="c-mid" class="small">中位 1500</button>
+        <button id="c-min" class="small">最小 0500</button>
+        <button id="c-max" class="small">最大 2500</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="c-live"> 拖动滑条时即时发送位置</label>
+      </div>
+      <div class="row">
+        <span class="hint">将发送：</span>
+        <span id="c-preview" class="preview grow mono">—</span>
+        <button id="c-send" class="primary">发送</button>
+      </div>
+
+      <h3>往复（扫描）测试</h3>
+      <div class="section">
+        <div class="slider-row">
+          <label>起点 PWM</label><input type="range" id="s-from" min="500" max="2500" value="500"><span class="val" id="s-from-val">500</span>
+        </div>
+        <div class="slider-row">
+          <label>终点 PWM</label><input type="range" id="s-to" min="500" max="2500" value="2500"><span class="val" id="s-to-val">2500</span>
+        </div>
+        <div class="slider-row">
+          <label>步长</label><input type="range" id="s-step" min="10" max="1000" value="100"><span class="val" id="s-step-val">100</span>
+        </div>
+        <div class="slider-row">
+          <label>指令间隔(ms)</label><input type="range" id="s-interval" min="20" max="3000" value="300"><span class="val" id="s-interval-val">300</span>
+        </div>
+        <div class="slider-row">
+          <label>运动时间T(ms)</label><input type="range" id="s-time" min="0" max="3000" value="300"><span class="val" id="s-time-val">300</span>
+        </div>
+        <div class="row">
+          <label>循环次数（0=无限）</label>
+          <input type="number" id="s-repeat" min="0" value="0" style="width:70px;">
+        </div>
+        <div class="row">
+          <button id="s-start" class="primary" style="height:28px;">开始测试</button>
+          <button id="s-stop" style="height:28px;" disabled>停止测试</button>
+        </div>
+        <div id="s-status" class="hint"></div>
+      </div>
+    </div>
+
+    <!-- 页 2：状态监控 -->
+    <div class="tab-panel" data-panel="1">
+      <div class="section">
+        <div class="value-row"><span class="k">当前位置 PWM</span><span id="v-pos">—</span></div>
+        <div class="value-row"><span class="k">工作模式</span><span id="v-mode">—</span></div>
+        <div class="value-row"><span class="k">固件版本</span><span id="v-ver">—</span></div>
+        <div class="value-row"><span class="k">最近应答 ID</span><span id="v-id">—</span></div>
+        <div class="value-row"><span class="k">温度</span><span id="v-temp">—</span></div>
+        <div class="value-row"><span class="k">电压</span><span id="v-volt">—</span></div>
+        <div class="value-row"><span class="k">AD 原始值</span><span id="v-ad">—</span></div>
+        <div class="value-row"><span class="k">最近原始应答</span><span id="v-reply" class="mono">—</span></div>
+      </div>
+
+      <h3>手动读取</h3>
+      <div class="row">
+        <button id="m2-pos" class="small">读取位置</button>
+        <button id="m2-mode" class="small">读取模式</button>
+        <button id="m2-ver" class="small">读取版本</button>
+      </div>
+      <div class="row">
+        <button id="m2-id" class="small">读取 ID</button>
+        <button id="m2-tv" class="small">读取电压/温度</button>
+        <button id="m2-stb" class="small">读取保护值</button>
+      </div>
+      <div class="row">
+        <button id="m2-all" class="small">全部读取</button>
+      </div>
+
+      <div class="help">电压温度指令以官方 ESP32 例程为准：#ID PRTV !，应答 #ID T{AD}-{电压} !（例如 #000T1927-08.1! → 温度 25.6℃ / 电压 8.1V）。</div>
+
+      <div class="row">
+        <span class="hint" style="width:84px;">应答超时提示</span>
+        <input type="number" id="v-timeout" min="100" max="10000" value="800" style="width:70px;">
+        <span class="hint">ms（该有应答的指令超时未回帧时，在日志里给出结论）</span>
+      </div>
+      <div id="v-pending" class="hint"></div>
+
+      <h3>自动轮询</h3>
+      <div class="section">
+        <div class="help">默认关闭。开启后本窗口会按下面的间隔持续向舵机发送读取指令（总线会被一直占用），手动读取和发送指令不受影响。</div>
+        <div class="row"><label><input type="checkbox" id="ap-enable"> 启用自动轮询</label></div>
+        <div class="row"><label style="padding-left:16px;"><input type="checkbox" id="ap-pos" checked> 读取当前位置 (PRAD)</label></div>
+        <div class="row"><label style="padding-left:16px;"><input type="checkbox" id="ap-tv"> 读取温度 / 电压 (PRTV)</label></div>
+        <div class="slider-row">
+          <label>轮询间隔(ms)</label><input type="range" id="ap-interval" min="50" max="5000" value="300"><span class="val" id="ap-interval-val">300</span>
+        </div>
+        <div id="ap-status" class="hint"></div>
+      </div>
+    </div>
+
+    <!-- 页 3：参数设置 -->
+    <div class="tab-panel" data-panel="2">
+      <h3>修改舵机 ID（PID）</h3>
+      <div class="section warn-box">
+        <div class="help">把当前舵机的 ID 改成另一个值。同一总线上有多个舵机时务必逐个改 ID 避免冲突，改完旧 ID 不再应答。执行前请确认“舵机 ID”就是要改的那一个，并尽量只接它一个舵机。</div>
+        <div class="row">
+          <span class="hint" style="width:48px;">新 ID</span>
+          <input type="number" id="p-newid" min="0" max="254" value="1" style="width:70px;">
+          <button id="p-newid-plus" class="small">= 当前 ID + 1</button>
+        </div>
+        <div class="row"><span class="hint" id="p-id-preview">将发送：—</span></div>
+        <button id="p-id-do" style="height:28px;">改 ID</button>
+      </div>
+
+      <h3>工作模式（MOD）</h3>
+      <div class="section">
+        <div class="row"><select id="p-mode" style="width:320px;"></select></div>
+        <div class="row">
+          <button id="p-mode-read" class="small">读取模式</button>
+          <button id="p-mode-set" class="small">设置模式</button>
+        </div>
+      </div>
+
+      <h3>扭矩（ULK / ULR）</h3>
+      <div class="section">
+        <div class="help">释放扭矩后舵机掉电，可用手扳动输出轴（用于调整机械装配）。</div>
+        <div class="row">
+          <button id="p-ulk" class="small">释放扭矩（ULK）</button>
+          <button id="p-ulr" class="small">恢复扭矩（ULR）</button>
+        </div>
+      </div>
+
+      <h3>暂停 / 继续 / 停止（DPT / DCT / DST）</h3>
+      <div class="section">
+        <div class="help">暂停：挂起当前指令剩余时间；继续：恢复剩余时间；停止：立即停在当前位置，之后无法继续。</div>
+        <div class="row">
+          <button id="p-dpt" class="small">暂停</button>
+          <button id="p-dct" class="small">继续</button>
+          <button id="p-dst" class="small">停止在当前位</button>
+        </div>
+      </div>
+
+      <h3>中值与上电初始位置（SCK / CSD / CSM / CSR）</h3>
+      <div class="section">
+        <div class="help">SCK：把「当前位置」设为 1500 中值（用于机械零位校准）。SCK±偏移：把 1500±偏移 作为新的中值。CSD：把「当前位置」设为上电初始位置（无参数，先移动到位再发）。CSM：清除初始值；CSR：恢复初始值。</div>
+        <div class="row"><button id="p-sck" class="small">当前位置设为 1500 中值（SCK）</button></div>
+        <div class="row">
+          <span class="hint">中值偏移</span>
+          <input type="number" id="p-offset" value="50" style="width:90px;">
+          <button id="p-sck-off" class="small">SCK±偏移</button>
+        </div>
+        <div class="row">
+          <button id="p-csd" class="small">当前位置设为初始位置（CSD）</button>
+          <button id="p-csm" class="small">清除初始值（CSM）</button>
+          <button id="p-csr" class="small">回到初始值（CSR）</button>
+        </div>
+      </div>
+
+      <h3>角度范围（MIN / MAX）</h3>
+      <div class="section">
+        <div class="help">两条都是「取当前位置」的无参数指令：先用上面的控制页把舵机移到目标位置，再发送。</div>
+        <div class="row">
+          <button id="p-min" class="small">当前位置设为最小值（MIN）</button>
+          <button id="p-max" class="small">当前位置设为最大值（MAX）</button>
+        </div>
+      </div>
+
+      <h3>保护值与 PID（官方例程扩展指令）</h3>
+      <div class="section">
+        <div class="help">这两条来自官方 ESP32 例程；若舵机不回 #OK!，说明当前固件不支持。</div>
+        <div class="slider-row">
+          <label>保护值</label><input type="range" id="p-stb" min="25" max="80" value="60"><span class="val" id="p-stb-val">60</span>
+        </div>
+        <div class="row">
+          <button id="p-stb-read" class="small">读取保护值（STB）</button>
+          <button id="p-stb-set" class="small">设置保护值（STB=）</button>
+        </div>
+        <div class="row">
+          <span class="hint">KP</span><input type="number" id="p-kp" min="0" max="999" value="1" style="width:70px;">
+          <span class="hint">KI</span><input type="number" id="p-ki" min="0" max="999" value="1" style="width:70px;">
+          <button id="p-pid-set" class="small">设置 PID</button>
+        </div>
+      </div>
+
+      <h3>释力与 RGB 指示灯（官方例程扩展指令）</h3>
+      <div class="section">
+        <div class="help">PULM：释力且不带阻力（输出轴完全自由）；PLN / PLF：RGB 指示灯开 / 关。</div>
+        <div class="row">
+          <button id="p-ulm" class="small">释力·不带阻力（ULM）</button>
+        </div>
+        <div class="row">
+          <button id="p-ln" class="small">RGB 灯开启（LN）</button>
+          <button id="p-lf" class="small">RGB 灯关闭（LF）</button>
+        </div>
+      </div>
+
+      <h3>通信波特率（PBD）</h3>
+      <div class="section warn-box">
+        <div class="help">修改后需要把本窗口波特率切到同一档并重新连接，否则通信会失败。</div>
+        <div class="row"><select id="p-baud" style="width:200px;"></select></div>
+        <button id="p-baud-set" style="height:28px;">设置波特率</button>
+      </div>
+
+      <h3>恢复出厂（CLE0 / CLE）</h3>
+      <div class="section">
+        <div class="help" style="color:var(--error);">CLE0：保留 ID，其余参数恢复默认；CLE：全部恢复默认（ID 也变回 000）。</div>
+        <div class="row">
+          <button id="p-cle0" class="small">除 ID 外恢复出厂（CLE0）</button>
+          <button id="p-cle" class="small">全部恢复出厂（CLE）</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 页 4：多机同步 -->
+    <div class="tab-panel" data-panel="3">
+      <h3>多机同步指令（用 { } 把多条指令一次性下发）</h3>
+      {% raw %}<div class="help">把多条单机指令放进 { } 里一起发送，各舵机在同一帧内开始动作。格式以官方 ESP32 例程为准：{#000P0500T1000!#001P0500T1000!}</div>{% endraw %}
+      <div id="sync-list" class="section"></div>
+      <div class="row">
+        <button id="sync-add" class="small">添加舵机</button>
+        <button id="sync-mid" class="small">全部中位 1500</button>
+        <button id="sync-clear" class="small">清空列表</button>
+      </div>
+      <h3>将发送：</h3>
+      <div id="sync-preview" class="preview" style="min-height:40px;"></div>
+      <button id="sync-send" class="primary" style="height:30px;width:200px;">发送同步组指令</button>
+    </div>
+
+    <!-- 页 5：原始指令 -->
+    <div class="tab-panel" data-panel="4">
+      <h3>原始指令发送</h3>
+      <div class="help">内容按原样发送（不自动补 # 与 !）。可一次发送多行，每行作为一条独立指令。</div>
+      <textarea id="raw-input" style="width:100%;height:110px;"></textarea>
+      <div class="row">
+        <button id="raw-send" style="height:28px;">发送全部行</button>
+        <button id="raw-clear" style="height:28px;">清空输入</button>
+      </div>
+
+      <h3>常用指令示例（点击插入）</h3>
+      <div id="raw-examples" class="section"></div>
+
+      <h3>指令速查（以官方 ESP32 例程为准）</h3>
+      {% raw %}<div class="section hint" style="line-height:1.8;">
+        控制：#ID P{PWM} T{TIME} !&nbsp;&nbsp;&nbsp;&nbsp;读位置：#ID PRAD !<br>
+        读版本：#ID PVER !&nbsp;&nbsp;&nbsp;&nbsp;读 ID：#ID PID !<br>
+        改 ID：#ID PID{新ID} !&nbsp;&nbsp;&nbsp;&nbsp;读模式：#ID PMOD !<br>
+        设模式：#ID PMOD{1-8} !&nbsp;&nbsp;&nbsp;&nbsp;释放/恢复：#ID PULK ! / #ID PULR !<br>
+        暂停/继续/停止：#ID PDPT ! / PDCT ! / PDST !<br>
+        波特率：#ID PBD{1-8} !&nbsp;&nbsp;&nbsp;&nbsp;中值：#ID PSCK ! / PSCK+050 ! / PSCK-050 !<br>
+        初始值：#ID PCSD ! / PCSM ! / PCSR !（CSD 无参数，取当前位置）<br>
+        角度范围：#ID PMIN ! / PMAX !（无参数，取当前位置）<br>
+        恢复出厂：#ID PCLE0 ! / #ID PCLE !<br>
+        多机同步：{#ID P{PWM} T{TIME} ! ...}<br>
+        温压：#ID PRTV ! → #ID T{AD}-{电压} !&nbsp;&nbsp;&nbsp;&nbsp;保护值：#ID PSTB ! / #ID PSTB=60 !（25~80）<br>
+        PID：#ID PP{AAA}I{BBB} !&nbsp;&nbsp;&nbsp;&nbsp;释力不带阻力：#ID PULM !<br>
+        RGB 灯：#ID PLN ! 开 / #ID PLF ! 关
+      </div>{% endraw %}
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div id="log-panel" class="panel">
+    <div id="log-toolbar">
+      <span id="log-count" class="hint">通信日志（0）</span>
+      <div class="grow"></div>
+      <label class="hint"><input type="checkbox" id="log-hex"> 十六进制</label>
+      <label class="hint"><input type="checkbox" id="log-parsed" checked> 解析</label>
+      <label class="hint"><input type="checkbox" id="log-autoscroll" checked> 自动滚动</label>
+      <button id="log-clear" class="small">清空</button>
+    </div>
+    <div id="log-list"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
