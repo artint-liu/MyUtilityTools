@@ -13,6 +13,7 @@
 """
 
 import os
+import logging
 import threading
 import time
 import webbrowser
@@ -391,6 +392,7 @@ def stop_sweep():
 
 
 def tick_sweep():
+    global _next_sweep_time
     with _state_lock:
         s = state["sweep"]
         if not s["running"]:
@@ -612,7 +614,8 @@ def on_set_autopoll(data):
 @socketio.on("set_servo_id")
 def on_set_servo_id(data):
     new_id = int((data or {}).get("id", 0))
-    new_id = max(0, min(P.MAX_ID, new_id))
+    # 允许广播地址 255（BROADCAST_ID）；普通 ID 上限为 MAX_ID(254)
+    new_id = max(0, min(P.BROADCAST_ID, new_id))
     with _state_lock:
         state["servo_id"] = new_id
     emit_status()
@@ -704,6 +707,14 @@ def _open_browser_when_ready(url, timeout=10.0):
 
 
 if __name__ == "__main__":
+    class _StatusHeartbeatFilter(logging.Filter):
+        """只过滤前端轮询 /api/status 产生的大量心跳日志，其余 INFO 正常显示。"""
+
+        def filter(self, record):
+            return "/api/status" not in record.getMessage()
+
+    logging.getLogger("werkzeug").addFilter(_StatusHeartbeatFilter())
+
     # 用 socketio.start_background_task 启动主循环：该方式让后台任务运行在
     # SocketIO 可访问的上下文里，确保从 ticker 线程推送 status/log 可靠到达浏览器
     # （threading 模式下直接用 threading.Thread 会导致后台 emit 被静默丢弃）。

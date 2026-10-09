@@ -63,19 +63,27 @@ select, input[type="number"], input[type="text"], textarea {
 }
 input[type="number"] { width: 80px; }
 button {
-  background: var(--panel-2);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 5px 10px;
+  background: linear-gradient(180deg, #61616c, #34343d);
+  color: #eceef2;
+  border: 1px solid #565662;
+  border-radius: 5px;
+  padding: 5px 12px;
   cursor: pointer;
   font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 1px 0 rgba(0,0,0,.25);
+  transition: background .12s ease, border-color .12s ease, box-shadow .12s ease, transform .05s ease;
 }
-button:hover { background: #40404a; }
-button.primary { background: var(--accent-2); border-color: var(--accent); }
-button.primary:hover { background: var(--accent); }
-button:disabled { opacity: .45; cursor: not-allowed; }
-button.small { padding: 2px 8px; font-size: 11px; }
+button:hover {
+  background: linear-gradient(180deg, #4d4d59, #3c3c47);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(74,158,255,.4), 0 1px 0 rgba(0,0,0,.25);
+}
+button:active { transform: translateY(1px); box-shadow: 0 0 0 1px rgba(74,158,255,.4); }
+button.primary { background: linear-gradient(180deg, var(--accent), var(--accent-2)); border-color: var(--accent); color: #fff; }
+button.primary:hover { background: linear-gradient(180deg, #5fb0ff, var(--accent)); }
+button:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; transform: none; }
+button.small { padding: 3px 10px; font-size: 11px; }
 
 #conn-status { font-size: 12px; color: var(--text-dim); }
 #conn-status.ok { color: var(--ok); font-weight: 600; }

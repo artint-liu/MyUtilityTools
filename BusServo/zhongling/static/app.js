@@ -37,10 +37,17 @@
   const socket = io();
   const $ = (id) => document.getElementById(id);
 
-  // 本地 UI 状态（连接参数）
-  let baudIndex = 5;       // 1~8 档位
-  let portName = "COM3";
-  let servoId = 0;
+  // 本地 UI 状态（连接参数）—— 用 localStorage 持久化，下次打开自动恢复上次选择
+  const store = {
+    _k: (k) => "zlservo_" + k,
+    get(k, def) { try { const v = localStorage.getItem(this._k(k)); return v === null ? def : v; } catch (e) { return def; } },
+    set(k, v) { try { localStorage.setItem(this._k(k), String(v)); } catch (e) {} },
+    getNum(k, def) { const v = this.get(k, null); if (v === null) return def; const n = parseInt(v, 10); return isNaN(n) ? def : n; },
+  };
+
+  let baudIndex = store.getNum("baudIndex", 5);   // 1~8 档位
+  let portName = store.get("portName", "COM3");
+  let servoId = store.getNum("servoId", 0);
   let info = null;         // /api/command_info 的结果
   let syncRows = [
     { id: 0, pwm: 1500, time: 1000 },
@@ -100,12 +107,14 @@
 
   $("port-select").addEventListener("change", (e) => {
     portName = e.target.value;
+    store.set("portName", portName);
     updateConnText();
   });
   $("refresh-ports").addEventListener("click", refreshPorts);
 
   $("baud-select").addEventListener("change", (e) => {
     baudIndex = parseInt(e.target.value, 10);
+    store.set("baudIndex", baudIndex);
     updateConnText();
   });
 
@@ -123,8 +132,11 @@
   }
 
   // ===== 舵机 ID 行 =====
-  function setServoId(v) {
-    servoId = clamp(v, 0, info ? info.max_id : 254);
+  function setServoId(v, isBroadcast) {
+    // 广播地址 255 是合法的，非广播时普通 ID 才被限制在 [0, max_id]
+    const hi = isBroadcast ? 255 : (info ? info.max_id : 254);
+    servoId = clamp(v, 0, hi);
+    store.set("servoId", servoId);
     $("servo-id").value = servoId;
     // 同步到服务端：否则服务端 status 里的 servo_id 仍为 0，HTTP 轮询会把输入框改回 0
     socket.emit("set_servo_id", { id: servoId });
@@ -134,7 +146,7 @@
   $("servo-id").addEventListener("change", (e) => setServoId(parseInt(e.target.value, 10) || 0));
   $("id-minus").addEventListener("click", () => setServoId(servoId - 1));
   $("id-plus").addEventListener("click", () => setServoId(servoId + 1));
-  $("id-broadcast").addEventListener("click", () => setServoId(255));
+  $("id-broadcast").addEventListener("click", () => setServoId(255, true));
   $("goto-params").addEventListener("click", () => switchTab(2));
 
   socket.on("set_servo_id_ack", () => {}); // 占位
@@ -518,5 +530,5 @@
   refreshPorts();
   renderSync();
   renderExamples();
-  setServoId(0);
+  setServoId(servoId);   // 恢复上次保存的舵机 ID
 })();
