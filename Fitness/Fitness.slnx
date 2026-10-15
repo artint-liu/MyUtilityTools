@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Fitness.App/Fitness.App.csproj" />
+    <Project Path="src/Fitness.Core/Fitness.Core.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,17 @@
+# ===== .NET build output =====
+bin/
+obj/
+*.user
+
+# ===== IDE =====
+.vs/
+.idea/
+
+# ===== Downloaded pose model =====
+# yolov8n-pose.onnx is fetched automatically on first camera use
+# (or placed manually). Keep it out of the repo to avoid bloating.
+*.onnx
+
+# ===== Temp / logs =====
+*.tmp
+*.log
