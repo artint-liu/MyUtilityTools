@@ -24,6 +24,11 @@ public partial class ExecuteView : UserControl
         AppServices.PreferCamera = ChkCamera.IsChecked == true;
     }
 
+    private void ChkHalfBody_Changed(object sender, RoutedEventArgs e)
+    {
+        Skel.HalfBodyMode = ChkHalfBody.IsChecked == true;
+    }
+
     private void RefreshProjects()
     {
         CmbProjects.ItemsSource = AppServices.Repository.LoadProjects();
@@ -36,6 +41,8 @@ public partial class ExecuteView : UserControl
             MessageBox.Show("请先在左侧选择或创建运动项目。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+
+        Skel.HalfBodyMode = ChkHalfBody.IsChecked == true;
 
         // 真实摄像头且模型缺失：先提示并异步下载，避免界面卡死
         if (AppServices.PreferCamera && !OpenCvPoseSource.IsModelReady)

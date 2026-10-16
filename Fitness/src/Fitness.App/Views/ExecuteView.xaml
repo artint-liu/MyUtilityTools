@@ -22,6 +22,9 @@
             <CheckBox x:Name="ChkCamera" Content="使用摄像头 (OpenCV 姿态识别，需 yolov8n-pose.onnx)"
                       Foreground="White" Margin="0,0,0,8" Checked="ChkCamera_Changed" Unchecked="ChkCamera_Changed" />
 
+            <CheckBox x:Name="ChkHalfBody" Content="半身模式（仅显示上半身骨骼）"
+                      Foreground="White" Margin="0,0,0,8" Checked="ChkHalfBody_Changed" Unchecked="ChkHalfBody_Changed" />
+
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <Button x:Name="BtnStart" Content="开始训练" Width="84" Margin="0,0,6,0"
                         Background="#2d8c4f" Foreground="White" Click="BtnStart_Click" />

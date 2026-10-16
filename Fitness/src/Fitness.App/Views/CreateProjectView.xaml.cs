@@ -25,10 +25,16 @@ public partial class CreateProjectView : UserControl
         AppServices.PreferCamera = ChkCamera.IsChecked == true;
     }
 
+    private void ChkHalfBody_Changed(object sender, RoutedEventArgs e)
+    {
+        Skel.HalfBodyMode = ChkHalfBody.IsChecked == true;
+    }
+
     private async void BtnStartRec_Click(object sender, RoutedEventArgs e)
     {
         _recorder.Clear();
         _extracted = null;
+        Skel.HalfBodyMode = ChkHalfBody.IsChecked == true;
 
         IPoseSource src;
         try

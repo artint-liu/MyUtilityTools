@@ -19,6 +19,9 @@
             <Button x:Name="NavCreate" Content="创建项目" Height="40" Margin="12,4"
                     Background="#2a2a3c" Foreground="White" BorderThickness="0"
                     HorizontalContentAlignment="Left" Padding="14" Click="NavCreate_Click" />
+            <Button x:Name="NavCamera" Content="摄像头测试" Height="40" Margin="12,4"
+                    Background="#2a2a3c" Foreground="White" BorderThickness="0"
+                    HorizontalContentAlignment="Left" Padding="14" Click="NavCamera_Click" />
             <Button x:Name="NavExecute" Content="执行训练" Height="40" Margin="12,4"
                     Background="#2a2a3c" Foreground="White" BorderThickness="0"
                     HorizontalContentAlignment="Left" Padding="14" Click="NavExecute_Click" />
