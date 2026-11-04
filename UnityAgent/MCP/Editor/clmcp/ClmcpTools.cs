@@ -13,7 +13,6 @@ namespace Clmcp
     /// <summary>MCP 工具集：简单 Unity 功能 + C# JIT 执行。</summary>
     internal static class ClmcpTools
     {
-        const int kMaxHierarchyNodes = 3000;
         const int kMaxHierarchyDepth = 50;
 
         // ================= 工具清单 =================
@@ -47,11 +46,22 @@ namespace Clmcp
                 }, "menuPath")));
 
             tools.Add(Tool("get_console_logs",
-                "读取编辑器控制台日志（自本域加载完成后开始收集）。",
+                "读取编辑器控制台日志（自本域加载完成后开始收集）。" +
+                "默认返回文本（兼容旧客户端）；提供 afterCursor / contains / exclude / includeStackTrace / " +
+                "maxBytes 任一参数或 format=json 时返回结构化 JSON（含 sessionId / nextCursor / truncated）。" +
+                "增量轮询：携带上一轮返回的 sessionId 与 nextCursor 作为 afterCursor，只获取新增日志；" +
+                "域重载后 sessionId 变化，需以新 sessionId 重建基线（返回 CURSOR_SESSION_MISMATCH 提示）。",
                 Schema(new Dictionary<string, object>
                 {
                     { "level", Prop("string", "过滤等级：all / info / warning / error，默认 all") },
-                    { "maxCount", Prop("number", "最多返回条数，默认 100，最大 1000") }
+                    { "maxCount", Prop("number", "最多返回条数，默认 100，最大 1000") },
+                    { "afterCursor", Prop("number", "可选：只返回序号大于该值的日志（增量消费游标）") },
+                    { "sessionId", Prop("string", "可选：上次返回的 sessionId，用于检测域重载导致的游标失效") },
+                    { "contains", Prop("string", "可选：message 包含子串（不区分大小写）") },
+                    { "exclude", Prop("string", "可选：message 排除子串（不区分大小写）") },
+                    { "includeStackTrace", Prop("boolean", "可选：包含完整堆栈，默认 false") },
+                    { "maxBytes", Prop("number", "可选：返回文本字节预算，超出截断并置 truncated=true，默认 65536") },
+                    { "format", Prop("string", "可选：text（默认）| json，json 总是返回结构化结果") }
                 })));
 
             tools.Add(Tool("clear_console", "清空控制台日志与控制台窗口。", Schema(null)));
@@ -63,7 +73,37 @@ namespace Clmcp
                     { "mode", Prop("string", "play | pause | unpause | stop") }
                 }, "mode")));
 
-            tools.Add(Tool("get_scene_hierarchy", "获取当前激活场景的物体层级树（含组件列表）。", Schema(null)));
+            tools.Add(Tool("get_scene_hierarchy",
+                "获取当前激活场景的物体层级树。支持过滤以避免大场景返回整棵树：" +
+                "rootPath 从指定子树开始；maxDepth 限制深度；includeComponents=false 省略组件列表；" +
+                "includeInactive=false 排除未激活分支；nameFilter 按名称匹配（支持 * ? 通配或子串）；" +
+                "maxNodes + cursor 分页，结果带 truncated/nextCursor/totalMatched。",
+                Schema(new Dictionary<string, object>
+                {
+                    { "rootPath", Prop("string", "可选：从该场景路径的子树开始，如 Room/Table") },
+                    { "maxDepth", Prop("number", "可选：最大遍历深度（根为 0），默认不限（上限 50）") },
+                    { "includeComponents", Prop("boolean", "可选：是否包含组件列表，默认 true") },
+                    { "includeInactive", Prop("boolean", "可选：是否包含未激活物体，默认 true") },
+                    { "nameFilter", Prop("string", "可选：名称过滤，支持 * ? 通配，否则为不区分大小写子串匹配") },
+                    { "maxNodes", Prop("number", "可选：最多返回节点数，默认 3000，最大 5000") },
+                    { "cursor", Prop("number", "可选：分页游标（上一轮的 nextCursor），跳过已返回的匹配节点") }
+                })));
+
+            tools.Add(Tool("find_gameobjects",
+                "按条件搜索当前场景物体（按名称/路径模式、Tag、Layer、组件类型、激活状态），返回 " +
+                "path / instanceID / activeSelf 摘要列表。找不到返回空列表而非错误。",
+                Schema(new Dictionary<string, object>
+                {
+                    { "name", Prop("string", "可选：名称匹配，支持 * ? 通配，否则为不区分大小写子串匹配") },
+                    { "pathPattern", Prop("string", "可选：完整路径模式，支持 * ? 通配") },
+                    { "tag", Prop("string", "可选：按 Tag 精确匹配") },
+                    { "layer", Prop("string", "可选：按 Layer 名（或数字）精确匹配") },
+                    { "component", Prop("string", "可选：组件类型短名或完整名，如 Rigidbody / UnityEngine.Camera") },
+                    { "activeOnly", Prop("boolean", "可选：只返回激活物体，默认 false") },
+                    { "includeTransform", Prop("boolean", "可选：返回 position/rotation/scale 摘要，默认 false") },
+                    { "maxCount", Prop("number", "可选：最多返回条数，默认 50，最大 500") },
+                    { "cursor", Prop("number", "可选：分页游标（上一轮的 nextCursor）") }
+                })));
 
             tools.Add(Tool("save_scene",
                 "保存当前打开的场景；从未保存过的新场景需指定 Assets 下的保存路径。",
@@ -90,22 +130,45 @@ namespace Clmcp
                     { "instanceID", Prop("number", "物体 instanceID") }
                 })));
 
-            tools.Add(Tool("refresh_assets", "刷新资源数据库（导入新增 / 变更文件）。", Schema(null)));
+            tools.Add(Tool("refresh_assets",
+                "刷新资源数据库（导入新增 / 变更文件）。waitForCompletion=true 时同步等待刷新完成并返回 " +
+                "结构化结果（耗时、导入路径、导入错误摘要）；paths 可只刷新指定资源/目录。",
+                Schema(new Dictionary<string, object>
+                {
+                    { "waitForCompletion", Prop("boolean", "可选：true 时等待刷新完成并返回结构化结果，默认 false（兼容旧行为）") },
+                    { "timeoutMs", Prop("number", "可选：超时标注（毫秒），默认 120000；Unity 刷新为同步操作，超时不会伪报成功") },
+                    { "paths", Prop("array", "可选：仅刷新指定资源路径数组，如 [\"Assets/Textures/foo.png\"]") }
+                })));
 
             tools.Add(Tool("capture_screenshot",
                 "截取画面截图：返回 PNG/JPG 图片内容（base64，多模态 AI 可直接查看）并保存文件。" +
                 "target=game（默认）用指定相机离屏渲染，不依赖编辑器窗口状态；" +
-                "target=gameview 抓取编辑器 Game 视图；target=sceneview 按 Scene 视图当前视角渲染（不含 Gizmo）。",
+                "target=gameview 抓取编辑器 Game 视图；target=sceneview 按 Scene 视图当前视角渲染（不含 Gizmo）。" +
+                "return=metadata 时响应只含保存路径/尺寸等元数据（不含 Base64，避免撑爆上下文），" +
+                "返回结构 {ok, results:[{target,path,absolutePath,width,height,format,bytes,camera}], failed:[...]}；" +
+                "return=both（默认，兼容旧行为）为文本 + base64；return=image 只返回图片。" +
+                "targets 数组可一次抓取多个视角，文件名自动加 _<视角> 后缀。",
                 Schema(new Dictionary<string, object>
                 {
-                    { "target", Prop("string", "截图目标：game（默认）| gameview | sceneview") },
+                    { "target", Prop("string", "截图目标：game（默认）| gameview | sceneview（与 targets 互斥）") },
+                    { "targets", Prop("array", "可选：多目标数组，如 [\"gameview\",\"sceneview\"]，一次抓取并各自落盘") },
                     { "camera", Prop("string", "可选：target=game 时按名称指定相机，默认 Camera.main，其次场景第一个相机") },
-                    { "width", Prop("number", "可选：渲染宽度像素（仅 target=game/sceneview），默认相机尺寸") },
-                    { "height", Prop("number", "可选：渲染高度像素（仅 target=game/sceneview），默认相机尺寸") },
+                    { "width", Prop("number", "可选：渲染宽度像素（仅 game/sceneview），默认相机尺寸") },
+                    { "height", Prop("number", "可选：渲染高度像素（仅 game/sceneview），默认相机尺寸") },
                     { "maxSize", Prop("number", "可选：图片最长边像素上限，超出等比缩小，默认 1280") },
                     { "format", Prop("string", "可选：png（默认）| jpg") },
-                    { "path", Prop("string", "可选：保存路径（相对工程根或绝对路径），默认 Screenshots/clmcp_时间戳.png") }
+                    { "path", Prop("string", "可选：保存路径（相对工程根或绝对路径），默认 Screenshots/clmcp_时间戳.png；多目标时自动加视角后缀") },
+                    { "return", Prop("string", "可选：metadata（只返回元数据）| image（只返回图片）| both（默认，文本+图片，兼容旧行为）") }
                 })));
+
+            // 组件通用读写（REQ-003）：add/upsert/get/set/remove_component
+            tools.AddRange(ClmcpComponentTools.BuildToolsList());
+
+            // 跨场景批处理（REQ-002）
+            tools.AddRange(ClmcpSceneBatch.BuildToolsList());
+
+            // 异步编辑器任务（REQ-004）
+            tools.AddRange(ClmcpTaskTools.BuildToolsList());
 
             // 建模 / 场景构建工具（create_material / create_mesh / batch ...）
             tools.AddRange(ClmcpToolsScene.BuildToolsList());
@@ -128,7 +191,8 @@ namespace Clmcp
 
             if (string.IsNullOrEmpty(name))
             {
-                text = "缺少工具名称 (name)";
+                text = ClmcpErrors.Serialize(name ?? "",
+                    new ClmcpToolException(ClmcpErrorCodes.InvalidParams, "缺少工具名称 (name)"));
                 isError = true;
             }
             else
@@ -137,14 +201,9 @@ namespace Clmcp
                 {
                     text = Dispatch(name, args, out isError, extraContent);
                 }
-                catch (ClmcpCompileException e)
-                {
-                    text = "C# 编译失败：\n" + e.Message;
-                    isError = true;
-                }
                 catch (Exception e)
                 {
-                    text = "执行出错: " + e.GetType().Name + ": " + e.Message;
+                    text = ClmcpErrors.Serialize(name, e);
                     isError = true;
                 }
             }
@@ -179,8 +238,7 @@ namespace Clmcp
                     return ExecuteMenuItem(args, out isError);
 
                 case "get_console_logs":
-                    isError = false;
-                    return GetConsoleLogs(args);
+                    return GetConsoleLogs(args, out isError);
 
                 case "clear_console":
                     isError = false;
@@ -197,7 +255,11 @@ namespace Clmcp
 
                 case "get_scene_hierarchy":
                     isError = false;
-                    return ClmcpJson.Serialize(GetSceneHierarchy());
+                    return ClmcpJson.Serialize(GetSceneHierarchy(args));
+
+                case "find_gameobjects":
+                    isError = false;
+                    return ClmcpJson.Serialize(FindGameObjects(args));
 
                 case "save_scene":
                     return SaveScene(args, out isError);
@@ -209,22 +271,26 @@ namespace Clmcp
                     return DeleteGameObject(args, out isError);
 
                 case "refresh_assets":
-                    isError = false;
-                    ClmcpMainThread.Run(delegate
-                    {
-                        AssetDatabase.Refresh();
-                        return null;
-                    }, 120000);
-                    return "资源数据库已刷新。";
+                    return RefreshAssets(args, out isError);
 
                 case "capture_screenshot":
                     return CaptureScreenshot(args, out isError, extraContent);
 
                 default:
                 {
-                    // 未命中内置工具时，交给建模工具集处理
+                    // 未命中内置工具时，依次交给组件 / 批处理 / 任务 / 建模工具集处理
+                    string componentResult = ClmcpComponentTools.Dispatch(name, args, out isError);
+                    if (componentResult != null) return componentResult;
+
+                    string batchResult = ClmcpSceneBatch.Dispatch(name, args, out isError);
+                    if (batchResult != null) return batchResult;
+
+                    string taskResult = ClmcpTaskTools.Dispatch(name, args, out isError);
+                    if (taskResult != null) return taskResult;
+
                     string sceneResult = ClmcpToolsScene.Dispatch(name, args, out isError);
                     if (sceneResult != null) return sceneResult;
+
                     isError = true;
                     return "未知工具: " + name;
                 }
@@ -307,23 +373,91 @@ namespace Clmcp
             return ok ? "已执行菜单: " + menuPath : "菜单不存在或执行失败: " + menuPath;
         }
 
-        static string GetConsoleLogs(Dictionary<string, object> args)
+        static string GetConsoleLogs(Dictionary<string, object> args, out bool isError)
         {
+            isError = false;
             string level = args.GetStr("level", "all");
             int maxCount = args.GetInt("maxCount", 100);
             if (maxCount <= 0) maxCount = 100;
             if (maxCount > 1000) maxCount = 1000;
 
-            List<ClmcpLogEntry> logs = ClmcpLogCollector.Snapshot(0, maxCount, level);
-            if (logs.Count == 0) return "暂无日志。";
+            string contains = args.GetStr("contains");
+            string exclude = args.GetStr("exclude");
+            bool includeStackTrace = args.GetBool("includeStackTrace", false);
+            int maxBytes = args.GetInt("maxBytes", 65536);
+            long afterCursor = args.GetLong("afterCursor", -1);
+            string clientSession = args.GetStr("sessionId");
 
-            StringBuilder sb = new StringBuilder();
-            foreach (ClmcpLogEntry e in logs)
+            // 是否走结构化 JSON 路径：出现任一新增参数或显式 format=json；否则保持旧文本输出（兼容）
+            bool wantJson = args.ContainsKey("afterCursor") || args.ContainsKey("includeStackTrace") ||
+                            args.ContainsKey("maxBytes") || contains != null || exclude != null ||
+                            args.GetStr("format") == "json";
+
+            if (!wantJson)
             {
-                AppendLog(sb, e, 3);
-                sb.AppendLine();
+                List<ClmcpLogEntry> logs = ClmcpLogCollector.Snapshot(0, maxCount, level);
+                if (logs.Count == 0) return "暂无日志。";
+                StringBuilder sb = new StringBuilder();
+                foreach (ClmcpLogEntry e in logs)
+                {
+                    AppendLog(sb, e, 3);
+                    sb.AppendLine();
+                }
+                return sb.ToString().TrimEnd();
             }
-            return sb.ToString().TrimEnd();
+
+            // 游标跨会话（域重载后）无效：明确提示重建基线，不静默复用旧游标
+            string serverSession = ClmcpLogCollector.SessionId;
+            if (afterCursor >= 0 && !string.IsNullOrEmpty(clientSession) && clientSession != serverSession)
+            {
+                Dictionary<string, object> details = new Dictionary<string, object>();
+                details.Add("clientSessionId", clientSession);
+                details.Add("sessionId", serverSession);
+                details.Add("nextCursor", ClmcpLogCollector.NextSeq - 1);
+                throw new ClmcpToolException(ClmcpErrorCodes.CursorSessionMismatch,
+                    "sessionId 不匹配：域重载后日志游标已失效，请以新 sessionId 从头重建读取基线。",
+                    "丢弃旧 afterCursor，用返回中的 sessionId + nextCursor=NextSeq-1 重新开始轮询。",
+                    null, details);
+            }
+
+            long totalMatched;
+            List<ClmcpLogEntry> matched = ClmcpLogCollector.SnapshotAfter(
+                afterCursor, maxCount, level, contains, exclude, out totalMatched);
+
+            List<object> entries = new List<object>();
+            long nextCursor = afterCursor >= 0 ? afterCursor : ClmcpLogCollector.NextSeq - 1;
+            int usedBytes = 0;
+            bool truncatedByBytes = false;
+            foreach (ClmcpLogEntry e in matched)
+            {
+                Dictionary<string, object> item = new Dictionary<string, object>();
+                item.Add("seq", e.seq);
+                item.Add("time", e.time);
+                item.Add("type", e.type);
+                string msg = e.message ?? "";
+                item.Add("message", msg);
+                if (includeStackTrace && !string.IsNullOrEmpty(e.stack)) item.Add("stack", e.stack);
+
+                int cost = (msg.Length + 32) * 2 + (includeStackTrace && e.stack != null ? e.stack.Length * 2 : 0);
+                if (maxBytes > 0 && usedBytes + cost > maxBytes && entries.Count > 0)
+                {
+                    truncatedByBytes = true;
+                    break;
+                }
+                usedBytes += cost;
+                entries.Add(item);
+                nextCursor = e.seq;
+            }
+
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result.Add("sessionId", serverSession);
+            result.Add("entries", entries);
+            result.Add("nextCursor", nextCursor);
+            result.Add("truncated", truncatedByBytes || totalMatched > entries.Count);
+            result.Add("totalMatched", totalMatched);
+            result.Add("returned", entries.Count);
+            result.Add("droppedOld", afterCursor >= 0 && ClmcpLogCollector.FirstSeq > afterCursor + 1);
+            return ClmcpJson.Serialize(result);
         }
 
         static string SetPlayMode(Dictionary<string, object> args, out bool isError)
@@ -366,48 +500,227 @@ namespace Clmcp
             }
         }
 
-        static object GetSceneHierarchy()
+        static object GetSceneHierarchy(Dictionary<string, object> args)
         {
+            string rootPath = args.GetStr("rootPath");
+            int maxDepth = args.GetInt("maxDepth", -1);
+            if (maxDepth > kMaxHierarchyDepth) maxDepth = kMaxHierarchyDepth;
+            bool includeComponents = args.GetBool("includeComponents", true);
+            bool includeInactive = args.GetBool("includeInactive", true);
+            string nameFilter = args.GetStr("nameFilter");
+            int maxNodes = args.GetInt("maxNodes", 3000);
+            if (maxNodes <= 0) maxNodes = 3000;
+            if (maxNodes > 5000) maxNodes = 5000;
+            long cursor = args.GetLong("cursor", 0);
+            if (cursor < 0) cursor = 0;
+
             return ClmcpMainThread.Run(delegate
             {
                 Scene scene = SceneManager.GetActiveScene();
-                List<object> nodes = new List<object>();
-                if (scene.isLoaded)
+                if (!scene.isLoaded)
+                    throw new ClmcpToolException(ClmcpErrorCodes.InvalidParams, "当前没有已加载的场景");
+
+                List<Transform> roots = new List<Transform>();
+                if (!string.IsNullOrEmpty(rootPath))
                 {
-                    foreach (GameObject root in scene.GetRootGameObjects())
-                        CollectNode(root.transform, "", nodes, 0);
+                    Transform rt = FindTransformByScenePath(rootPath);
+                    if (rt == null)
+                        throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                            "未找到 rootPath 对应物体: " + rootPath,
+                            "用 find_gameobjects 核实路径。", rootPath);
+                    roots.Add(rt);
                 }
+                else
+                {
+                    foreach (GameObject root in scene.GetRootGameObjects()) roots.Add(root.transform);
+                }
+
+                List<object> nodes = new List<object>();
+                long matched = 0;
+                HierarchyWalk(roots, maxDepth, includeComponents, includeInactive, nameFilter,
+                    maxNodes, cursor, nodes, ref matched);
+
                 Dictionary<string, object> result = new Dictionary<string, object>();
                 result.Add("scene", scene.name);
                 result.Add("scenePath", scene.path);
                 result.Add("rootCount", scene.rootCount);
-                result.Add("objectCount", nodes.Count);
-                result.Add("truncated", nodes.Count >= kMaxHierarchyNodes);
+                result.Add("returned", nodes.Count);
+                result.Add("totalMatched", matched);
+                result.Add("nextCursor", cursor + nodes.Count);
+                result.Add("truncated", matched > cursor + nodes.Count);
                 result.Add("objects", nodes);
                 return result;
             }, 30000);
         }
 
-        static void CollectNode(Transform t, string parentPath, List<object> nodes, int depth)
+        /// <summary>层级遍历：应用深度/激活/名称过滤与 cursor 分页（REQ-006）。</summary>
+        static void HierarchyWalk(List<Transform> roots, int maxDepth, bool includeComponents,
+            bool includeInactive, string nameFilter, int maxNodes, long cursor,
+            List<object> nodes, ref long totalMatched)
         {
-            if (nodes.Count >= kMaxHierarchyNodes || depth > kMaxHierarchyDepth) return;
+            long matched = totalMatched; // 局部函数不能捕获 ref 参数，用局部变量中转
+            foreach (Transform root in roots) WalkNode(root, "", 0);
+            totalMatched = matched;
+            return;
 
-            string path = string.IsNullOrEmpty(parentPath) ? t.name : parentPath + "/" + t.name;
-            Dictionary<string, object> node = new Dictionary<string, object>();
-            node.Add("path", path);
-            node.Add("instanceID", t.gameObject.GetInstanceID());
-            node.Add("activeSelf", t.gameObject.activeSelf);
-            node.Add("childCount", t.childCount);
+            void WalkNode(Transform t, string parentPath, int depth)
+            {
+                if (maxDepth >= 0 && depth > maxDepth) return;
+                if (!includeInactive && !t.gameObject.activeInHierarchy) return;
 
-            List<object> components = new List<object>();
-            Component[] comps = t.GetComponents<Component>();
-            for (int i = 0; i < comps.Length; i++)
-                components.Add(comps[i] == null ? "<missing>" : comps[i].GetType().Name);
-            node.Add("components", components);
-            nodes.Add(node);
+                string path = string.IsNullOrEmpty(parentPath) ? t.name : parentPath + "/" + t.name;
+                bool hit = nameFilter == null || WildcardMatch(nameFilter, t.name);
+                if (hit)
+                {
+                    matched++;
+                    if (matched > cursor && nodes.Count < maxNodes)
+                        nodes.Add(MakeNode(t, path, includeComponents));
+                }
 
-            for (int i = 0; i < t.childCount; i++)
-                CollectNode(t.GetChild(i), path, nodes, depth + 1);
+                for (int i = 0; i < t.childCount; i++)
+                    WalkNode(t.GetChild(i), path, depth + 1);
+            }
+
+            Dictionary<string, object> MakeNode(Transform t, string path, bool withComponents)
+            {
+                Dictionary<string, object> node = new Dictionary<string, object>();
+                node.Add("path", path);
+                node.Add("instanceID", t.gameObject.GetInstanceID());
+                node.Add("activeSelf", t.gameObject.activeSelf);
+                node.Add("childCount", t.childCount);
+                if (withComponents)
+                {
+                    List<object> components = new List<object>();
+                    Component[] comps = t.GetComponents<Component>();
+                    for (int i = 0; i < comps.Length; i++)
+                        components.Add(comps[i] == null ? "<missing>" : comps[i].GetType().Name);
+                    node.Add("components", components);
+                }
+                return node;
+            }
+        }
+
+        static object FindGameObjects(Dictionary<string, object> args)
+        {
+            string namePattern = args.GetStr("name");
+            string pathPattern = args.GetStr("pathPattern");
+            string tag = args.GetStr("tag");
+            string layer = args.GetStr("layer");
+            string componentType = args.GetStr("component");
+            bool activeOnly = args.GetBool("activeOnly", false);
+            bool includeTransform = args.GetBool("includeTransform", false);
+            int maxCount = args.GetInt("maxCount", 50);
+            if (maxCount <= 0) maxCount = 50;
+            if (maxCount > 500) maxCount = 500;
+            long cursor = args.GetLong("cursor", 0);
+            if (cursor < 0) cursor = 0;
+
+            Type compType = null;
+            if (!string.IsNullOrEmpty(componentType))
+                compType = ClmcpComponentTools.ResolveComponentType(componentType);
+
+            int layerNo = -1;
+            if (!string.IsNullOrEmpty(layer))
+            {
+                if (!int.TryParse(layer, out layerNo)) layerNo = LayerMask.NameToLayer(layer);
+                if (layerNo < 0)
+                    throw new ClmcpToolException(ClmcpErrorCodes.InvalidParams,
+                        "未找到 Layer: " + layer, "使用 TagManager 中已定义的 Layer 名或数字。");
+            }
+
+            return ClmcpMainThread.Run(delegate
+            {
+                Scene scene = SceneManager.GetActiveScene();
+                List<object> objects = new List<object>();
+                long totalMatched = 0;
+
+                if (scene.isLoaded)
+                {
+                    foreach (GameObject root in scene.GetRootGameObjects())
+                        SearchNode(root.transform, "");
+                }
+
+                Dictionary<string, object> result = new Dictionary<string, object>();
+                result.Add("returned", objects.Count);
+                result.Add("totalMatched", totalMatched);
+                result.Add("nextCursor", cursor + objects.Count);
+                result.Add("truncated", totalMatched > cursor + objects.Count);
+                result.Add("objects", objects);
+                return result;
+
+                void SearchNode(Transform t, string parentPath)
+                {
+                    string path = string.IsNullOrEmpty(parentPath) ? t.name : parentPath + "/" + t.name;
+                    GameObject go = t.gameObject;
+
+                    bool ok = (!activeOnly || go.activeInHierarchy)
+                              && (namePattern == null || WildcardMatch(namePattern, go.name))
+                              && (pathPattern == null || WildcardMatch(pathPattern, path))
+                              && (string.IsNullOrEmpty(tag) || go.tag == tag)
+                              && (layerNo < 0 || go.layer == layerNo)
+                              && (compType == null || go.GetComponent(compType) != null);
+                    if (ok)
+                    {
+                        totalMatched++;
+                        if (totalMatched > cursor && objects.Count < maxCount)
+                        {
+                            Dictionary<string, object> item = new Dictionary<string, object>();
+                            item.Add("path", path);
+                            item.Add("instanceID", go.GetInstanceID());
+                            item.Add("activeSelf", go.activeSelf);
+                            if (includeTransform)
+                            {
+                                Dictionary<string, object> tr = new Dictionary<string, object>();
+                                tr.Add("position", ToList(t.position));
+                                tr.Add("rotation", ToList(t.eulerAngles));
+                                tr.Add("scale", ToList(t.lossyScale));
+                                item.Add("transform", tr);
+                            }
+                            if (compType != null)
+                            {
+                                Component c = go.GetComponent(compType);
+                                item.Add("componentInstanceID", c != null ? c.GetInstanceID() : 0);
+                            }
+                            objects.Add(item);
+                        }
+                    }
+
+                    for (int i = 0; i < t.childCount; i++)
+                        SearchNode(t.GetChild(i), path);
+                }
+            }, 30000);
+        }
+
+        /// <summary>通配匹配：含 * 或 ? 时用通配（不区分大小写），否则为子串匹配；空 pattern 恒命中。</summary>
+        internal static bool WildcardMatch(string pattern, string text)
+        {
+            if (string.IsNullOrEmpty(pattern)) return true;
+            if (text == null) return false;
+            if (pattern.IndexOf('*') < 0 && pattern.IndexOf('?') < 0)
+                return text.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0;
+
+            string p = pattern.ToLowerInvariant();
+            string s = text.ToLowerInvariant();
+            return WildcardCore(p, 0, s, 0);
+        }
+
+        static bool WildcardCore(string p, int pi, string s, int si)
+        {
+            while (pi < p.Length)
+            {
+                char c = p[pi];
+                if (c == '*')
+                {
+                    if (pi + 1 == p.Length) return true;
+                    for (int k = si; k <= s.Length; k++)
+                        if (WildcardCore(p, pi + 1, s, k)) return true;
+                    return false;
+                }
+                if (si >= s.Length) return false;
+                if (c != '?' && c != s[si]) return false;
+                pi++; si++;
+            }
+            return si == s.Length;
         }
 
         static string SaveScene(Dictionary<string, object> args, out bool isError)
@@ -420,7 +733,8 @@ namespace Clmcp
                 if (string.IsNullOrEmpty(path))
                 {
                     if (string.IsNullOrEmpty(scene.path))
-                        return "当前场景从未保存过，请提供 path（如 Assets/Scenes/Foo.unity）。";
+                        throw new ClmcpToolException(ClmcpErrorCodes.SceneNotSaved,
+                            "当前场景从未保存过，请提供 path（如 Assets/Scenes/Foo.unity）。", null, scene.name);
                     EditorSceneManager.SaveOpenScenes();
                     return "已保存场景: " + scene.path;
                 }
@@ -428,14 +742,16 @@ namespace Clmcp
                 string p = path.Replace('\\', '/').Trim();
                 if (!p.EndsWith(".unity", StringComparison.OrdinalIgnoreCase)) p += ".unity";
                 if (!p.ToLowerInvariant().StartsWith("assets/"))
-                    return "path 必须位于 Assets 目录下，例如 Assets/Scenes/Foo.unity";
+                    throw ClmcpErrors.Param("path 必须位于 Assets 目录下，例如 Assets/Scenes/Foo.unity");
 
                 string fullDir = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(Application.dataPath, "..", p)));
                 if (!string.IsNullOrEmpty(fullDir) && !Directory.Exists(fullDir))
                     Directory.CreateDirectory(fullDir);
 
                 bool ok = EditorSceneManager.SaveScene(scene, p);
-                return ok ? "已保存场景: " + p : "保存失败: " + p;
+                if (!ok)
+                    throw new ClmcpToolException(ClmcpErrorCodes.ExecutionFailed, "保存失败: " + p, null, p);
+                return "已保存场景: " + p;
             }, 60000);
             return (string)result;
         }
@@ -455,7 +771,7 @@ namespace Clmcp
                 }
                 catch (Exception)
                 {
-                    throw new ArgumentException(
+                    throw ClmcpErrors.Param(
                         "无效 primitive: " + primitive + "（可选 cube / sphere / capsule / cylinder / plane / quad）");
                 }
             }
@@ -465,7 +781,7 @@ namespace Clmcp
             if (posList != null)
             {
                 if (posList.Count != 3)
-                    throw new ArgumentException("position 必须是 [x, y, z] 三个数字");
+                    throw ClmcpErrors.Param("position 必须是 [x, y, z] 三个数字");
                 position = new Vector3(ToFloat(posList[0]), ToFloat(posList[1]), ToFloat(posList[2]));
             }
 
@@ -485,7 +801,9 @@ namespace Clmcp
                     if (parent == null)
                     {
                         UnityEngine.Object.DestroyImmediate(go);
-                        throw new ArgumentException("未找到父节点: " + parentPath);
+                        throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                            "未找到父节点: " + parentPath,
+                            "用 find_gameobjects 核实父节点路径。", parentPath);
                     }
                     go.transform.SetParent(parent, true);
                 }
@@ -520,8 +838,9 @@ namespace Clmcp
                     go = t != null ? t.gameObject : null;
                 }
                 if (go == null)
-                    throw new ArgumentException(
-                        "未找到要删除的 GameObject（path=" + path + ", instanceID=" + instanceId + "）");
+                    throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                        "未找到要删除的 GameObject（path=" + path + ", instanceID=" + instanceId + "）",
+                        "用 find_gameobjects 核实对象路径。", path);
 
                 string desc = ScenePathOf(go.transform);
                 Undo.DestroyObjectImmediate(go);
@@ -531,6 +850,83 @@ namespace Clmcp
             return (string)result;
         }
 
+        // ================= 资源刷新（REQ-009） =================
+
+        static string RefreshAssets(Dictionary<string, object> args, out bool isError)
+        {
+            isError = false;
+            bool wait = args.GetBool("waitForCompletion", false);
+            List<object> paths = args.GetList("paths");
+            int timeoutMs = args.GetInt("timeoutMs", 120000);
+            if (timeoutMs <= 0) timeoutMs = 120000;
+
+            if (!wait && paths == null)
+            {
+                // 兼容旧行为：文本返回
+                ClmcpMainThread.Run(delegate
+                {
+                    AssetDatabase.Refresh();
+                    return null;
+                }, timeoutMs);
+                return "资源数据库已刷新。";
+            }
+
+            long logStart = ClmcpLogCollector.NextSeq;
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            List<string> refreshed = new List<string>();
+            if (paths != null)
+            {
+                foreach (object p in paths)
+                {
+                    string s = Convert.ToString(p);
+                    if (!string.IsNullOrEmpty(s)) refreshed.Add(s);
+                }
+            }
+
+            object boxed = ClmcpMainThread.Run(delegate
+            {
+                AssetDatabase.Refresh();
+                foreach (string p in refreshed)
+                {
+                    if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(p) == null &&
+                        !System.IO.File.Exists(FullProjectPath(p)))
+                        continue; // 路径不存在，交给错误收集判定
+                    AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate);
+                }
+                return null;
+            }, timeoutMs + 30000);
+
+            stopwatch.Stop();
+
+            // 收集刷新窗口内的错误日志作为导入错误摘要
+            long totalMatched;
+            List<ClmcpLogEntry> errLogs = ClmcpLogCollector.SnapshotAfter(
+                logStart - 1, 50, "error", null, null, out totalMatched);
+            List<object> errors = new List<object>();
+            foreach (ClmcpLogEntry e in errLogs)
+            {
+                Dictionary<string, object> err = new Dictionary<string, object>();
+                err.Add("message", e.message);
+                errors.Add(err);
+            }
+
+            bool timedOut = stopwatch.ElapsedMilliseconds > timeoutMs;
+            Dictionary<string, object> result = new Dictionary<string, object>();
+            result.Add("ok", true);
+            result.Add("completed", !timedOut);
+            result.Add("timedOut", timedOut);
+            result.Add("durationMs", stopwatch.ElapsedMilliseconds);
+            result.Add("refreshed", refreshed.Count > 0 ? (object)refreshed : "全部资源");
+            result.Add("errors", errors);
+            return ClmcpJson.Serialize(result);
+        }
+
+        static string FullProjectPath(string assetRelative)
+        {
+            string root = Directory.GetParent(Application.dataPath).FullName;
+            return Path.Combine(root, (assetRelative ?? "").Replace('/', Path.DirectorySeparatorChar));
+        }
+
         // ================= 截图 =================
 
         static string CaptureScreenshot(Dictionary<string, object> args, out bool isError,
@@ -538,70 +934,173 @@ namespace Clmcp
         {
             isError = false;
 
-            string target = (args.GetStr("target", "game") ?? "game").Trim().ToLowerInvariant();
+            string singleTarget = args.GetStr("target");
+            List<object> targetList = args.GetList("targets");
             string cameraName = args.GetStr("camera");
             string format = (args.GetStr("format", "png") ?? "png").Trim().ToLowerInvariant();
+            string returnMode = (args.GetStr("return", "both") ?? "both").Trim().ToLowerInvariant();
             string savePath = args.GetStr("path");
             int width = args.GetInt("width", 0);
             int height = args.GetInt("height", 0);
             int maxSize = args.GetInt("maxSize", 1280);
 
-            if (target != "game" && target != "gameview" && target != "sceneview")
-                throw new ArgumentException("无效 target（应为 game / gameview / sceneview）: " + target);
+            // 解析目标列表：targets 优先；target 为兼容单目标入口（REQ-001）
+            List<string> targets = new List<string>();
+            if (targetList != null && targetList.Count > 0)
+            {
+                if (!string.IsNullOrEmpty(singleTarget))
+                    throw new ClmcpToolException(ClmcpErrorCodes.ParamConflict,
+                        "target 与 targets 互斥，只能提供其一。",
+                        "单个视角用 target，多视角用 targets 数组。");
+                foreach (object t in targetList)
+                {
+                    string s = (Convert.ToString(t) ?? "").Trim().ToLowerInvariant();
+                    ValidateShotTarget(s);
+                    if (!targets.Contains(s)) targets.Add(s);
+                }
+                if (targets.Count == 0)
+                    throw ClmcpErrors.Param("targets 不能为空数组");
+            }
+            else
+            {
+                string s = string.IsNullOrEmpty(singleTarget) ? "game" : singleTarget.Trim().ToLowerInvariant();
+                ValidateShotTarget(s);
+                targets.Add(s);
+            }
+
+            if (returnMode != "metadata" && returnMode != "image" && returnMode != "both")
+                throw ClmcpErrors.Param("无效 return（应为 metadata / image / both）: " + returnMode);
             bool jpg = format == "jpg" || format == "jpeg";
             if (!jpg && format != "png")
-                throw new ArgumentException("无效 format（应为 png / jpg）: " + format);
+                throw ClmcpErrors.Param("无效 format（应为 png / jpg）: " + format);
             if (maxSize <= 0) maxSize = 1280;
+            bool multi = targets.Count > 1;
 
-            string text = null;
+            List<object> metas = new List<object>();
+            List<object> failures = new List<object>();
+            StringBuilder textSb = new StringBuilder();
+            bool metadataOnly = returnMode == "metadata";
+
             ClmcpMainThread.Run(delegate
             {
-                Texture2D tex;
-                string source;
-
-                if (target == "gameview")
+                for (int i = 0; i < targets.Count; i++)
                 {
-                    source = "GameView（编辑器 Game 视图）";
-                    try { tex = ScreenCapture.CaptureScreenshotAsTexture(); }
-                    catch (Exception) { tex = null; }
-                    if (tex == null)
+                    string target = targets[i];
+                    string perPath = multi ? SuffixSavePath(savePath, target, jpg) : savePath;
+                    try
                     {
-                        // Game 视图尚未渲染（编辑器后台 / 失焦）时降级为相机离屏渲染
-                        Camera cam = FindCamera(null);
-                        source = "GameView 暂不可用，已降级为相机离屏渲染: " + cam.name;
-                        int w, h;
-                        GetRenderSize(cam, 0, 0, out w, out h);
-                        tex = RenderCameraToTexture(cam, w, h);
+                        Dictionary<string, object> meta = CaptureOneTarget(
+                            target, cameraName, width, height, maxSize, perPath, jpg,
+                            returnMode, textSb, extraContent);
+                        metas.Add(meta);
+                    }
+                    catch (Exception e)
+                    {
+                        Dictionary<string, object> fail = new Dictionary<string, object>();
+                        fail.Add("target", target);
+                        fail.Add("error", e.GetType().Name + ": " + e.Message);
+                        failures.Add(fail);
                     }
                 }
-                else if (target == "sceneview")
+                return null;
+            }, 60000 * targets.Count);
+
+            if (metadataOnly)
+            {
+                Dictionary<string, object> result = new Dictionary<string, object>();
+                result.Add("ok", failures.Count == 0);
+                result.Add("results", metas);
+                result.Add("failed", failures);
+                textSb.Insert(0, ClmcpJson.Serialize(result));
+            }
+
+            string text = textSb.ToString().TrimEnd();
+            if (string.IsNullOrEmpty(text))
+                text = metadataOnly && failures.Count > 0 && metas.Count == 0
+                    ? "截图失败: " + ClmcpJson.Serialize(failures)
+                    : "截图完成（return=image，文件已保存）";
+            isError = failures.Count > 0;
+            return text;
+        }
+
+        static void ValidateShotTarget(string target)
+        {
+            if (target != "game" && target != "gameview" && target != "sceneview")
+                throw ClmcpErrors.Param("无效 target（应为 game / gameview / sceneview）: " + target);
+        }
+
+        /// <summary>多目标时基于基础路径生成 <名称>_<视角>.<ext> 保存路径。</summary>
+        static string SuffixSavePath(string path, string target, bool jpg)
+        {
+            string ext = jpg ? ".jpg" : ".png";
+            string baseName = "clmcp_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            if (string.IsNullOrEmpty(path))
+                return "Screenshots/" + baseName + "_" + target + ext;
+
+            string p = path.Replace('\\', '/').Trim();
+            if (Path.GetExtension(p).Length == 0) p += ext;
+            string dir = Path.GetDirectoryName(p)?.Replace('\\', '/') ?? "";
+            string name = Path.GetFileNameWithoutExtension(p);
+            return (dir.Length > 0 ? dir + "/" : "") + name + "_" + target + Path.GetExtension(p);
+        }
+
+        /// <summary>抓取单目标：渲染、落盘、按 returnMode 追加 image 块与文本；返回元数据。</summary>
+        static Dictionary<string, object> CaptureOneTarget(string target, string cameraName,
+            int width, int height, int maxSize, string savePath, bool jpg,
+            string returnMode, StringBuilder textSb, List<object> extraContent)
+        {
+            Texture2D tex;
+            string source;
+            string cameraUsed = null;
+
+            if (target == "gameview")
+            {
+                source = "GameView（编辑器 Game 视图）";
+                try { tex = ScreenCapture.CaptureScreenshotAsTexture(); }
+                catch (Exception) { tex = null; }
+                if (tex == null)
                 {
-                    source = "SceneView（Scene 视图视角离屏渲染，不含 Gizmo）";
-                    SceneView sv = SceneView.lastActiveSceneView;
-                    if (sv == null || sv.camera == null)
-                        throw new InvalidOperationException("没有可用的 Scene 视图相机（target=sceneview）");
+                    // Game 视图尚未渲染（编辑器后台 / 失焦）时降级为相机离屏渲染
+                    Camera cam = FindCamera(null);
+                    cameraUsed = cam.name;
+                    source = "GameView 暂不可用，已降级为相机离屏渲染: " + cam.name;
                     int w, h;
-                    GetRenderSize(sv.camera, width, height, out w, out h);
-                    tex = RenderCameraToTexture(sv.camera, w, h);
-                }
-                else
-                {
-                    Camera cam = FindCamera(cameraName);
-                    source = "game（相机离屏渲染: " + cam.name + "）";
-                    int w, h;
-                    GetRenderSize(cam, width, height, out w, out h);
+                    GetRenderSize(cam, 0, 0, out w, out h);
                     tex = RenderCameraToTexture(cam, w, h);
                 }
+            }
+            else if (target == "sceneview")
+            {
+                source = "SceneView（Scene 视图视角离屏渲染，不含 Gizmo）";
+                SceneView sv = SceneView.lastActiveSceneView;
+                if (sv == null || sv.camera == null)
+                    throw new InvalidOperationException("没有可用的 Scene 视图相机（target=sceneview）");
+                cameraUsed = sv.camera.name;
+                int w, h;
+                GetRenderSize(sv.camera, width, height, out w, out h);
+                tex = RenderCameraToTexture(sv.camera, w, h);
+            }
+            else
+            {
+                Camera cam = FindCamera(cameraName);
+                cameraUsed = cam.name;
+                source = "game（相机离屏渲染: " + cam.name + "）";
+                int w, h;
+                GetRenderSize(cam, width, height, out w, out h);
+                tex = RenderCameraToTexture(cam, w, h);
+            }
 
-                tex = DownscaleTexture(tex, maxSize);
+            tex = DownscaleTexture(tex, maxSize);
 
-                byte[] bytes = jpg ? tex.EncodeToJPG(85) : tex.EncodeToPNG();
-                int pixelWidth = tex.width;
-                int pixelHeight = tex.height;
-                UnityEngine.Object.DestroyImmediate(tex);
+            byte[] bytes = jpg ? tex.EncodeToJPG(85) : tex.EncodeToPNG();
+            int pixelWidth = tex.width;
+            int pixelHeight = tex.height;
+            UnityEngine.Object.DestroyImmediate(tex);
 
-                string savedTo = SaveScreenshotBytes(bytes, savePath, jpg);
+            string savedTo = SaveScreenshotBytes(bytes, savePath, jpg);
 
+            if (returnMode != "metadata")
+            {
                 // MCP image 内容块：base64 数据，供多模态 AI 客户端直接查看
                 extraContent.Add(new Dictionary<string, object>
                 {
@@ -609,14 +1108,32 @@ namespace Clmcp
                     { "data", Convert.ToBase64String(bytes) },
                     { "mimeType", jpg ? "image/jpeg" : "image/png" }
                 });
+            }
 
-                text = "截图完成\n来源: " + source +
-                       "\n分辨率: " + pixelWidth + "x" + pixelHeight +
-                       "\n大小: " + bytes.Length + " bytes (" + (jpg ? "jpg" : "png") + ")" +
-                       "\n已保存: " + savedTo;
-                return null;
-            }, 60000);
-            return text;
+            if (returnMode == "both")
+            {
+                textSb.Append("[").Append(target).Append("] 截图完成\n来源: ").Append(source)
+                      .Append("\n分辨率: ").Append(pixelWidth).Append("x").Append(pixelHeight)
+                      .Append("\n大小: ").Append(bytes.Length).Append(" bytes (").Append(jpg ? "jpg" : "png").Append(")")
+                      .Append("\n已保存: ").Append(savedTo).Append("\n\n");
+            }
+            else if (returnMode == "image")
+            {
+                textSb.Append("[").Append(target).Append("] ").Append(pixelWidth).Append("x")
+                      .Append(pixelHeight).Append(" 已保存: ").Append(savedTo).Append("\n");
+            }
+
+            Dictionary<string, object> meta = new Dictionary<string, object>();
+            meta.Add("target", target);
+            meta.Add("path", savePath);
+            meta.Add("absolutePath", savedTo);
+            meta.Add("width", pixelWidth);
+            meta.Add("height", pixelHeight);
+            meta.Add("format", jpg ? "jpg" : "png");
+            meta.Add("bytes", bytes.Length);
+            meta.Add("camera", cameraUsed);
+            meta.Add("source", source);
+            return meta;
         }
 
         /// <summary>按名称查找相机；未指定名称时用 Camera.main，其次场景第一个相机。</summary>
@@ -628,12 +1145,15 @@ namespace Clmcp
                 GameObject go = GameObject.Find(cameraName);
                 cam = go != null ? go.GetComponent<Camera>() : null;
                 if (cam == null)
-                    throw new ArgumentException("未找到相机: " + cameraName);
+                    throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                        "未找到相机: " + cameraName,
+                        "用 find_gameobjects(component=Camera) 查找可用相机。", cameraName);
             }
             if (cam == null) cam = Camera.main;
             if (cam == null) cam = UnityEngine.Object.FindObjectOfType<Camera>();
             if (cam == null)
-                throw new ArgumentException("场景中未找到相机");
+                throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                    "场景中未找到相机", "先创建相机（create_camera）或指定 camera 参数。");
             return cam;
         }
 

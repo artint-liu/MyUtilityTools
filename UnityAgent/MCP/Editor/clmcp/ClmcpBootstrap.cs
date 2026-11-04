@@ -21,6 +21,7 @@ namespace Clmcp
         {
             ClmcpMainThread.Install();
             ClmcpLogCollector.Install();
+            ClmcpTaskManager.Install();   // REQ-004: 装任务泵 + 域重载/重启后恢复持久化任务
 
             AssemblyReloadEvents.beforeAssemblyReload += BeforeDomainReload;
             EditorApplication.quitting += Quitting;
@@ -89,12 +90,16 @@ namespace Clmcp
 
         static void BeforeDomainReload()
         {
-            // 域重载会杀死后台线程：先优雅停服（保留自动重启标记），避免残留监听端口
+            // 异步任务先落盘 checkpoint（REQ-004），再优雅停服（保留自动重启标记），避免残留监听端口
+            try { ClmcpTaskManager.FlushBeforeDomainReload(); }
+            catch (Exception) { }
             ClmcpServer.StopForDomainReload();
         }
 
         static void Quitting()
         {
+            try { ClmcpTaskManager.FlushBeforeDomainReload(); }
+            catch (Exception) { }
             ClmcpServer.Stop();
         }
     }

@@ -86,15 +86,23 @@ namespace Clmcp
                 }, "material")));
 
             t.Add(ClmcpTools.Tool("set_transform",
-                "设置物体的位置 / 旋转（欧拉角，度）/ 缩放，未给出的项保持不变。",
+                "设置物体的位置 / 旋转 / 缩放，未给出的项保持不变。旋转三选一：" +
+                "rotation 欧拉角 / rotationQuaternion 四元数 [x,y,z,w] / lookAt 注视点(+up)。" +
+                "space=world（默认）或 local 决定 position/rotation 的坐标系。" +
+                "parentPath 配合 worldPositionStays（默认 true）重新挂父节点。返回应用后的世界/本地实际值。",
                 ClmcpTools.Schema(new Dictionary<string, object>
                 {
                     { "path", ClmcpTools.Prop("string", "场景内路径") },
                     { "instanceID", ClmcpTools.Prop("number", "物体 instanceID（与 path 二选一）") },
                     { "position", ClmcpTools.Prop("array", "可选：[x, y, z]") },
-                    { "rotation", ClmcpTools.Prop("array", "可选：欧拉角（度）[x, y, z]") },
+                    { "rotation", ClmcpTools.Prop("array", "可选：欧拉角（度）[x, y, z]；与 rotationQuaternion/lookAt 互斥") },
+                    { "rotationQuaternion", ClmcpTools.Prop("array", "可选：四元数 [x, y, z, w]；与 rotation/lookAt 互斥") },
+                    { "lookAt", ClmcpTools.Prop("array", "可选：世界空间注视点 [x, y, z]；与 rotation/rotationQuaternion 互斥") },
+                    { "up", ClmcpTools.Prop("array", "可选：lookAt 时的 up 方向，默认 [0,1,0]") },
                     { "scale", ClmcpTools.Prop("array", "可选：[x, y, z]") },
-                    { "parentPath", ClmcpTools.Prop("string", "可选：重新挂到该父节点下；为空字符串则移到场景根") }
+                    { "space", ClmcpTools.Prop("string", "可选：world（默认）| local，作用于 position 与 rotation") },
+                    { "parentPath", ClmcpTools.Prop("string", "可选：重新挂到该父节点下；为空字符串则移到场景根") },
+                    { "worldPositionStays", ClmcpTools.Prop("boolean", "可选：改挂父节点时是否保持世界变换，默认 true") }
                 })));
 
             t.Add(ClmcpTools.Tool("create_light",
@@ -138,11 +146,15 @@ namespace Clmcp
 
             t.Add(ClmcpTools.Tool("batch",
                 "批量执行多个工具调用（一次往返完成多步建模，大幅减少来回开销）。" +
-                "calls 为 [{name, arguments}] 数组；stopOnError 默认 true，任一步失败即中断并返回此前结果。",
+                "calls 为 [{name, saveAs, arguments}]；saveAs 保存该步结果供后续引用；" +
+                "参数值可用 {\"$ref\": \"label.instanceID\"} 引用前序结果（label 为 saveAs 名，点路径可下钻字典/数组）。" +
+                "依赖失败前序结果的调用标记为 skipped 而非空值执行；undoGroup 把支持 Undo 的场景编辑归入同一撤销组" +
+                "（注意：undoGroup 不等于资源/场景/Play 状态的完整事务）。",
                 ClmcpTools.Schema(new Dictionary<string, object>
                 {
-                    { "calls", ClmcpTools.Prop("array", "调用数组：[{ \"name\": \"create_material\", \"arguments\": {...} }, ...]") },
-                    { "stopOnError", ClmcpTools.Prop("boolean", "出错即中断，默认 true") }
+                    { "calls", ClmcpTools.Prop("array", "调用数组：[{ \"name\": \"create_gameobject\", \"saveAs\": \"label\", \"arguments\": {...} }, ...]") },
+                    { "stopOnError", ClmcpTools.Prop("boolean", "出错即中断，默认 true") },
+                    { "undoGroup", ClmcpTools.Prop("string", "可选：Undo 分组名，收尾 CollapseUndoOperations；非完整事务") }
                 }, "calls")));
 
             t.Add(ClmcpTools.Tool("focus_view",
@@ -371,23 +383,117 @@ namespace Clmcp
 
         static string SetTransform(Dictionary<string, object> args, out bool isError)
         {
+            // 旋转三选一互斥校验（REQ-008）
+            bool hasEuler = args.GetList("rotation") != null;
+            bool hasQuat = args.GetList("rotationQuaternion") != null;
+            bool hasLook = args.GetList("lookAt") != null;
+            List<string> rotGiven = new List<string>();
+            if (hasEuler) rotGiven.Add("rotation");
+            if (hasQuat) rotGiven.Add("rotationQuaternion");
+            if (hasLook) rotGiven.Add("lookAt");
+            if (rotGiven.Count > 1)
+                throw new ClmcpToolException(ClmcpErrorCodes.ParamConflict,
+                    "rotation / rotationQuaternion / lookAt 互斥，同时给出了: " +
+                    string.Join(", ", rotGiven.ToArray()),
+                    "只保留其中一种旋转表达。");
+
+            Quaternion? quat = null;
+            if (hasQuat)
+            {
+                List<object> q = args.GetList("rotationQuaternion");
+                if (q.Count != 4)
+                    throw ClmcpErrors.Param("rotationQuaternion 必须是 [x, y, z, w] 四个数字");
+                quat = new Quaternion(ToF(q[0], 0f), ToF(q[1], 0f), ToF(q[2], 0f), ToF(q[3], 1f));
+                if (Mathf.Approximately(quat.Value.x, 0f) && Mathf.Approximately(quat.Value.y, 0f) &&
+                    Mathf.Approximately(quat.Value.z, 0f) && Mathf.Approximately(quat.Value.w, 0f))
+                    throw ClmcpErrors.Param("rotationQuaternion 是零四元数（非法）",
+                        "至少 w=1 或给定有效旋转。");
+            }
+
+            string space = (args.GetStr("space", "world") ?? "world").Trim().ToLowerInvariant();
+            if (space != "world" && space != "local")
+                throw ClmcpErrors.Param("无效 space（应为 world / local）: " + space);
+            bool local = space == "local";
+
+            Vector3? upDir = Vec3OrNull(args, "up");
+            if (hasLook && upDir.HasValue && upDir.Value.sqrMagnitude < 1e-8f)
+                throw ClmcpErrors.Param("up 是零长度方向向量（非法）");
+
+            bool worldPositionStays = args.GetBool("worldPositionStays", true);
+
             object result = ClmcpMainThread.Run(delegate
             {
                 GameObject go = ResolveObject(args);
-                ClmcpBuild.TRS(go,
-                    Vec3OrNull(args, "position"),
-                    Vec3OrNull(args, "rotation"),
-                    Vec3OrNull(args, "scale"));
+                Transform tr = go.transform;
+
+                Vector3? pos = Vec3OrNull(args, "position");
+                if (pos.HasValue)
+                {
+                    if (local) tr.localPosition = pos.Value; else tr.position = pos.Value;
+                }
+
+                if (hasEuler)
+                {
+                    Vector3 e = Vec3(args, "rotation", Vector3.zero);
+                    if (local) tr.localEulerAngles = e; else tr.eulerAngles = e;
+                }
+                else if (hasQuat)
+                {
+                    if (local) tr.localRotation = quat.Value; else tr.rotation = quat.Value;
+                }
+                else if (hasLook)
+                {
+                    Vector3 look = Vec3(args, "lookAt", Vector3.zero);
+                    tr.LookAt(look, upDir ?? Vector3.up);
+                }
+
+                Vector3? scale = Vec3OrNull(args, "scale");
+                if (scale.HasValue) tr.localScale = scale.Value;
 
                 object parentRaw;
                 if (args.TryGetValue("parentPath", out parentRaw) && parentRaw != null)
-                    ClmcpBuild.Reparent(go, Convert.ToString(parentRaw));
+                {
+                    string parentPath = Convert.ToString(parentRaw) ?? "";
+                    if (parentPath.Length == 0)
+                    {
+                        tr.SetParent(null, worldPositionStays);
+                    }
+                    else
+                    {
+                        Transform parent = ClmcpBuild.Find(parentPath);
+                        if (parent == null)
+                            throw new ClmcpToolException(ClmcpErrorCodes.ObjectNotFound,
+                                "未找到父节点: " + parentPath,
+                                "用 find_gameobjects 核实父节点路径。", parentPath);
+                        if (parent == tr || parent.IsChildOf(tr))
+                            throw ClmcpErrors.Param("不能把物体挂到它自身或其子孙节点下: " + parentPath);
+                        tr.SetParent(parent, worldPositionStays);
+                    }
+                }
+
+                EditorSceneManager.MarkSceneDirty(go.scene);
+
+                Quaternion appliedRot = local ? tr.localRotation : tr.rotation;
+                Vector3 appliedPos = local ? tr.localPosition : tr.position;
 
                 Dictionary<string, object> info = new Dictionary<string, object>();
-                info.Add("path", ClmcpBuild.PathOf(go.transform));
-                info.Add("position", ToList(go.transform.position));
-                info.Add("rotation", ToList(go.transform.eulerAngles));
-                info.Add("scale", ToList(go.transform.lossyScale));
+                info.Add("path", ClmcpBuild.PathOf(tr));
+                info.Add("space", space);
+                info.Add("position", ToList(appliedPos));
+                info.Add("rotation", ToList(appliedRot.eulerAngles));
+                info.Add("rotationQuaternion", new List<object> { (double)appliedRot.x, (double)appliedRot.y,
+                    (double)appliedRot.z, (double)appliedRot.w });
+                info.Add("scale", ToList(tr.lossyScale));
+                info.Add("world", new Dictionary<string, object>
+                {
+                    { "position", ToList(tr.position) },
+                    { "rotation", ToList(tr.eulerAngles) }
+                });
+                info.Add("local", new Dictionary<string, object>
+                {
+                    { "position", ToList(tr.localPosition) },
+                    { "rotation", ToList(tr.localEulerAngles) }
+                });
                 return info;
             }, kTimeout);
 
@@ -533,21 +639,58 @@ namespace Clmcp
             if (calls == null || calls.Count == 0)
             {
                 isError = true;
-                return "缺少参数 calls（[{name, arguments}]）";
+                return "缺少参数 calls（[{name, saveAs, arguments}]）";
             }
             bool stopOnError = args.GetBool("stopOnError", true);
+            string undoGroup = args.GetStr("undoGroup");
+
+            int undoGroupIndex = -1;
+            if (!string.IsNullOrEmpty(undoGroup))
+            {
+                Undo.IncrementCurrentGroup();
+                Undo.SetCurrentGroupName(undoGroup);
+                undoGroupIndex = Undo.GetCurrentGroup();
+            }
+
+            // saveAs → 解析后的结果对象；namedFailed 记录该步是否失败（供 $ref 跳过判定）
+            Dictionary<string, object> named = new Dictionary<string, object>();
+            Dictionary<string, bool> namedFailed = new Dictionary<string, bool>();
 
             List<object> results = new List<object>();
             int failed = 0;
+            int skipped = 0;
 
             for (int i = 0; i < calls.Count; i++)
             {
                 Dictionary<string, object> call = calls[i] as Dictionary<string, object>;
                 string callName = call != null ? call.GetStr("name") : null;
+                string saveAs = call != null ? call.GetStr("saveAs") : null;
                 if (string.IsNullOrEmpty(callName))
                 {
                     failed++;
-                    results.Add(Step(i, callName, true, "缺少 name"));
+                    results.Add(Step(i, callName, saveAs, true, false, "缺少 name"));
+                    if (stopOnError) break;
+                    continue;
+                }
+
+                // $ref 解析（REQ-005）
+                Dictionary<string, object> callArgs = call.GetDict("arguments");
+                string refError = null;
+                Dictionary<string, object> resolvedArgs = callArgs;
+                if (callArgs != null)
+                    resolvedArgs = ResolveRefs(callArgs, named, namedFailed, i, out refError);
+                if (refError == RefSourceFailed)
+                {
+                    // 依赖的前序调用失败：标记跳过，不执行也不算失败
+                    skipped++;
+                    results.Add(Step(i, callName, saveAs, false, true,
+                        "跳过：依赖的前序 saveAs 结果失败"));
+                    continue;
+                }
+                if (refError != null)
+                {
+                    failed++;
+                    results.Add(Step(i, callName, saveAs, true, false, refError));
                     if (stopOnError) break;
                     continue;
                 }
@@ -555,7 +698,7 @@ namespace Clmcp
                 object raw = ClmcpTools.HandleToolCall(new Dictionary<string, object>
                 {
                     { "name", callName },
-                    { "arguments", call != null ? call.GetDict("arguments") : null }
+                    { "arguments", resolvedArgs }
                 });
 
                 Dictionary<string, object> response = raw as Dictionary<string, object>;
@@ -563,26 +706,175 @@ namespace Clmcp
                                  response["isError"] is bool && (bool)response["isError"];
                 string text = ExtractText(response);
 
+                if (!string.IsNullOrEmpty(saveAs))
+                {
+                    object parsed;
+                    if (TryParseResult(text, out parsed))
+                        named[saveAs] = parsed;
+                    else
+                        named[saveAs] = new Dictionary<string, object> { { "value", text } };
+                    namedFailed[saveAs] = stepError;
+                }
+
                 if (stepError) failed++;
-                results.Add(Step(i, callName, stepError, text));
+                results.Add(Step(i, callName, saveAs, stepError, false, text));
                 if (stepError && stopOnError) break;
             }
+
+            if (undoGroupIndex >= 0) Undo.CollapseUndoOperations(undoGroupIndex);
 
             isError = failed > 0;
             Dictionary<string, object> summary = new Dictionary<string, object>();
             summary.Add("total", calls.Count);
-            summary.Add("executed", results.Count);
+            summary.Add("executed", results.Count - skipped);
             summary.Add("failed", failed);
+            summary.Add("skipped", skipped);
+            if (undoGroup != null) summary.Add("undoGroup", undoGroup);
             summary.Add("results", results);
             return ClmcpJson.Serialize(summary);
         }
 
-        static object Step(int index, string name, bool isError, string text)
+        const string RefSourceFailed = "\u0001source_failed";
+
+        /// <summary>
+        /// 深度解析 arguments 中的 {"$ref": "a.b.0"} 引用（REQ-005）。
+        /// refError == RefSourceFailed 表示依赖的前序调用失败（调用方应跳过本步）；
+        /// 其他非空值为具体错误；null 表示解析成功。
+        /// </summary>
+        static Dictionary<string, object> ResolveRefs(Dictionary<string, object> args,
+            Dictionary<string, object> named, Dictionary<string, bool> namedFailed,
+            int callIndex, out string refError)
+        {
+            List<string> errors = new List<string>();
+            bool sourceFailed = false;
+            Dictionary<string, object> resolved = WalkDict(args);
+
+            if (sourceFailed) refError = RefSourceFailed;
+            else if (errors.Count > 0) refError = errors[0];
+            else refError = null;
+            return resolved;
+
+            Dictionary<string, object> WalkDict(Dictionary<string, object> d)
+            {
+                Dictionary<string, object> result = new Dictionary<string, object>();
+                foreach (KeyValuePair<string, object> kv in d)
+                    result[kv.Key] = WalkValue(kv.Key, kv.Value);
+                return result;
+            }
+
+            object WalkValue(string paramName, object value)
+            {
+                Dictionary<string, object> dd = value as Dictionary<string, object>;
+                if (dd != null && dd.Count == 1 && dd.ContainsKey("$ref"))
+                {
+                    string err;
+                    object v = ResolveRefPath(dd.GetStr("$ref") ?? "", named, namedFailed,
+                        callIndex, paramName, out err);
+                    if (err == RefSourceFailed) sourceFailed = true;
+                    else if (err != null) errors.Add(err);
+                    return v;
+                }
+                if (dd != null) return WalkDict(dd);
+                List<object> list = value as List<object>;
+                if (list != null)
+                {
+                    List<object> copy = new List<object>(list.Count);
+                    foreach (object item in list)
+                        copy.Add(WalkValue(paramName, item));
+                    return copy;
+                }
+                return value;
+            }
+        }
+
+        /// <summary>按 "a.b.0" 点路径从命名结果中取值。</summary>
+        static object ResolveRefPath(string path, Dictionary<string, object> named,
+            Dictionary<string, bool> namedFailed, int callIndex, string paramName, out string error)
+        {
+            error = null;
+            if (string.IsNullOrEmpty(path))
+            {
+                error = "call[" + callIndex + "] 参数 " + paramName + " 的 $ref 为空";
+                return null;
+            }
+            string[] parts = path.Split('.');
+            object current;
+            if (!named.TryGetValue(parts[0], out current))
+            {
+                // 前序调用失败导致结果缺失 → 跳过而非报错
+                bool failed;
+                if (namedFailed.TryGetValue(parts[0], out failed) && failed)
+                {
+                    error = RefSourceFailed;
+                    return null;
+                }
+                error = "call[" + callIndex + "] 参数 " + paramName + " 引用不存在: " + path +
+                        "（检查前序调用是否带 saveAs=\"" + parts[0] + "\"）";
+                return null;
+            }
+            for (int i = 1; i < parts.Length; i++)
+            {
+                Dictionary<string, object> dict = current as Dictionary<string, object>;
+                if (dict != null)
+                {
+                    object next;
+                    if (!dict.TryGetValue(parts[i], out next))
+                    {
+                        error = "call[" + callIndex + "] 引用路径无效: " + path + "（缺字段 " + parts[i] + "）";
+                        return null;
+                    }
+                    current = next;
+                    continue;
+                }
+                List<object> list = current as List<object>;
+                if (list != null)
+                {
+                    int idx;
+                    if (!int.TryParse(parts[i], out idx) || idx < 0 || idx >= list.Count)
+                    {
+                        error = "call[" + callIndex + "] 引用路径无效: " + path + "（数组索引 " + parts[i] + "）";
+                        return null;
+                    }
+                    current = list[idx];
+                    continue;
+                }
+                error = "call[" + callIndex + "] 引用路径无效: " + path + "（中间值不是对象/数组）";
+                return null;
+            }
+            return current;
+        }
+
+        /// <summary>把前序结果文本解析为对象（JSON dict/list）供 $ref 下钻；失败时返回 false。</summary>
+        static bool TryParseResult(string text, out object parsed)
+        {
+            parsed = null;
+            if (string.IsNullOrEmpty(text)) return false;
+            string t = text.Trim();
+            if (!t.StartsWith("{") && !t.StartsWith("[")) return false;
+            try
+            {
+                object o = ClmcpJson.Parse(t);
+                if (o is Dictionary<string, object> || o is List<object>)
+                {
+                    parsed = o;
+                    return true;
+                }
+                return false;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        static object Step(int index, string name, string saveAs, bool isError, bool skipped, string text)
         {
             Dictionary<string, object> d = new Dictionary<string, object>();
             d.Add("index", index);
             d.Add("name", name);
+            if (!string.IsNullOrEmpty(saveAs)) d.Add("saveAs", saveAs);
             d.Add("isError", isError);
+            d.Add("skipped", skipped);
             d.Add("result", text);
             return d;
         }

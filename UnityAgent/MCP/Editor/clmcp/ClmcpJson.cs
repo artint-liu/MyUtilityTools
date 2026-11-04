@@ -288,6 +288,26 @@ namespace Clmcp
             return def;
         }
 
+        public static long GetLong(this Dictionary<string, object> d, string key, long def = 0)
+        {
+            object v;
+            if (d != null && d.TryGetValue(key, out v) && v is double)
+                return (long)Math.Round((double)v);
+            return def;
+        }
+
+        public static double GetDouble(this Dictionary<string, object> d, string key, double def = 0)
+        {
+            object v;
+            if (d != null && d.TryGetValue(key, out v) && v is double) return (double)v;
+            return def;
+        }
+
+        public static bool ContainsKey(this Dictionary<string, object> d, string key)
+        {
+            return d != null && d.ContainsKey(key);
+        }
+
         public static bool GetBool(this Dictionary<string, object> d, string key, bool def = false)
         {
             object v;

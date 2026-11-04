@@ -40,6 +40,11 @@ namespace Clmcp
         // 历史动态程序集（后续编译会把它们加入引用，可累积复用之前定义的类型）
         static readonly List<Assembly> s_history = new List<Assembly>();
 
+        // 同源码缓存：scene_for_each 等批量场景对同一段代码只需编译一次（REQ-002 性能）。
+        // 注意：缓存命中的多次执行复用同一程序集（静态字段状态会保留）。
+        static string s_cachedSource;
+        static MethodInfo s_cachedEntry;
+
         // ================= 对外入口 =================
 
         /// <summary>编译并在主线程执行用户代码，返回入口方法的返回值。</summary>
@@ -47,6 +52,11 @@ namespace Clmcp
         {
             if (string.IsNullOrEmpty(code) || code.Trim().Length == 0)
                 throw new ArgumentException("code 不能为空");
+
+            // 默认入口（mainTypeName/methodName 均未指定）时启用同源码缓存
+            bool cacheable = string.IsNullOrEmpty(mainTypeName) && string.IsNullOrEmpty(methodName);
+            if (cacheable && code == s_cachedSource && s_cachedEntry != null)
+                return ClmcpMainThread.Run(delegate { return InvokeEntry(s_cachedEntry); }, 300000);
 
             string source = PrepareSource(code, out int lineOffset);
             Assembly assembly = CompileToMemory(source, lineOffset);
@@ -57,6 +67,12 @@ namespace Clmcp
                     "未找到入口方法。请用以下两种方式之一组织代码：\n" +
                     "  A) 直接写语句（可用 return 返回结果）；\n" +
                     "  B) 完整类型定义：public static class Script { public static object Execute() { ...; return ...; } }");
+
+            if (cacheable)
+            {
+                s_cachedSource = code;
+                s_cachedEntry = entry;
+            }
 
             // 入口方法在 Unity 主线程执行（可安全调用 Unity API）
             return ClmcpMainThread.Run(delegate { return InvokeEntry(entry); }, 300000);

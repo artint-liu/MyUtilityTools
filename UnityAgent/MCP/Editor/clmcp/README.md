@@ -107,20 +107,43 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
 
 ## 3. 可用工具（tools/list）
 
+### 基础工具
+
 | 工具 | 说明 |
 |---|---|
 | `unity_info` | 编辑器/工程/场景状态（版本、路径、Play 模式等） |
 | `execute_csharp` | **C# JIT 内存编译执行**（见下方代码约定） |
 | `execute_menu_item` | 执行编辑器菜单项，如 `File/Save Scene` |
-| `get_console_logs` | 读取控制台日志（可按 info/warning/error 过滤） |
+| `get_console_logs` | 读取控制台日志；支持增量游标/子串过滤/字节预算（见 §3.2） |
 | `clear_console` | 清空控制台 |
 | `set_play_mode` | Play 模式控制：play / pause / unpause / stop |
-| `get_scene_hierarchy` | 当前场景层级树（含组件列表） |
+| `get_scene_hierarchy` | 当前场景层级树；支持过滤/分页（见 §3.1） |
+| `find_gameobjects` | 按名称/路径/Tag/Layer/组件搜索物体（见 §3.1） |
 | `save_scene` | 保存场景（新场景需指定 `Assets/...` 路径） |
 | `create_gameobject` | 创建 GameObject（可选基本体/坐标/父节点） |
 | `delete_gameobject` | 按路径或 instanceID 删除物体 |
-| `refresh_assets` | 刷新资源数据库 |
-| `capture_screenshot` | 截图：返回 base64 图片内容（多模态 AI 可直接查看）并保存文件 |
+| `refresh_assets` | 刷新资源数据库；可等待完成并返回导入结果（见 §3.3） |
+| `capture_screenshot` | 截图：metadata 精简模式 + 多视角一次抓取（见 §3.4） |
+
+### 组件通用读写（无需写 C#）
+
+| 工具 | 说明 |
+|---|---|
+| `add_component` | 添加组件并可同时设置属性（已存在报 `COMPONENT_ALREADY_EXISTS`） |
+| `upsert_component` | 幂等：没有则添加，有则只更新给出的属性 |
+| `get_component_properties` | 读取全部可见序列化属性（返回值可直接回填） |
+| `set_component_properties` | 修改指定属性；未给出的字段保持不变；strict 模式逐字段报错 |
+| `remove_component` | 移除组件（带 Undo） |
+
+### 跨场景批处理与异步任务
+
+| 工具 | 说明 |
+|---|---|
+| `scene_for_each` | **一次调用遍历多个场景**执行同一段 C#，统一保存/恢复/报告（见 §3.5） |
+| `start_editor_task` | 启动异步任务返回 jobId：`scene_smoke_test`（逐场景 Play 回归）/ `csharp`（见 §3.6） |
+| `get_editor_task` | 查询任务状态/进度/日志/逐场景结果（jobId 跨域重载稳定） |
+| `cancel_editor_task` | 取消任务（安全清理：退出 Play、不保存修改） |
+| `list_editor_tasks` | 列出已知任务（含历史任务） |
 
 ### 建模 / 场景构建工具（对标 Blender MCP）
 
@@ -132,11 +155,11 @@ CLMCP 是 TCP 传输，CodeBuddy 的 stdio MCP 需通过本目录 `bridge/` 下�
 | `create_primitive` | 创建基本体并**一步**赋材质、设变换、挂父节点；`size` 为实际尺寸 |
 | `create_mesh` | **由顶点/三角形数据生成网格资源**并创建物体（创建任意自定义模型的通用入口） |
 | `set_material` | 给物体（可含子物体）赋材质 |
-| `set_transform` | 设置位置 / 旋转 / 缩放，并支持改挂父节点 |
+| `set_transform` | 设置位置/旋转（欧拉角或四元数或 lookAt）/缩放，`space` 世界/本地，改挂父节点（见 §3.7） |
 | `create_light` | 灯光：point / directional / spot / area，可调强度、范围、聚光角、阴影 |
 | `create_camera` | 相机：透视/正交，`lookAt` 自动朝向，可打 MainCamera 标签 |
 | `get_object_info` | 物体详情：变换、组件、材质路径、网格统计、包围盒 |
-| `batch` | **批量执行多个工具调用**（一次往返完成多步建模，显著减少来回） |
+| `batch` | **批量执行多个工具调用**；支持 `saveAs` 命名结果与 `{"$ref": ...}` 引用前序结果（见 §3.8） |
 | `focus_view` | 把 Scene 视图摆到指定方位角/仰角（默认 45° 等轴测） |
 | `create_scene` / `open_scene` / `clear_scene` | 新建（可指定 setup/mode）/ 打开 / 清空场景 |
 | `list_assets` | 按类型或名称搜索工程资源 |
@@ -245,14 +268,210 @@ public static class Script
 
 | 参数 | 说明 |
 |---|---|
-| `target` | `game`（默认，相机离屏渲染，不依赖窗口状态）/ `gameview`（Game 视图）/ `sceneview`（Scene 视图视角，不含 Gizmo） |
+| `target` | `game`（默认，相机离屏渲染，不依赖窗口状态）/ `gameview`（Game 视图）/ `sceneview`（Scene 视图视角，不含 Gizmo）；与 `targets` 互斥 |
+| `targets` | 可选多目标数组 `["gameview","sceneview"]`，一次抓取多个视角，文件名自动加 `_<视角>` 后缀 |
+| `return` | `both`（默认，兼容旧行为：文本 + base64 image 块）/ `metadata`（只返回元数据 JSON，**不含 Base64**）/ `image`（只返回图片） |
 | `camera` | `target=game` 时按名称指定相机，默认 `Camera.main` |
 | `width` / `height` | 渲染尺寸（仅 game/sceneview），只给一边时按相机纵横比推算 |
 | `maxSize` | 图片最长边上限，超出等比缩小（默认 1280，控制 base64 体积与 token 成本） |
 | `format` | `png`（默认）/ `jpg` |
 | `path` | 保存路径（相对工程根或绝对），默认 `Screenshots/clmcp_时间戳.png` |
 
-返回 MCP 多 content 结构：`text`（来源/分辨率/保存路径）+ `image`（base64，多模态 AI 客户端可直接查看）；纯文本客户端至少能拿到保存路径。存入 `Assets/` 内会自动刷新资源数据库。
+返回：`return=both`（默认）为 MCP 多 content 结构（text + image）；`return=metadata` 的 text 为：
+
+```json
+{
+  "ok": true,
+  "results": [
+    { "target": "gameview", "path": "Screenshots/check.png", "absolutePath": "D:/Proj/Screenshots/check_gameview.png",
+      "width": 1080, "height": 681, "format": "png", "bytes": 152340, "camera": "Main Camera", "source": "..." }
+  ],
+  "failed": []
+}
+```
+
+连续截图 / 批量检查推荐 `return=metadata`：响应不含 Base64，随后按需用文件读取工具查看。多视角时任一目标失败会出现在 `failed` 数组（含 target 与 error），已成功视角的结果不受影响。存入 `Assets/` 内会自动刷新资源数据库。
+
+---
+
+## 3.1 场景层级过滤与对象搜索
+
+`get_scene_hierarchy` 支持过滤以避免大场景返回整棵树：
+
+```json
+{ "rootPath": "Room/Table", "maxDepth": 3, "includeComponents": false,
+  "includeInactive": true, "nameFilter": "Leg*", "maxNodes": 100, "cursor": 0 }
+```
+
+返回 `{scene, scenePath, rootCount, returned, totalMatched, nextCursor, truncated, objects}`；
+`truncated=true` 时用 `nextCursor` 作为下一轮 `cursor` 继续翻页。
+未提供任何过滤参数时行为与旧版一致（全树 + 组件列表，上限 3000 节点）。
+
+`find_gameobjects` 按条件搜索：
+
+```json
+{ "name": "SceneName3D", "component": "TextMesh", "activeOnly": false,
+  "includeTransform": false, "maxCount": 50 }
+```
+
+返回 `objects: [{path, instanceID, activeSelf, transform?, componentInstanceID?}]`；查不到返回空列表（非错误）。`name`/`pathPattern` 支持 `*` `?` 通配，否则为不区分大小写子串匹配。
+
+## 3.2 Console 增量读取（游标轮询）
+
+任一新增参数（`afterCursor` / `contains` / `exclude` / `includeStackTrace` / `maxBytes`）或 `format=json` 时返回结构化 JSON：
+
+```json
+{ "sessionId": "a1b2c3d4e5f6", "entries": [ { "seq": 123, "time": "10:20:30.123",
+    "type": "Error", "message": "..." } ], "nextCursor": 125, "truncated": false,
+  "totalMatched": 2, "returned": 2, "droppedOld": false }
+```
+
+- **增量轮询**：携带上一轮的 `sessionId` + `nextCursor` 作为 `afterCursor`，只返回新增日志；`seq` 为域内稳定递增序号，过滤条件不影响序号；
+- **域重载后** `sessionId` 变化，携带旧游标请求返回 `CURSOR_SESSION_MISMATCH` 错误（附新 sessionId），调用方重新建立基线，不会静默复用；
+- `maxBytes`（默认 64KB）超限截断并保留读取位置（`nextCursor` 指向最后返回条目）；环形缓冲淘汰旧日志时 `droppedOld=true`；
+- 不带新参数时保持旧文本输出（兼容）。
+
+## 3.3 资源刷新等待
+
+```json
+{ "waitForCompletion": true, "timeoutMs": 60000, "paths": ["Assets/Textures/foo.png"] }
+```
+
+`waitForCompletion=true` 时返回 `{ok, completed, timedOut, durationMs, refreshed, errors}`：
+Unity 刷新是同步操作，正常返回即已完成（`completed=true`），新资源立即可 `list_assets` 查询；
+`errors` 为刷新窗口内的导入错误摘要。`paths` 仅强制重导入指定资源。旧用法（无参数）保持原行为。
+
+## 3.4 —（截图见上文）
+
+## 3.5 跨场景批处理 `scene_for_each`
+
+一次调用完成“打开 → 执行 → 保存 → 恢复”循环，替代逐场景模板代码：
+
+```json
+{
+  "pathGlob": "Assets/Scenes/*.unity",
+  "code": "var label = ClmcpBuild.Box(\"SceneName3D\", new Vector3(4,0.5f,0.2f));\nreturn ClmcpBuild.PathOf(label.transform);",
+  "save": true, "restoreOriginal": true, "continueOnError": false, "dryRun": false
+}
+```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `paths` / `pathGlob` | — | 场景列表 / 通配（`Assets/Scenes/*.unity`），至少其一；显式路径不存在报 `SCENE_NOT_FOUND` |
+| `code` | — | 对每个场景执行的 C#（复用 execute_csharp 能力，含 `ClmcpBuild`）；**同一 code 只编译一次** |
+| `save` | true | 每场景成功后保存 |
+| `restoreOriginal` | true | 完成后恢复调用前场景 |
+| `continueOnError` | false | 单场景失败后继续；失败场景不保存半完成修改 |
+| `timeoutPerSceneSeconds` | 60 | 单场景耗时预算（用于总体超时估算） |
+| `dryRun` | false | 只返回将处理的场景列表，不打开不修改 |
+
+返回：
+
+```json
+{ "ok": false, "total": 22, "succeeded": 21, "failed": 1,
+  "restoredScene": "Assets/Scenes/01.unity", "restoreError": null,
+  "durationMs": 45230,
+  "results": [ { "scene": "Assets/Scenes/01.unity", "ok": true, "saved": true,
+                 "value": "\"SceneName3D\"", "durationMs": 980 } ] }
+```
+
+无论成功失败超时都尝试恢复原场景；恢复失败是独立字段 `restoreError`。调用前场景若有未保存修改会先自动保存（结果 `notice` 字段提示）。回调幂等性由代码负责。
+
+## 3.6 异步编辑器任务（跨域重载）
+
+进出 Play 触发域重载会重启 MCP 服务器；`scene_smoke_test` 任务的状态持久化在 `<project>/Library/CLMCP/tasks/`，**jobId 跨域重载稳定**，重载后自动从 checkpoint（当前场景序号）恢复执行：
+
+```json
+{ "kind": "scene_smoke_test", "pathGlob": "Assets/Scenes/*.unity",
+  "waitFrames": 120, "waitSeconds": 1, "screenshotDir": "Screenshots/smoke",
+  "timeoutSecondsPerScene": 120, "continueOnError": true, "restoreScene": true }
+```
+
+启动立即返回 `{jobId, state:"queued", total}`，随后只需轮询：
+
+```json
+{ "jobId": "job-18e...", "includeLogs": false, "logTail": 20 }
+```
+
+```json
+{ "state": "running", "progress": { "current": 7, "total": 22,
+    "currentScene": "Assets/Scenes/07.unity", "currentStep": "warmup" },
+  "sceneResults": [ { "scene": "...", "ok": true, "screenshot": "D:/.../07_07.png",
+                      "errors": [], "warmupFrames": 120, "durationMs": 3210 } ],
+  "artifacts": ["..."], "error": null }
+```
+
+行为约定：
+
+1. 每场景自动：打开 → 进 Play → 等待（帧/秒）→ 相机离屏截图 → 采集 Console 错误 → 退出 Play → 下一场景；
+2. 任务完成后自动退出 Play 并尝试恢复原场景；`collectErrors=true`（默认）时某场景出现 Console 错误则该场景 `ok=false`；
+3. `cancel_editor_task` 在下一检查点安全清理（退出 Play、丢弃未保存修改），不会无限停留在 Play；
+4. 域重载（进出 Play）时任务自动续跑；**编辑器整个重启后**遗留 running 任务标记为 failed（附已完成场景结果），不静默丢失；
+5. `kind=csharp` 为瞬时任务（主线程执行一段 C# 后返回），不承诺跨域恢复，中断时返回 `DOMAIN_RELOAD_INTERRUPTED`。
+
+> 不通过关闭用户项目的域重载设置来规避重载。
+
+## 3.7 `set_transform` 扩展
+
+旋转三选一（同时给出报 `PARAM_CONFLICT`）：
+
+- `rotation`: 欧拉角度 `[x,y,z]`；
+- `rotationQuaternion`: 四元数 `[x,y,z,w]`（零四元数报错）；
+- `lookAt`: 世界空间注视点 `[x,y,z]`，可选 `up`（默认 `[0,1,0]`）。
+
+`space`: `world`（默认）/ `local`，作用于 `position` 与旋转。`parentPath` 重新挂父节点，`worldPositionStays`（默认 true）控制是否保持世界变换；挂到自身子孙节点报错。返回应用后的实际值（world 与 local 双份 + 四元数），便于验证。
+
+## 3.8 `batch` 结果命名与引用
+
+```json
+{
+  "undoGroup": "Create scene label",
+  "calls": [
+    { "name": "create_gameobject", "saveAs": "label", "arguments": { "name": "SceneName3D" } },
+    { "name": "add_component", "arguments": {
+        "instanceID": { "$ref": "label.instanceID" },
+        "type": "TextMesh",
+        "properties": { "text": "01_BuiltIn_Colors", "fontSize": 80 } } },
+    { "name": "capture_screenshot", "arguments": { "target": "sceneview", "return": "metadata" } }
+  ],
+  "stopOnError": false
+}
+```
+
+- `saveAs`：该步返回文本尝试解析为 JSON 后存入上下文（失败则存 `{"value": 文本}`）；
+- `{"$ref": "a.b.0"}`：点路径下钻命名结果（对象字段 / 数组索引）；引用不存在报错并指出调用序号与路径；
+- `stopOnError=false` 时，依赖“失败前序结果”的调用标记 `skipped: true`（不算失败，不空跑）；
+- `undoGroup`：把支持 Undo 的场景编辑折叠为一组（Ctrl+Z 一次撤销）——**不等于**资源/场景/Play 状态的完整事务；
+- 结果含每步 `index / name / saveAs / isError / skipped / result`。
+
+## 3.9 通用组件读写
+
+```json
+{ "object": { "path": "SceneName3D" }, "type": "UnityEngine.TextMesh",
+  "properties": {
+    "text": "01_BuiltIn_Colors", "fontSize": 80, "characterSize": 0.065,
+    "anchor": "MiddleCenter", "color": [1, 0.78, 0.16, 1],
+    "font": { "asset": "builtin:LegacyRuntime.ttf" } } }
+```
+
+- 对象引用：`path` / `instanceID` / `{"object": {...}}`；同时提供时校验指向同一对象；
+- 类型：短名（`TextMesh`）或完整名；短名歧义时报错并列出候选；
+- 字段解析顺序：SerializedProperty 序列化名（精确 → `m_` 驼峰变体）→ C# 公共字段/属性反射兜底；
+- 值支持：数字 / 布尔 / 字符串 / 枚举名或枚举值（flags 支持 `"A,B"` 组合）/ `[x,y,z]` 数学类型 / Color（数组或 `#RRGGBBAA`）/ 数组（自动扩缩容，读侧截断 64 项并标 `truncated`）/ 资源引用 `{"asset":"Assets/..","builtin:LegacyRuntime.ttf"}` / 场景对象引用 `{"object":{"path"| "instanceID"}}`；
+- 错误：字段不存在 `UNKNOWN_FIELD`（附可用字段提示）、类型不支持 `UNSUPPORTED_FIELD`（提示改用 execute_csharp）、资源缺失 `ASSET_NOT_FOUND`、组件已存在 `COMPONENT_ALREADY_EXISTS`；strict=true（默认）任一字段失败整体报错并列出每个失败字段；
+- `get_component_properties` 返回值可直接回填 `set_component_properties`（枚举输出数字、引用输出 `{asset}`/`{instanceID}`、数学类型输出数组）。
+
+## 3.10 结构化错误（统一）
+
+所有工具失败时 text 为统一 JSON（`isError=true`）：
+
+```json
+{ "ok": false, "error": { "code": "OBJECT_NOT_FOUND", "message": "未找到 GameObject",
+    "tool": "set_transform", "objectPath": "Room/Table", "details": {},
+    "hint": "用 find_gameobjects 核实对象路径。" } }
+```
+
+错误码：`INVALID_PARAMS` / `PARAM_CONFLICT` / `OBJECT_NOT_FOUND` / `ASSET_NOT_FOUND` / `SCENE_NOT_FOUND` / `SCENE_NOT_SAVED` / `COMPONENT_TYPE_NOT_FOUND` / `COMPONENT_NOT_FOUND` / `COMPONENT_ALREADY_EXISTS` / `UNKNOWN_FIELD` / `UNSUPPORTED_FIELD` / `COMPILE_FAILED` / `EXECUTION_FAILED` / `TIMEOUT` / `CURSOR_SESSION_MISMATCH` / `TASK_NOT_FOUND` / `TASK_INVALID_STATE` / `DOMAIN_RELOAD_INTERRUPTED`。同类错误跨工具同码，可程序化区分“参数错误 / 对象不存在 / 冲突 / 超时 / 域重载中断”。
 
 ---
 
@@ -270,18 +489,22 @@ public static class Script
 
 ```
 Scripts/Editor/MCP/clmcp/
-├── ClmcpBootstrap.cs        # 引导：域重载自动停止/重启服务器
+├── ClmcpBootstrap.cs        # 引导：域重载自动停止/重启服务器 + 任务 checkpoint 落盘/恢复
 ├── ClmcpToolbar.cs          # 工具栏 MCP 按钮 + Tools/CLMCP 菜单 + 端口设置
 ├── ClmcpServer.cs           # TCP 服务器（端口绑定唯一性检测、多客户端）
 ├── ClmcpProtocol.cs         # JSON-RPC 2.0 协议分发（MCP）
-├── ClmcpTools.cs            # 12 个基础工具（含截图）
-├── ClmcpToolsScene.cs       # 15 个建模/场景构建工具（材质、网格、灯光、batch…）
+├── ClmcpTools.cs            # 基础工具（截图多视角/层级过滤/日志游标/对象搜索/资源刷新）
+├── ClmcpToolsScene.cs       # 建模/场景构建工具（材质、网格、灯光、batch $ref 引用…）
+├── ClmcpComponentTools.cs   # 通用组件读写（add/upsert/get/set/remove_component）
+├── ClmcpSceneBatch.cs       # scene_for_each 跨场景批处理
+├── ClmcpTaskTools.cs        # 异步编辑器任务（持久化、跨域恢复、Play 冒烟回归）
 ├── ClmcpBuild.cs            # 常驻场景构建 API（供 execute_csharp 直接调用）
 ├── ClmcpPrompts.cs          # 3 个 MCP 对话模板（prompts/list、prompts/get）
-├── ClmcpCSharpCompiler.cs   # C# JIT 内存编译器（Roslyn 反射加载，不落盘）
+├── ClmcpCSharpCompiler.cs   # C# JIT 内存编译器（Roslyn 反射加载，不落盘，同源码缓存）
+├── ClmcpErrors.cs           # 结构化错误码与统一错误 JSON
 ├── ClmcpJson.cs             # 自研 JSON 解析/序列化（无外部依赖）
 ├── ClmcpMainThread.cs       # 网络线程 → Unity 主线程派发器
-├── ClmcpLogCollector.cs     # 控制台日志环形缓冲
+├── ClmcpLogCollector.cs     # 控制台日志环形缓冲（稳定序号 + 域 sessionId）
 └── bridge/
     ├── clmcp-bridge.mjs     # stdio<->TCP 桥接器（Node，供 MCP 客户端接入）
     └── clmcp_bridge.py      # stdio<->TCP 桥接器（Python 备选）

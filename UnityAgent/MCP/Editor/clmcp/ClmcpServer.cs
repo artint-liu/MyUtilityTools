@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -7,6 +8,7 @@ using System.Text;
 using System.Threading;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace Clmcp
 {
@@ -14,7 +16,7 @@ namespace Clmcp
     /// CLMCP MCP 服务器（全局唯一）。
     ///
     /// - 传输：TCP（仅监听 127.0.0.1），帧格式与 MCP stdio 传输一致——每行一条 JSON-RPC 2.0 消息；
-    /// - 唯一性：启动时执行端口绑定，绑定失败（系统中已存在相同 MCP 服务占用端口）则弹窗提示；
+    /// - 唯一性：启动时执行端口绑定，绑定失败会延迟重试，重试耗尽（系统中已存在相同 MCP 服务占用端口）才提示；
     /// - 生命周期：域重载（脚本编译 / 进出 Play 模式）前自动停止，重载后自动重启，期间客户端需重连。
     /// </summary>
     internal static class ClmcpServer
@@ -40,21 +42,52 @@ namespace Clmcp
             get { return "127.0.0.1:" + Port; }
         }
 
+        // ------------------------------------------------------------------
+        // 启动重试
+        //
+        // 背景：进出 Play 模式触发域重载时，旧域的监听 socket 往往还没释放，
+        // 新域的 InitializeOnLoad 就已经尝试启动（相隔常不足 1 秒），于是端口探测命中
+        // "自身旧域残留"并被误判为"别的实例占用"，导致服务长时间离线。
+        // 因此启动失败不再一次定生死，而是延迟重试若干次（残留通常 1~2 秒内释放），
+        // 全部重试失败后才提示。
+        // ------------------------------------------------------------------
+        const int MaxRetry = 12;              // 首次 300ms，之后每 500ms 一次，窗口约 6 秒
+        const double RetryFirstDelay = 0.3;
+        const double RetryInterval = 0.5;
+        const int ProbeTimeoutNormal = 400;   // 首次探测超时
+        const int ProbeTimeoutRetry = 120;    // 重试探测超时（探测是阻塞调用，重试时缩短以免卡主线程）
+
+        static int s_retryLeft;
+        static double s_nextRetryAt;
+        static bool s_retryDialogPending;
+
         /// <summary>
-        /// 尝试启动服务器。端口被占用（系统中已存在相同 MCP 服务）时弹窗提示并返回 false。
+        /// 尝试启动服务器。端口暂时不可用（多为上一次域重载的监听尚未释放）时自动延迟重试，
+        /// 重试耗尽后按 showDialogOnFailure 弹窗提示并返回 false。
         /// </summary>
         public static bool TryStart(bool showDialogOnFailure)
         {
-            if (IsRunning) return true;
+            if (IsRunning) { CancelRetry(); return true; }
 
+            string failure;
+            if (TryStartCore(out failure, ProbeTimeoutNormal)) return true;
+
+            ScheduleRetry(showDialogOnFailure);
+            return false;
+        }
+
+        /// <summary>真正执行一次「探测 + 绑定 + 启动」。成功返回 true，失败返回 false 并给出原因。</summary>
+        static bool TryStartCore(out string failure, int probeTimeoutMs)
+        {
+            failure = null;
             int port = Port;
             Core core = null;
-            string failure = null;
 
-            // 先探测端口上是否已有存活监听者（有则绑定必然失败，提前判定冲突）
-            if (IsPortListening(port))
+            // 先探测端口上是否已有存活监听者（有则可能是别的实例，避免 Windows 下
+            // SO_REUSEADDR 绑定成功却造成端口劫持）
+            if (IsPortListening(port, probeTimeoutMs))
             {
-                failure = "端口 " + port + " 上已存在监听服务";
+                failure = "端口 " + port + " 上已存在监听服务（可能是上一次域重载尚未释放的监听）";
             }
             else
             {
@@ -77,24 +110,101 @@ namespace Clmcp
                 }
             }
 
-            if (core == null)
-            {
-                string message =
-                    "MCP 服务启动失败：无法绑定 " + Endpoint + "。\n\n" + failure +
-                    "\n\n系统中可能已经存在相同的 MCP 服务（全局唯一原则），" +
-                    "例如已在另一个 Unity 实例中启动。\n" +
-                    "可通过菜单 Tools/CLMCP/设置端口… 更换端口。";
-                Debug.LogWarning("[CLMCP] " + message);
-                if (showDialogOnFailure)
-                    EditorUtility.DisplayDialog("CLMCP", message, "确定");
-                return false;
-            }
+            if (core == null) return false;
 
             s_core = core;
             SessionState.SetBool(AutoRestartKey, true);
             Debug.Log("[CLMCP] MCP 服务器已启动: " + Endpoint);
             ClmcpToolbar.RefreshUi();
             return true;
+        }
+
+        /// <summary>安排一次延迟重试序列（已在重试中则只累计"最终失败要弹窗"的标记）。</summary>
+        static void ScheduleRetry(bool dialogOnFinalFailure)
+        {
+            s_retryDialogPending |= dialogOnFinalFailure;
+            if (s_retryLeft > 0) return;   // 已在重试序列中
+
+            s_retryLeft = MaxRetry;
+            s_nextRetryAt = EditorApplication.timeSinceStartup + RetryFirstDelay;
+            EditorApplication.update += RetryTick;
+        }
+
+        static void CancelRetry()
+        {
+            if (s_retryLeft > 0) EditorApplication.update -= RetryTick;
+            s_retryLeft = 0;
+            s_retryDialogPending = false;
+        }
+
+        static void RetryTick()
+        {
+            if (s_retryLeft <= 0)
+            {
+                EditorApplication.update -= RetryTick;
+                s_retryDialogPending = false;
+                return;
+            }
+            if (EditorApplication.timeSinceStartup < s_nextRetryAt) return;
+
+            s_retryLeft--;
+            s_nextRetryAt = EditorApplication.timeSinceStartup + RetryInterval;
+
+            string failure;
+            if (TryStartCore(out failure, ProbeTimeoutRetry)) { CancelRetry(); return; }
+
+            Debug.Log("[CLMCP] 启动重试失败（剩余 " + s_retryLeft + " 次）：" + failure);
+            if (s_retryLeft > 0) return;
+
+            // 重试耗尽：给出最终提示（附带端口占用者，便于区分"别的实例"与"自身残留"）
+            EditorApplication.update -= RetryTick;
+            bool dialog = s_retryDialogPending;
+            s_retryDialogPending = false;
+
+            string message =
+                "MCP 服务启动失败：无法绑定 " + Endpoint + "。\n\n" + failure +
+                "\n\n" + DescribePortOwner(Port) +
+                "\n\n若占用者就是本 Unity 实例，说明上一次域重载的监听未及时释放（常见于进出 Play 模式）。\n" +
+                "若确实存在另一个实例（全局唯一原则），可通过菜单 Tools/CLMCP/设置端口… 更换端口。";
+            Debug.LogWarning("[CLMCP] " + message);
+            if (dialog) EditorUtility.DisplayDialog("CLMCP", message, "确定");
+            ClmcpToolbar.RefreshUi();
+        }
+
+        /// <summary>查询端口当前被哪个进程监听（netstat），返回一句可读描述；查不到返回占位说明。</summary>
+        static string DescribePortOwner(int port)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("netstat", "-ano -p tcp")
+                {
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    CreateNoWindow = true,
+                };
+                using (var p = Process.Start(psi))
+                {
+                    string output = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit(2000);
+                    string tail = ":" + port;
+                    foreach (string raw in output.Split('\n'))
+                    {
+                        string line = raw.Trim();
+                        if (line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        string[] cols = line.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (cols.Length < 2) continue;
+                        if (!cols[1].EndsWith(tail, StringComparison.Ordinal)) continue;
+
+                        int pid;
+                        if (!int.TryParse(cols[cols.Length - 1], out pid)) continue;
+                        string name = "?";
+                        try { name = Process.GetProcessById(pid).ProcessName; } catch (Exception) { }
+                        return "当前占用 " + Endpoint + " 的进程：PID " + pid + " (" + name + ")";
+                    }
+                }
+            }
+            catch (Exception) { }
+            return "未能查询到 " + Endpoint + " 的占用进程。";
         }
 
         /// <summary>用户主动停止（清除自动重启标记）。</summary>
@@ -122,6 +232,7 @@ namespace Clmcp
 
         static void StopCore()
         {
+            CancelRetry();
             Core core = s_core;
             s_core = null;
             if (core == null) return;
@@ -131,14 +242,14 @@ namespace Clmcp
         }
 
         /// <summary>探测本机端口上是否已有存活的 TCP 监听者。</summary>
-        static bool IsPortListening(int port)
+        static bool IsPortListening(int port, int timeoutMs)
         {
             try
             {
                 using (TcpClient client = new TcpClient())
                 {
                     IAsyncResult ar = client.BeginConnect(IPAddress.Loopback, port, null, null);
-                    if (!ar.AsyncWaitHandle.WaitOne(400)) return false;
+                    if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return false;
                     client.EndConnect(ar); // 连接被拒绝会抛异常
                     return true;
                 }
@@ -232,6 +343,21 @@ namespace Clmcp
                 m_running = false;
                 try { m_listener.Stop(); }
                 catch (Exception) { }
+                // 确保监听句柄立刻释放：域重载后新域会在不到 1 秒内尝试重启，
+                // 若残留监听未释放，重启就会误判为"端口被占用"。
+                try
+                {
+                    Socket s = m_listener.Server;
+                    if (s != null) s.Close();
+                }
+                catch (Exception) { }
+                // 等 accept 线程退出，避免它继续持有 socket 句柄（超时即放弃，不拖慢域重载）
+                Thread t = m_acceptThread;
+                if (t != null && t != Thread.CurrentThread)
+                {
+                    try { t.Join(300); }   // 超时即放弃：句柄已关闭，端口已可用
+                    catch (Exception) { }
+                }
                 lock (m_gate)
                 {
                     for (int i = 0; i < m_clients.Count; i++)
